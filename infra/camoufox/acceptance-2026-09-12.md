@@ -1,5 +1,7 @@
 # Camoufox r4 阶段验收 — 2026-09-12
 
+[验收索引](../../docs/acceptance/README.md) · [当前进度](../../docs/progress.md)
+
 本次完成固定 Camoufox 环境、完整重放、独立 QA Home 的存储恢复及 SealSkin 正式 X11 Worker 集成。现有 Personal/Work 应用和 Home 保留原绑定。此记录不代表整个 Profile 服务、跨版本迁移或实际 Trilium Desktop 已通过验收。
 
 ## 版本与不可变绑定
@@ -102,4 +104,4 @@ r2 失败记录、r3 核心通过但窗口不匹配的诊断仍保留为历史�
 - 真实 Personal/Work Home 的迁移、跨版本升级/回退及第三方登录保持。
 - 主机退出登录或重启后的 Adapter 可用性；用户服务已启用，但主机仍为 Linger=no。
 
-下一阶段按 [项目清单](../../docs/next-steps.md) 执行。构建、准备独立应用和重现检查的命令见 [README](README.md)。
+下一阶段按 [开发计划](../../docs/roadmap.md) 执行。构建、准备独立应用和重现检查的命令见 [README](README.md)。

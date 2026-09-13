@@ -1,5 +1,9 @@
 # 可靠停止与状态对账验收 — 2026-09-13
 
+[验收索引](../../docs/acceptance/README.md) · [当前进度](../../docs/progress.md)
+
+> 阶段记录：本页保留可靠停止阶段的版本与结果；Guard 及完整网络资源回收的后续证据见 [v2 记录](network-isolation-acceptance-2026-09-13.md)。安装与恢复使用 [现行生命周期说明](lifecycle/README.md)。
+
 已完成独立故障验收并于 **2026-09-13 10:01 UTC** 上线。当前 Personal/Work 的 Session、Worker、浏览器、桌面和 Selkies 进程均保留；只重启了 Adapter 和 SealSkin 控制服务。自动空闲回收未启用。
 
 ## 固定版本

@@ -1,5 +1,9 @@
 # SealSkin 本机运行验收记录（2026-09-12）
 
+[验收索引](../../docs/acceptance/README.md) · [当前进度](../../docs/progress.md)
+
+> 历史基线：下文的部署、限制与操作对应 2026-09-12。后续停止/网络行为见 [v2 记录](network-isolation-acceptance-2026-09-13.md)，客户端结果见 [Trilium 记录](../../docs/trilium-client.md)。旧 reset 说明不适用于已启用 lifecycle 的部署；现行操作见 [运维说明](../../docs/operations.md)。
+
 这份记录只保存不含凭证的运行证据。Session URL、`access_token`、管理员配置和用户私钥没有写入文档。
 
 ## 环境

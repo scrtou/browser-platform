@@ -1,5 +1,7 @@
 # Files 栏开启记录（2026-09-13）
 
+[验收索引](../../docs/acceptance/README.md) · [当前进度](../../docs/progress.md)
+
 Personal / Work 已提供 **Files → Upload Files**。上传目标为 `/config/Desktop`；用户需再在远程网站选择文件。Mac / Trilium 的原生文件选择尚待用户确认。
 
 随后已叠加[截图直接粘贴](screenshot-paste-acceptance-2026-09-13.md)，无需先保存截图；用户已在 Mac / Trilium 上确认截图测试正常，Files 原生文件选择仍待单独确认。当前前端资源摘要以该记录为准。本文保留 Files 功能初次部署的证据与事件。

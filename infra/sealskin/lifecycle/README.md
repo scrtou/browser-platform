@@ -1,5 +1,7 @@
 # SealSkin Profile、Relay 与网络生命周期
 
+[文档导航](../../../docs/README.md) · [开发进度](../../../docs/progress.md) · [运维总览](../../../docs/operations.md) · [验收索引](../../../docs/acceptance/README.md)
+
 该补丁基于 SealSkin commit `2b13a42483c1dc7d367d5c340437bdc8ecd84bb4`，基础镜像固定为 `0.3.2-ls58@sha256:d52c155eb78882b27c7780e77df335939d46cd06a514c9fa310039307542ee6a`。当前发布为 `0.3.2-network-v2-e13c19eedc38245d`。
 
 SealSkin 继续独占 Docker 生命周期。Adapter 先持久化策略引用和停止意图，经鉴权、加密 API 操作，再独立查询 Home 的会话记录、Docker 容器和网络资源。全部为空才提交 `stopped`。停止错误、假成功和无法查询 Docker 均保留占用。

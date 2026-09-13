@@ -1,13 +1,16 @@
 # 代理与浏览器环境配套规格
 
-本目录对应 [design.md 第 45–50 节](../../design.md#45-proxy-architecture--specification)。所有文件是数据契约示例，不会自动部署 SealSkin、代理或浏览器；本机 SealSkin/Firefox、Relay sidecar、锁定代理的 Firefox/BiDi 和 internal 网络直连阻断结果记录在 [运行验收记录](../../../infra/sealskin/acceptance-2026-09-12.md)。当前 HTTPS 路径通过不代表 DNS、IPv6、WebRTC、代理故障和重启窗口已经完成验收。
+[文档导航](../../README.md) · [当前架构](../../design.md) · [开发进度](../../progress.md) · [验收索引](../../acceptance/README.md)
+
+原设计第 45–50 节已独立为 [规格正文](specification.md)，保留原章节与验收编号。本目录定义目标契约和配套数据示例，不会自动部署 SealSkin、代理或浏览器，也不表示所有 API、协议和健康能力已经实现。当前实现与缺口以 [开发进度](../../progress.md) 为准，测试证据由 [验收索引](../../acceptance/README.md) 导航。
 
 | 文件 | 用途 |
 | --- | --- |
-| `types.go` | 使用标准库的 Go JSON 数据契约；不是服务实现 |
-| `schema.sql` | 在空库执行的 SQLite 规格快照；不是旧表或 SealSkin YAML 的迁移 |
-| `config.example.json` | Camoufox + 带认证 SOCKS5、Chromium + DIRECT 两种配置 |
-| `health.example.json` | 带分项结果、新鲜度和 UNKNOWN 的合成健康报告 |
+| [specification.md](specification.md) | 代理、环境、一致性、网络、健康、凭据的要求与 P/E/C/N/H/S 验收 |
+| [types.go](types.go) | 使用标准库的 Go JSON 数据契约；不是服务实现 |
+| [schema.sql](schema.sql) | 在空库执行的 SQLite 规格快照；不是旧表或 SealSkin YAML 的迁移 |
+| [config.example.json](config.example.json) | Camoufox + 带认证 SOCKS5、Chromium + DIRECT 两种配置 |
+| [health.example.json](health.example.json) | 带分项结果、新鲜度和 UNKNOWN 的合成健康报告 |
 
 示例中的域名、secretRef、Session ID 均为占位值。`203.0.113.10` 是文档地址，报告中的 US 是测试夹具，不代表对该地址的真实地理定位。
 
@@ -19,4 +22,4 @@ JSON 到 SQL 的映射：`RevisionRef` 展开为 `_id`、`_revision` 列；`expe
 
 生产连接逐一启用 `foreign_keys`，使用 WAL 和短事务；SQL 校验不能代替 JSON 语义校验、网络强制策略或运行实例核对。修订一经发布不可原地修改；配置修改新建修订，在对应 Profile 停止并解除占用后切换引用。
 
-可用 Python 标准库的 `sqlite3` 在临时数据库执行建库规格。若已安装 Go，可在本目录使用 `GO111MODULE=off go test` 检查类型声明能否编译；这不验证浏览器行为。网络、Profile 恢复和环境稳定性必须执行主文档中的 Linux 集成验收。
+可用 Python 标准库的 `sqlite3` 在临时数据库执行建库规格。若已安装 Go，可在本目录使用 `GO111MODULE=off go test` 检查类型声明能否编译；这不验证浏览器行为。网络、Profile 恢复和环境稳定性必须执行 [规格正文](specification.md) 中的 Linux 集成验收。

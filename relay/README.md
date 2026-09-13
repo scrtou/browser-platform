@@ -1,5 +1,7 @@
 # Profile Relay
 
+[文档导航](../docs/README.md) · [当前架构](../docs/design.md) · [开发进度](../docs/progress.md) · [运维说明](../docs/operations.md)
+
 这是按 Profile 运行的 SOCKS5 转接器原型。Worker 只连接 Relay 的内部监听地址；Relay 再使用固定的上游 SOCKS5 端点，可选地完成用户名/密码认证和远端域名解析。上游失败时只返回 SOCKS 错误，不会直接连接目标网站。
 
 配置只保存上游地址和凭据文件路径，凭据文件必须是普通文件且权限不允许 group/other 读取。Relay 启动时读入凭据；日志只使用稳定错误码，不输出凭据、目标 URL 或完整连接异常。生产部署应把凭据文件放在 tmpfs/Docker Secret，并让每个 Profile 使用独立 Relay 和网络命名空间。

@@ -1,5 +1,7 @@
 # Camoufox 冻结环境与 SealSkin Worker
 
+[文档导航](../../docs/README.md) · [开发进度](../../docs/progress.md) · [开发计划](../../docs/roadmap.md) · [验收索引](../../docs/acceptance/README.md)
+
 这里实现 Personal 环境基线之后的 Camoufox 阶段：固定依赖和浏览器，一次生成完整设备配置，后续启动只重放产物。2026-09-12 的 **r4 已通过完整重建、存储、渲染稳定性、正式 X11 入口及 Selkies Web 串流验收**，并安装为独立 SealSkin 应用 `camoufox-personal-r4`。现有 Personal/Work 应用、会话和 Home 保持原绑定。具体证据及客户端验收范围见 [运行记录](acceptance-2026-09-12.md)。
 
 ## 固定版本
@@ -148,4 +150,4 @@ python3 infra/camoufox/check-stream.py \
 | `ENVIRONMENT_ACCEPTANCE_MISMATCH` | 报告摘要、产物或镜像绑定不匹配 |
 | `ENVIRONMENT_ACCEPTANCE_INCOMPLETE` | 缺少完整的重建、稳定性或恢复证据 |
 
-生产切换仍需完成 [下一步](../../docs/next-steps.md) 中的网络矩阵、生命周期、目标 Trilium 客户端和受控迁移验收。当前通过的是本机 Camoufox 冻结环境与独立应用集成阶段。
+生产切换仍需完成 [开发计划](../../docs/roadmap.md#r4) 中适用于 Camoufox 的网络、目标 Trilium 客户端和受控迁移验收。当前通过的是本机冻结环境与独立应用集成阶段；Personal Guard 的新验收不能视为独立 Camoufox 已迁入该网络。

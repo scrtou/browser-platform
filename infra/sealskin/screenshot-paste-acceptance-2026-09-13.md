@@ -1,5 +1,7 @@
 # 截图直接粘贴记录（2026-09-13）
 
+[验收索引](../../docs/acceptance/README.md) · [当前进度](../../docs/progress.md)
+
 Personal / Work 已增加从本机剪贴板直接向远程网页粘贴截图的入口，无需先将截图保存成本机文件。Mac 操作：重新加载 Trilium 中的远程页面，按 **Control + Shift + Command + 4** 框选截图，点击远程网页的目标输入框后按 **Command + V**。目标网页需支持粘贴图片；确认图片预览后再发送。
 
 用户随后在 **Trilium 0.105.0 / macOS Sequoia 15.1** 上确认“测试正常”，截图直接粘贴已完成目标客户端验收。

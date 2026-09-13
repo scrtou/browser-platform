@@ -1,5 +1,7 @@
 # 网络隔离与重启恢复验收
 
+[验收索引](../../docs/acceptance/README.md) · [当前进度](../../docs/progress.md)
+
 2026-09-13 15:40:28–15:40:42 UTC 已上线 `0.3.2-network-v2-e13c19eedc38245d`。本次修复了 v1 中 Worker 可以主动连接同网段 SealSkin `8000/8443` 管理端口的问题，并加入控制容器重建后接回原显示网络的逻辑。
 
 生产只安装了控制服务 payload 并重启 SealSkin API、Adapter。**现有 Work／Personal 的原容器、Session、Firefox、桌面和 Selkies 进程全部保留。** 新策略 `personal-socks5-r2` 在下次新建 Personal Session 时生效。Work、现存旧 Personal 和独立 Camoufox 没有迁入本次 Guard 网络。

@@ -1,8 +1,10 @@
 # SealSkin Profile Adapter
 
-这是 `docs/design.md` 中 SealSkin 优先路线的第一段可执行代码。它把稳定 Profile 入口映射到 SealSkin 的命名 Home 和运行会话，并实现 SealSkin 的 RSA-PSS 握手、RSA-OAEP 密钥交换、AES-256-GCM API 信封和 RS256 用户 JWT。
+[文档导航](../docs/README.md) · [当前架构](../docs/design.md) · [开发进度](../docs/progress.md) · [运维说明](../docs/operations.md)
 
-实际 PoC 入口为 `127.0.0.1:9100`，公网入口为 `https://mybrowser.azhen.de`，Session 为 `https://mysession.azhen.de`。Personal 已配置按 generation 分配的 Relay、Docker `internal` 网络和锁定代理的 Firefox 镜像；独立 QA Worker 已验证经 Relay 成功、直接出站失败。Adapter 当前通过 [systemd 用户服务](../infra/sealskin/profile-adapter.service) 运行，安装与 linger 限制见 [部署说明](../infra/sealskin/README.md)。[Camoufox r4](../infra/camoufox/README.md) 已通过完整重放、存储、渲染和正常 X11 入口验收，安装为独立 `camoufox-personal-r4` 应用并设置资源限制。现有 Personal/Work 绑定保留，Personal 的新策略只在下次新建会话生效。完整网络/重启矩阵、空闲回收及健康接口仍需继续实现。
+它把稳定 Profile 入口映射到 SealSkin 的命名 Home 和运行会话，并实现 SealSkin 的 RSA-PSS 握手、RSA-OAEP 密钥交换、AES-256-GCM API 信封和 RS256 用户 JWT。
+
+当前通过 [systemd 用户服务](../infra/sealskin/profile-adapter.service) 运行，安装见 [部署说明](../infra/sealskin/README.md)。发布版本、现有会话与新会话的生效范围、linger 和验收缺口统一见 [开发进度](../docs/progress.md)。
 
 ## 已实现的行为
 
@@ -15,8 +17,8 @@
 - 状态文件使用跨进程 `flock`、`fsync`、原子 rename 和 `0600` 权限。
 - 启用 lifecycle 补丁后，启动前检查 Home 的会话记录与全部 Docker 挂载；新 Worker 使用固定容器名及 Home/Profile/operation 标签。
 - 新代次固定网络策略 ID 和 SHA-256，受管理启动要求服务端 `network_runtime_version: 1`，并在启动后核对资源归属；旧无策略活跃绑定保持兼容。
-- SealSkin 在 Docker create 前落盘网络占用，为 generation 分配独立内网、出站网络和 Relay，探测通过后才启动 Worker。
-- 停止前先持久化 `stopping` 与稳定停止幂等键；停止后重新查询，只有记录、Worker、Relay、网络和占用都消失才提交 `stopped`。失败保留占用，重启后继续停止；SealSkin 界面直接停止留下的网络清理也可通过对账继续。
+- SealSkin 在 Docker create 前落盘网络占用，为 generation 分配独立内网、出站网络、Relay 和 Guard；Guard 安装规则并降权、探测通过后才启动 Worker。
+- 停止前先持久化 `stopping` 与稳定停止幂等键；停止后重新查询，只有记录、Worker、Guard、Relay、网络和占用都消失才提交 `stopped`。失败保留占用，重启后继续停止；SealSkin 界面直接停止留下的网络清理也可通过对账继续。
 - 本机 `0600` Unix socket 提供 inspect、stop、reconcile；服务全程持有独占状态文件锁，CLI 复用运行中的 Profile 锁。
 - Session URL 只能解析到配置的 SealSkin HTTPS origin；带 token 的重定向使用 `no-store` 和 `no-referrer`。
 - 入口 HTML 使用 `Referrer-Policy: same-origin`，让 Chromium/WebView 的自动表单 POST 保留正常 `Origin`；CSP 的 `form-action` 允许入口自身与配置的 Session origin，以支持后续 `303` 跳转。`Origin: null` 和异源启动请求仍被拒绝。
@@ -31,7 +33,7 @@ https://browser.example.com/bootstrap/personal/<operation-id>
 
 适配层校验当前操作后以 `303` 跳到 Profile 的 `start_url`。浏览器最终看到的是目标网站，SealSkin 仍保留可供恢复的唯一启动上下文。
 
-2026-09-13 的 [lifecycle 补丁](../infra/sealskin/lifecycle/README.md) 已补充 Home、实例、generation 和网络资源元数据，当前部署为 `0.3.2-network-v2-e13c19eedc38245d`。新受管理启动要求 `network_enforcement_version: 1`，停止确认包含 Guard；bootstrap 继续用于旧无标签会话的兼容对账。现有 Personal/Work 均保留原 Session 和 Worker。
+[lifecycle 补丁](../infra/sealskin/lifecycle/README.md) 补充 Home、实例、generation 和网络资源元数据。新受管理启动要求 `network_enforcement_version: 1`，停止确认包含 Guard；bootstrap 继续用于旧无标签会话的兼容对账。
 
 ## 构建与测试
 
@@ -44,7 +46,7 @@ go vet ./...
 go build -buildvcs=false -trimpath -o profile-adapter ./cmd/profile-adapter
 ```
 
-`-buildvcs=false` 只用于当前工作区的 `.git` 不是完整仓库这一情况。在正常 Git checkout 中可以移除。
+`-buildvcs=false` 使构建不依赖 VCS 元数据；需要在二进制中记录 VCS 信息时，可在完整 Git checkout 中移除。
 
 测试覆盖加密协议、服务端签名被篡改、crypto session 过期重握手、变更请求网络失败分类、并发单实例、丢失启动响应恢复、未知结果禁止重试、可靠停止/重启续停、残留容器与旧 generation 拒绝、网络策略引用/能力/归属检查、资源残留续停、持久化并发和 HTTP 重定向。真实 Docker 故障与 race 结果见 [网络生命周期验收](../infra/sealskin/network-lifecycle-acceptance-2026-09-13.md) 和 [此前停止验收](../infra/sealskin/lifecycle-acceptance-2026-09-13.md)。
 
@@ -64,7 +66,7 @@ chmod 600 secrets/sealskin-client-private.pem
 
 Profile 的 `application_id` 应指向经过固定版本管理的 SealSkin 应用定义。若不同 Profile 使用不同代理或环境策略，应使用各自的应用定义，例如 `firefox-personal-proxy` 和 `firefox-work-proxy`，由该定义锁定代理 relay、网络和浏览器环境。`home_name` 提供长期浏览器数据，不能拿来承载代理密码。
 
-当前 [Go Profile Relay](../relay/README.md) 已实现并完成独立协议、sidecar 和 SealSkin Worker 实测。动态创建和停止由 SealSkin 统一执行：管理员在私有策略 registry 中固定用户、Profile、Home、应用、镜像与凭据修订，并将相同的 `network_policy_id`、`network_policy_sha256` 写入应用 `provider_config` 和 Adapter Profile 定义。启动先创建专属网络与 Relay，探测通过后才创建 Worker；漏传引用或缺失服务端能力均拒绝。受管理的活跃代次不接受策略漂移；轮换前必须停止并确认资源清空。配置方法见 [策略说明](../infra/sealskin/lifecycle/README.md#按-generation-分配代理与网络)。
+当前 [Go Profile Relay](../relay/README.md) 已实现并完成独立协议、sidecar 和 SealSkin Worker 实测。动态创建和停止由 SealSkin 统一执行：管理员在私有策略 registry 中固定用户、Profile、Home、应用、镜像与凭据修订，并将相同的 `network_policy_id`、`network_policy_sha256` 写入应用 `provider_config` 和 Adapter Profile 定义。启动先创建专属网络、Relay 与 Guard，安装规则并探测通过后才创建 Worker；漏传引用或缺失服务端能力均拒绝。受管理的活跃代次不接受策略漂移；轮换前必须停止并确认资源清空。配置方法见 [策略说明](../infra/sealskin/lifecycle/README.md#按-generation-分配代理与网络)。
 
 `sealskin-configure-proxy-app` 使用一次性管理员配置热更新应用镜像和静态 `docker_overrides.network`，不会把管理员密钥写入适配层状态。以下保留静态 sidecar 的配置示例；当前受管理的 Personal 应用需按上述策略说明配置：
 
@@ -115,7 +117,7 @@ GET /readyz    执行一次 SealSkin 加密会话列表请求
 ./profile-adapter -config config.json -stop-profile personal
 ```
 
-`inspect` 只读，显示记录、Worker、孤儿、资源、Relay 和网络数量，以及持久化的 `network_phase`；该阶段字段不代表实时代理健康。`reconcile` 对账并续停 Adapter 或 SealSkin 已持久化的停止操作；`stop` 停止当前 generation，确认所有实例和网络资源消失后保留 Home、释放占用。超时或失败时重复执行 stop/reconcile，不能删除 journal 强行解锁。没有新增公网 stop API。
+`inspect` 只读，显示记录、Worker、孤儿、资源、Guard、Relay 和网络数量，以及持久化的 `network_phase`；该阶段字段不代表实时代理健康。`reconcile` 对账并续停 Adapter 或 SealSkin 已持久化的停止操作；`stop` 停止当前 generation，确认所有实例和网络资源消失后保留 Home、释放占用。超时或失败时重复执行 stop/reconcile，不能删除 journal 强行解锁。没有新增公网 stop API。
 
 有标签的孤儿会报告 `unknown`，明确 stop 后按原 generation 清理。没有标签又丢失记录、异属挂载或配置漂移时拒绝自动操作。没有收到 Session ID 且没有可见容器的模糊启动仍保留未知状态，需要核实提交中的创建请求。
 
@@ -123,10 +125,6 @@ GET /readyz    执行一次 SealSkin 加密会话列表请求
 
 ## 当前验收边界
 
-完整生产验收还需要完成：
+管理网络 ACL、私有权威 DNS、Firefox 直接网络与控制容器重建已有 [v2 验收](../infra/sealskin/network-isolation-acceptance-2026-09-13.md)；Trilium 主要交互已有 [用户记录](../docs/trilium-client.md)。这些结果都有版本和环境限制。
 
-1. 在 Debian 13 + Docker 上用两个命名 Home 验证 Cookie、LocalStorage 和 IndexedDB 的删除重建恢复。
-2. 在已通过的独立 generation、跨 Profile TCP 隔离和代理故障测试基础上，补齐权威 DNS 日志、浏览器 IPv6/STUN/QUIC 与完整管理网络 ACL。
-3. 验证 Caddy 认证、Trilium WebView 的 cookie/SameSite 行为和剪贴板。
-4. 在已验收的 Worker、Relay 和网络回收基础上实现空闲回收及浏览器进程健康。
-5. 完善普通非策略会话的 create 前启动日志、Docker/VPS 重启窗口、控制容器重建接回与人工未知状态恢复流程；现有 generation 占用日志和 API 进程重启测试不能替代这些验收。
+完整待办统一见 [开发计划](../docs/roadmap.md)：运行健康、空闲回收、普通非策略会话日志、Home 删除保护、正式主机/目标系统恢复、公开 DNS 和完整鉴权等仍需完成。不要将独立 QA 结果推定为旧会话迁移或生产开机通过。

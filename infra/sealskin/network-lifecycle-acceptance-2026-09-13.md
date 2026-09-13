@@ -1,5 +1,7 @@
 # Profile Relay／网络生命周期验收
 
+[验收索引](../../docs/acceptance/README.md) · [当前进度](../../docs/progress.md)
+
 本文件保留 v1 的历史结果。当前生产已更新到 v2，修复同网段管理端口可达问题，并补充 Guard、浏览器网络与控制容器重建验收，见 [网络隔离与恢复记录](network-isolation-acceptance-2026-09-13.md)。
 
 2026-09-13 已部署 `0.3.2-network-v1-039075a6ab052017`。SealSkin 为受管理的新会话代次创建独立 internal 网络、出站网络和 Relay；代理探测通过后才创建 Worker。停止时确认 Worker 消失，再回收 Relay、网络及持久化占用。

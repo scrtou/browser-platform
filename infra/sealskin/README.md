@@ -1,4 +1,6 @@
-# Local SealSkin PoC
+# SealSkin 部署与配置
+
+[文档导航](../../docs/README.md) · [开发进度](../../docs/progress.md) · [运维总览](../../docs/operations.md) · [验收索引](../../docs/acceptance/README.md)
 
 这是当前主机的 SealSkin 验证栈。当前采用 [Profile、Relay 与网络生命周期补丁](lifecycle/README.md) `0.3.2-network-v2-e13c19eedc38245d`，基于固定摘要的官方 `0.3.2-ls58`；运行容器已安装同版 payload，Compose 引用版本化镜像供重建使用。升级必须重新执行源码审计和验收。端口只绑定到 `127.0.0.1`，公网由已配置的 Caddy HTTPS 入口转发。
 
@@ -44,7 +46,7 @@ docker compose exec sealskin sh -c 'getent hosts host.docker.internal || true'
 4. 从 SealSkin 用户配置中取得客户端公钥对应的私钥；从 `config/ssl/server_key.pem` 的公钥部分取得服务端公钥。两者只进入适配层 Secret Store。
 5. 将 [adapter/config.example.json](../../adapter/config.example.json) 复制为本地配置，设置 `api_base_url`、`public_session_base_url`、`public_base_url` 和两个密钥路径。
 
-本机已经用上述流程完成一次可重复的启动级 PoC：`profile-adapter` 用户、`firefox-personal`/`firefox-work` 固定应用、两个命名 Home 和两个 Firefox Worker 均已创建；同一 Profile 的并发启动会复用现有 Session。具体命令、镜像摘要和未完成的网络验收见 [运行记录](acceptance-2026-09-12.md)。
+本机已经用上述流程完成一次可重复的启动级 PoC：`profile-adapter` 用户、`firefox-personal`/`firefox-work` 固定应用、两个命名 Home 和两个 Firefox Worker 均已创建；同一 Profile 的并发启动会复用现有 Session。早期镜像与启动结果见 [基线记录](acceptance-2026-09-12.md)，后续网络及客户端结果见 [验收索引](../../docs/acceptance/README.md)。
 
 仓库内的 [Go Profile Relay](../../relay/README.md) 和 [Firefox Proxy Worker](../firefox-proxy/README.md) 已完成静态代理基线；Firefox 在镜像层锁定 `profile-relay:1080`、远端 DNS 和 WebRTC ICE 策略。当前 Personal 应用配置 `personal-socks5-r2`：下次新建会话时，SealSkin 创建专属 internal／egress 网络、Relay 和 Guard，先安装网络 ACL 并探测，再让 Worker 加入 Guard 的命名空间，确认 Worker 消失后才回收网络。管理端口隔离、浏览器网络故障、真实 Personal 上游和控制容器重建已通过，见 [网络隔离验收](network-isolation-acceptance-2026-09-13.md)。现有 Personal/Work 原 Worker 保持原样，正式 Docker/VPS 重启仍需维护窗口。
 

@@ -1,5 +1,7 @@
 # 固定入口启动回归（2026-09-13）
 
+[验收索引](../../docs/acceptance/README.md) · [当前进度](../../docs/progress.md)
+
 Trilium 打开固定入口后出现 `Cross-origin start request rejected`。使用 Chromium 151.0.7922.34 复现：入口页原来的 `Referrer-Policy: no-referrer` 使自动表单 POST 携带 `Origin: null`，被 Adapter 同源校验拒绝。另一个阻塞是 `form-action 'self'`：Chromium 会对表单的重定向目标继续应用该 CSP，因而拦截到独立 Session 域名的跳转。
 
 入口页现使用 `Referrer-Policy: same-origin`，`form-action` 允许入口自身和配置的 `https://mysession.azhen.de`。启动与 bootstrap 重定向仍使用 `no-store`、`no-referrer`；`Origin: null` 和异源启动请求仍返回 403。

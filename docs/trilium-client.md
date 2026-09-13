@@ -1,4 +1,28 @@
-# Trilium 客户端验收与剪贴板
+# Trilium 使用与客户端验收
+
+[文档导航](README.md) · [开发进度](progress.md) · [运维与恢复](operations.md) · [验收索引](acceptance/README.md)
+
+## 接入地址
+
+在 Trilium 的 WebView 笔记中保存固定 Profile 地址：
+
+| Profile | URL |
+| --- | --- |
+| Work | <https://mybrowser.azhen.de/browser/work/> |
+| Personal | <https://mybrowser.azhen.de/browser/personal/> |
+
+`https://mysession.azhen.de/` 承载 SealSkin 会话与显示通道。入口会自动跳转并授权，不把带 token 的 Session URL 保存到永久笔记。现有两个入口仍使用原 Firefox Profile，更新后的 Personal 环境只在新建 Session 时生效；部署范围见 [开发进度](progress.md#deployment)。
+
+## 常用操作
+
+| 要做什么 | 操作说明 |
+| --- | --- |
+| 本机文字或截图粘贴到远程 | [主动按 ⌘V 粘贴](#截图直接粘贴不用先保存文件) |
+| 远程文字复制到本机 | [选中文字后 ⌘C，等待成功提示](#远程文字原生复制到本机) |
+| 通过侧栏中转文字 | [Clipboard 面板](#macos-的手动文本传递) |
+| 上传本机已有图片/文件 | [Files → Upload Files](#图片上传与-files-栏) |
+| 浏览器误关后恢复 | [远程桌面右键 → FireFox](#关闭远程-firefox-后出现黑框) |
+| 了解文字大小与客户端权限 | [大文本](#文字长度与大文本)、[权限限制](#trilium-01050-的剪贴板限制) |
 
 ## 当前用户验收
 
@@ -23,7 +47,7 @@
 
 2026-09-13，用户关闭 Work 的 Firefox 后刷新页面，看到黑框。检查确认 Firefox 主进程已退出，而原 Worker、labwc、Xwayland 和 Selkies 仍正常运行。固定入口复用存活的 Session；当前桌面 autostart 只在桌面启动时执行一次，重新加载 Trilium 页面不会重新启动已经退出的 Firefox。
 
-已在原 Work Worker 内，以原用户 `abc`、`HOME=/config` 和现存 Xwayland 的桌面环境重新执行 `/usr/bin/firefox`。确认 Firefox 窗口可见、已最大化且获得焦点，持有原 Profile 的锁；Work 桌面与串流、Personal 全部进程、容器及 Home 挂载、Adapter 配置与绑定均保持不变。过程没有检查网页内容，也不代表所有标签页已恢复；需要时可在 Firefox 的 History → Restore Previous Session 中恢复上次浏览状态。证据见 [恢复记录](../infra/sealskin/runtime/work-browser-recovery-2026-09-13/after.json)。
+已在原 Work Worker 内，以原用户 `abc`、`HOME=/config` 和现存 Xwayland 的桌面环境重新执行 `/usr/bin/firefox`。确认 Firefox 窗口可见、已最大化且获得焦点，持有原 Profile 的锁；Work 桌面与串流、Personal 全部进程、容器及 Home 挂载、Adapter 配置与绑定均保持不变。过程没有检查网页内容，也不代表所有标签页已恢复；需要时可在 Firefox 的 History → Restore Previous Session 中恢复上次浏览状态。证据见恢复记录（本机 `infra/sealskin/runtime/work-browser-recovery-2026-09-13/after.json`）。
 
 再次误关时可以自行重开。已核对当前 Work / Personal 的实际 labwc 配置：桌面空白处右键会打开 `root-menu`，其中保留 **FireFox** 启动项，命令为 `/usr/bin/firefox`。
 
@@ -118,13 +142,13 @@ QA 客户端是 Chromium 151 / Linux，使用原生浏览器粘贴命令在该�
 
 初次采用串流重载时，旧 Work 的 Wayland 桌面连带重启了 Firefox；该次设置已回滚，Home 和 Session 绑定保留。最终静态更新没有再重启两个 Worker 的浏览器、桌面或串流进程。不能把 X11 下的串流重载验收用于证明旧 Wayland 浏览器进程不受影响。
 
-隔离 Wayland 会话已验证：Clipboard 读写权限均为 denied 时，Files 栏可见，点击 Upload Files 触发文件选择，PNG 上传后的大小和 SHA-256 完全匹配。见 [按钮上传验证](../infra/sealskin/runtime/files-sidebar-wayland-acceptance-2026-09-13/image-upload.json)。此前独立测试也通过了 [图片拖放验证](../infra/sealskin/runtime/image-drop-acceptance-2026-09-13/image-upload.json)。**用户 Mac / Trilium 的原生文件选择与拖放尚待实测**。
+隔离 Wayland 会话已验证：Clipboard 读写权限均为 denied 时，Files 栏可见，点击 Upload Files 触发文件选择，PNG 上传后的大小和 SHA-256 完全匹配。见按钮上传验证（本机 `infra/sealskin/runtime/files-sidebar-wayland-acceptance-2026-09-13/image-upload.json`）。此前独立测试也通过了图片拖放验证（本机 `infra/sealskin/runtime/image-drop-acceptance-2026-09-13/image-upload.json`）。**用户 Mac / Trilium 的原生文件选择与拖放尚待实测**。
 
 ## 文字长度与大文本
 
 2026-09-13 检查正在运行的固定 Firefox 基础镜像：侧栏 `dashboardClipboardTextarea` 没有设置 `maxlength`，当前 WebSocket 纯文本接收路径也没有配置总字数或总字节数上限。客户端与服务端都按 UTF-8 编码处理文字；达到 **750 KiB（768,000 字节）** 后自动分块，接收完整后再合并并核对总字节数。
 
-使用同一 Selkies 基线的独立 QA 会话，已完成 **400,000 个汉字、1,200,000 字节 UTF-8 文本** 的往返：本机文字框 → Clipboard 面板 → 远程浏览器，追加 7 个 ASCII 字符后再经面板复制回本机，完整内容匹配。测试客户端为 Chromium 151.0.7922.34 / Linux，Async Clipboard 读写权限仍为 denied。报告见 [大文本验证](../infra/sealskin/runtime/clipboard-large-text-2026-09-13/clipboard.json)；该量级尚未在用户的 macOS / Trilium 上单独复测。
+使用同一 Selkies 基线的独立 QA 会话，已完成 **400,000 个汉字、1,200,000 字节 UTF-8 文本** 的往返：本机文字框 → Clipboard 面板 → 远程浏览器，追加 7 个 ASCII 字符后再经面板复制回本机，完整内容匹配。测试客户端为 Chromium 151.0.7922.34 / Linux，Async Clipboard 读写权限仍为 denied。报告见大文本验证（本机 `infra/sealskin/runtime/clipboard-large-text-2026-09-13/clipboard.json`）；该量级尚未在用户的 macOS / Trilium 上单独复测。
 
 未设置总量上限不代表任意大小均可传递。当前 X11 文本读取等待为 1 秒，写入后等待 xclip 退出为 2 秒；更大内容还受浏览器渲染、内存和传输状态影响。若大文本超时或卡顿，可改用文件传递。代码中另一个 10 MiB 上限用于从文件管理器剪贴板读取图片文件，不适用于此处的纯文本路径。
 
@@ -134,6 +158,6 @@ QA 客户端是 Chromium 151 / Linux，使用原生浏览器粘贴命令在该�
 
 测试通过原生文字框快捷键复制中文、粘贴至 Clipboard 面板、在远程浏览器粘贴并追加文本，再复制回面板和本机文字框。双向完整文本均匹配。该测试没有调用授权的 Clipboard API 来代替被测路径。
 
-结果见主机上的 [验证报告](../infra/sealskin/runtime/clipboard-acceptance-2026-09-13/clipboard.json)，界面截图保存在同目录。此目录被 Git 忽略，部署备份需单独保留。测试没有修改原 Worker、应用定义或 Trilium 权限；原容器和 Adapter 绑定保持一致，临时 Worker 与带授权参数的 Session 文件均已清理。
+结果见本机验证报告（`infra/sealskin/runtime/clipboard-acceptance-2026-09-13/clipboard.json`），界面截图保存在同目录。此目录被 Git 忽略，部署备份需单独保留。测试没有修改原 Worker、应用定义或 Trilium 权限；原容器和 Adapter 绑定保持一致，临时 Worker 与带授权参数的 Session 文件均已清理。
 
 隔离测试证明了权限被拒绝时 Selkies 手动面板的文本路径可行。用户随后按上述操作在 **Trilium 0.105.0 / macOS Sequoia 15.1** 上复测并确认通过，手动面板文本路径已完成目标客户端验收；自动同步仍受客户端权限策略限制。
