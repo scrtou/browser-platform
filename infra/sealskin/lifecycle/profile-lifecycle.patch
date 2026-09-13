@@ -1,0 +1,2847 @@
+diff --git a/server/app/api.py b/server/app/api.py
+index 3385631..19797aa 100644
+--- a/server/app/api.py
++++ b/server/app/api.py
+@@ -27,6 +27,7 @@ from .docker_utils import (
+     pull_and_cache_image,
+     read_cpu_model,
+ )
++from .profile_runtime import router as profile_runtime_router
+ from .routers import (
+     admin,
+     applications,
+@@ -58,8 +59,13 @@ async def _remove_stale_sessions() -> None:
+     stale: list[str] = []
+     try:
+         for session_id, data in list(state.sessions.items()):
++            if data.get("lifecycle_phase") == "stopping":
++                # A pending stop must remain retryable after an API restart.
++                continue
+             instance_id = data.get("instance_id")
+-            if not instance_id or not await container_exists(instance_id):
++            ids = {instance_id} | {entry.get("instance_id") for entry in (data.get("container_registry") or {}).values()}
++            ids.discard(None)
++            if not ids or not any([await container_exists(value) for value in ids]):
+                 stale.append(session_id)
+     except (DockerException, RuntimeError) as exc:
+         logger.error("Could not connect to Docker to clean up stale sessions: %s", exc)
+@@ -181,6 +187,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+     await _remove_stale_sessions()
+ 
+     await inspect_self_container()
++    from .network_runtime import restore_controller_networks
++    await restore_controller_networks()
+     read_cpu_model()
+     user_manager.set_external_ports(state.discovered_api_port, state.discovered_session_port)
+     user_manager.load_users_and_groups()
+@@ -233,6 +241,7 @@ def create_app() -> FastAPI:
+     app.include_router(admin.router)
+     app.include_router(homedirs.router)
+     app.include_router(sessions.router)
++    app.include_router(profile_runtime_router)
+     app.include_router(uploads.router)
+     app.include_router(files.router)
+     app.include_router(shares.router)
+diff --git a/server/app/config_store.py b/server/app/config_store.py
+index 1662bb4..6c6f627 100644
+--- a/server/app/config_store.py
++++ b/server/app/config_store.py
+@@ -897,14 +897,11 @@ async def load_sessions() -> None:
+ 
+ 
+ async def save_sessions() -> None:
+-    """Persist `state.sessions` to disk."""
++    """Serialize snapshots and writes, propagating every persistence failure."""
+     async with state.sessions_lock:
+         snapshot = copy.deepcopy(state.sessions)
+-    try:
+         await persistence.write_yaml(settings.sessions_db_path, snapshot)
+         logger.debug("Saved %d session(s) to disk.", len(snapshot))
+-    except Exception as exc:  # noqa: BLE001
+-        logger.error("Failed to save sessions to disk: %s", exc)
+ 
+ 
+ def load_public_shares() -> None:
+diff --git a/server/app/docker_utils.py b/server/app/docker_utils.py
+index b77250b..abb6301 100644
+--- a/server/app/docker_utils.py
++++ b/server/app/docker_utils.py
+@@ -91,23 +91,16 @@ async def inspect_self_container() -> None:
+     container = None
+     try:
+         client = await asyncio.to_thread(get_docker_client)
+-        containers = await asyncio.to_thread(client.containers.list, filters={"name": "sealskin"})
+-
+-        if not containers:
+-            hostname = os.uname()[1]
+-            logger.info(
+-                "No container named 'sealskin' found. Trying with hostname '%s'.", hostname
+-            )
++        # Prefer our own Docker hostname. A substring name search could pick
++        # another SealSkin deployment and launch a worker on its storage.
++        try:
++            container = await asyncio.to_thread(client.containers.get, os.uname()[1])
++        except NotFound:
+             try:
+-                container = await asyncio.to_thread(client.containers.get, hostname)
++                container = await asyncio.to_thread(client.containers.get, "sealskin")
+             except NotFound:
+-                logger.warning(
+-                    "Could not find self-container by name 'sealskin' or hostname. "
+-                    "Path remapping will be disabled."
+-                )
++                logger.warning("Could not inspect the server container; path mapping is unavailable.")
+                 return
+-        else:
+-            container = containers[0]
+ 
+         logger.info("Found self-container '%s'. Inspecting mounts.", container.name)
+         for mount in container.attrs.get("Mounts", []) or []:
+@@ -130,7 +123,11 @@ async def inspect_self_container() -> None:
+     network_settings = container.attrs.get("NetworkSettings", {})
+     networks = network_settings.get("Networks", {})
+     if networks:
+-        state.discovered_network = list(networks.keys())[0]
++        # Additional Profile networks may sort before the server's original
++        # network after a restart. Preserve Docker's configured primary network
++        # so applications without an explicit override keep their routing.
++        primary = container.attrs.get("HostConfig", {}).get("NetworkMode")
++        state.discovered_network = primary if primary in networks else next(iter(networks))
+         logger.info("Discovered self-container network: %s", state.discovered_network)
+ 
+     ports = network_settings.get("Ports", {}) or {}
+diff --git a/server/app/launch.py b/server/app/launch.py
+index ff19fe3..ffbd136 100644
+--- a/server/app/launch.py
++++ b/server/app/launch.py
+@@ -28,6 +28,7 @@ from . import config_store, user_manager
+ from .docker_utils import translate_path_to_host
+ from .fsutil import safe_copytree, safe_join, sanitize_for_filename, unique_filename
+ from .models import InstalledApp
++from .profile_runtime import guard_launch, guard_session, home_path, runtime_identity
+ from .providers.docker_provider import DockerProvider
+ from .settings import settings
+ from .state import state
+@@ -597,6 +598,7 @@ async def _resolve_storage(
+     return new_ephemeral_dir(), new_ephemeral_dir("_shared")
+ 
+ 
++@guard_launch
+ async def launch_application(
+     application_id: str,
+     username: str,
+@@ -612,6 +614,11 @@ async def launch_application(
+     launch_in_room_mode: bool = False,
+     wayland_mode: bool = True,
+     timezone: str | None = None,
++    profile_id: str | None = None,
++    operation_id: str | None = None,
++    network_policy_id: str | None = None,
++    network_policy_sha256: str | None = None,
++    _network_policy: Any = None,
+ ) -> dict[str, str]:
+     """Start a new session for a user.
+ 
+@@ -631,6 +638,10 @@ async def launch_application(
+         wayland_mode: Use the Wayland compositor.
+         timezone: The browser's IANA zone; the container's `TZ` (see
+             `resolve_timezone`).
++        profile_id: Optional stable browser-platform Profile identity.
++        operation_id: The Profile's immutable launch generation.
++        network_policy_id: Operator-approved Relay/network policy revision.
++        network_policy_sha256: Hash of the complete resolved network policy.
+ 
+     Returns:
+         `{"session_url": str, "session_id": str}`.
+@@ -693,7 +704,21 @@ async def launch_application(
+             )
+             launch_context = {"type": "file", "value": filename}
+ 
++    if (home_name and home_name.lower() != "cleanroom" and host_mount_path and
++            os.path.realpath(host_mount_path) == home_path(username, home_name)):
++        spec.app_config["profile_runtime"] = runtime_identity(
++            username, home_name, application_id, profile_id, operation_id
++        )
++
+     try:
++        if _network_policy:
++            from . import network_runtime
++
++            identity = spec.app_config["profile_runtime"]
++            allocation = await network_runtime.prepare(identity, *_network_policy,
++                                                       display_port=spec.app_config["provider_config"]["port"])
++            spec.app_config["network_runtime"] = allocation
++            await network_runtime.set_phase(identity, "worker_starting")
+         provider = DockerProvider(spec.app_config)
+         instance = await provider.launch(**spec.provider_kwargs(session_id))
+         now = time.time()
+@@ -705,6 +730,11 @@ async def launch_application(
+             "access_token": access_token,
+             "provider_app_id": application_id,
+             "username": username,
++            "home_name": home_name,
++            "profile_id": profile_id or "",
++            "operation_id": operation_id or "",
++            "network_policy_id": network_policy_id or "",
++            "network_policy_sha256": network_policy_sha256 or "",
+             "app_name": app.name,
+             "app_logo": app.logo,
+             "host_mount_path": host_mount_path,
+@@ -739,6 +769,9 @@ async def launch_application(
+             state.sessions[session_id] = session
+         await config_store.save_sessions()
+ 
++        if _network_policy:
++            await network_runtime.set_phase(identity, "running")
++
+         logger.info(
+             "[%s] Session ready for %s. Proxying to %s:%s",
+             session_id,
+@@ -769,6 +802,7 @@ async def launch_application(
+         ) from exc
+ 
+ 
++@guard_session
+ async def ensure_container_for_session(
+     session_id: str, target_app_id: str, timezone: str | None = None
+ ) -> dict[str, Any]:
+@@ -797,6 +831,9 @@ async def ensure_container_for_session(
+     app = state.installed_apps.get(target_app_id)
+     if not app:
+         raise HTTPException(status_code=404, detail=f"App {target_app_id} not found.")
++    if (session.get("network_policy_id") or app.provider_config.network_policy_id or
++            app.provider_config.network_policy_sha256):
++        raise HTTPException(422, "NETWORK_POLICY_SINGLE_WORKER; room app switching is unsupported")
+ 
+     wayland_mode = session.get("wayland_mode", True)
+     current_home = session.get("host_mount_path")
+@@ -864,6 +901,7 @@ async def ensure_container_for_session(
+     return container_info
+ 
+ 
++@guard_session
+ async def stop_container_in_session(session_id: str, target_app_id: str) -> None:
+     """Stop one app's container inside a session without ending the session."""
+     session = state.sessions.get(session_id)
+@@ -872,48 +910,34 @@ async def stop_container_in_session(session_id: str, target_app_id: str) -> None
+     container_info = session["container_registry"].get(target_app_id)
+     if not container_info:
+         return
+-    app = state.installed_apps.get(target_app_id)
+-    if app:
+-        await DockerProvider(app.model_dump()).stop(container_info["instance_id"])
++    await DockerProvider({"provider_config": {}}).stop(container_info["instance_id"])
+     del session["container_registry"][target_app_id]
+     await config_store.save_sessions()
+ 
+ 
+ async def stop_session(session_id: str) -> None:
+-    """Stop every container of a session and remove its ephemeral storage.
+-
+-    Args:
+-        session_id: The session to stop.
+-    """
+-    from . import collaboration
+-
+-    logger.info("[%s] Stopping session...", session_id)
+-    try:
+-        await collaboration.notify_session_ended(session_id)
+-    except Exception as exc:  # noqa: BLE001
+-        logger.error("[%s] Failed to broadcast session end: %s", session_id, exc)
++    """Confirm every container is removed before deleting session ownership."""
++    from .profile_runtime import (
++        StopProfileRequest,
++        lifecycle_lock,
++        stop_profile_locked,
++        stop_session_confirmed,
++    )
+ 
+-    async with state.sessions_lock:
+-        session = state.sessions.pop(session_id, None)
+-    if not session:
+-        logger.warning("Attempted to stop session %s, but it was not found in the database.", session_id)
++    data = state.sessions.get(session_id)
++    if not data:
+         return
+-
+-    registry = session.get("container_registry") or {}
+-    if not registry and "provider_app_id" in session:
+-        registry = {session["provider_app_id"]: {"instance_id": session["instance_id"]}}
+-    for app_id, container_info in registry.items():
+-        app = state.installed_apps.get(app_id)
+-        if not app:
+-            continue
+-        try:
+-            await DockerProvider(app.model_dump()).stop(container_info["instance_id"])
+-        except Exception as exc:  # noqa: BLE001
+-            logger.error("[%s] Failed to stop container for app %s: %s", session_id, app_id, exc)
+-
+-    await config_store.save_sessions()
+-    for key in ("host_mount_path", "shared_files_path"):
+-        path = session.get(key)
+-        if path and path.startswith(ephemeral_base()) and os.path.exists(path):
+-            await asyncio.to_thread(shutil.rmtree, path, ignore_errors=True)
+-    logger.info("[%s] Session stopped and cleaned up successfully.", session_id)
++    path = data.get("host_mount_path")
++    key = "home:" + os.path.realpath(path) if path else "stop:" + session_id
++    async with lifecycle_lock(key):
++        data = state.sessions.get(session_id)
++        if data and data.get("network_policy_id"):
++            request = StopProfileRequest(
++                profile_id=data["profile_id"], operation_id=data["operation_id"],
++                application_id=data["provider_app_id"], session_id=session_id,
++                bootstrap_url=(data.get("launch_context") or {}).get("value") or "direct-stop",
++                network_policy_id=data["network_policy_id"], network_policy_sha256=data["network_policy_sha256"],
++            )
++            await stop_profile_locked(data["username"], data["home_name"], request)
++        else:
++            await stop_session_confirmed(session_id)
+diff --git a/server/app/models.py b/server/app/models.py
+index cb0bd25..e46a70e 100644
+--- a/server/app/models.py
++++ b/server/app/models.py
+@@ -47,6 +47,10 @@ class LaunchRequestURL(BaseModel):
+     url: str
+     application_id: str
+     home_name: str | None = None
++    profile_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,128}$")
++    operation_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
++    network_policy_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,128}$")
++    network_policy_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+     language: str | None = None
+     timezone: str | None = None
+     selected_gpu: str | None = None
+@@ -149,6 +153,9 @@ class InstalledAppProviderConfig(AvailableAppProviderConfig):
+     """Provider configuration of an installed app, with admin env overrides."""
+ 
+     env: list[EnvVar] | None = []
++    # Operator-pinned requirement, separate from caller-controlled launch data.
++    network_policy_id: str | None = None
++    network_policy_sha256: str | None = None
+ 
+ 
+ class InstalledApp(BaseModel):
+@@ -431,6 +438,11 @@ class ActiveSessionInfo(BaseModel):
+     session_url: str
+     launch_context: dict[str, Any] | None = None
+     is_collaboration: bool = False
++    home_name: str | None = None
++    instance_id: str | None = None
++    profile_id: str = ""
++    operation_id: str = ""
++    lifecycle_phase: str = "running"
+ 
+ 
+ class SendFileToSessionRequest(BaseModel):
+diff --git a/server/app/network_probe.py b/server/app/network_probe.py
+new file mode 100644
+index 0000000..d2c7f0c
+--- /dev/null
++++ b/server/app/network_probe.py
+@@ -0,0 +1,90 @@
++"""One-shot readiness evidence, executed in the future Worker's internal network."""
++
++import json
++import socket
++import ssl
++import struct
++import sys
++import time
++from urllib.parse import urlsplit
++
++
++def exact(connection, size):
++    """Read a complete SOCKS5 or HTTP field."""
++    data = b""
++    while len(data) < size:
++        chunk = connection.recv(size - len(data))
++        if not chunk:
++            raise OSError("incomplete reply")
++        data += chunk
++    return data
++
++
++def blocked(family, address):
++    """Return whether one numerical direct TCP destination is unreachable."""
++    with socket.socket(family, socket.SOCK_STREAM) as connection:
++        connection.settimeout(1)
++        return connection.connect_ex(address) != 0
++
++
++def main():
++    """Emit bounded readiness evidence without credentials or response content."""
++    relay, url, timeout, ca_file = sys.argv[1:]
++    timeout = int(timeout)
++    parsed = urlsplit(url)
++    host, port = parsed.hostname, parsed.port or 443
++    # Reaching either numerical address directly is a failed startup gate.
++    ipv4 = blocked(socket.AF_INET, ("1.1.1.1", 443))
++    ipv6 = blocked(socket.AF_INET6, ("2606:4700:4700::1111", 443, 0, 0))
++    try:
++        socket.getaddrinfo(host, port)
++        dns_blocked = False
++    except socket.gaierror:
++        dns_blocked = True
++    connection = None
++    for attempt in range(2):
++        try:
++            connection = socket.create_connection((relay, 1080), timeout=timeout)
++            break
++        except OSError:
++            if attempt:
++                raise
++            time.sleep(0.3)
++    with connection:
++        connection.sendall(b"\x05\x01\x00")
++        if exact(connection, 2) != b"\x05\x00":
++            raise OSError("relay handshake rejected")
++        domain = host.encode("idna")
++        connection.sendall(b"\x05\x01\x00\x03" + bytes([len(domain)]) + domain + struct.pack("!H", port))
++        header = exact(connection, 4)
++        if header[:3] != b"\x05\x00\x00":
++            raise OSError("upstream connection rejected")
++        size = {1: 4, 4: 16}.get(header[3])
++        if header[3] == 3:
++            size = exact(connection, 1)[0]
++        if size is None:
++            raise OSError("invalid bound address")
++        exact(connection, size + 2)
++        context = ssl.create_default_context(cafile=ca_file or None)
++        with context.wrap_socket(connection, server_hostname=host) as secure:
++            target = (parsed.path or "/") + ("?" + parsed.query if parsed.query else "")
++            authority = host if port == 443 else f"{host}:{port}"
++            secure.sendall(f"GET {target} HTTP/1.1\r\nHost: {authority}\r\nUser-Agent: browser-platform-network-probe/1\r\nConnection: close\r\n\r\n".encode("ascii"))
++            response = b""
++            while b"\r\n" not in response and len(response) < 4096:
++                response += exact(secure, 1)
++            parts = response.split(b" ", 2)
++            tls_ok = len(parts) >= 2 and parts[1] == b"200"
++    evidence = {"proxy_tls": tls_ok, "direct_ipv4_blocked": ipv4,
++                "direct_ipv6_blocked": ipv6, "local_dns_blocked": dns_blocked}
++    print(json.dumps(evidence), flush=True)
++    return 0 if all(evidence.values()) else 1
++
++
++if __name__ == "__main__":
++    try:
++        code = main()
++    except Exception:
++        print(json.dumps({"error_code": "NETWORK_PROBE_FAILED"}), flush=True)
++        code = 1
++    sys.exit(code)
+diff --git a/server/app/network_runtime.py b/server/app/network_runtime.py
+new file mode 100644
+index 0000000..eeafe3e
+--- /dev/null
++++ b/server/app/network_runtime.py
+@@ -0,0 +1,779 @@
++"""Generation-bound Relay and Docker networks, owned exclusively by SealSkin.
++
++Every allocation starts with a durable reservation. Failed or interrupted
++allocations keep that reservation until Worker removal and resource cleanup
++have both been verified. Administrative policies contain immutable references;
++ordinary launch requests cannot supply images, credentials, or probe targets.
++"""
++
++from __future__ import annotations
++
++import asyncio
++import hashlib
++import ipaddress
++import json
++import logging
++import os
++import re
++import socket
++import stat
++import tempfile
++import time
++from pathlib import Path
++from typing import Any
++from urllib.parse import urlsplit
++
++from docker.errors import NotFound
++from fastapi import HTTPException
++from pydantic import BaseModel, ConfigDict, Field, ValidationError
++
++from .docker_utils import get_docker_client, translate_path_to_host
++from .settings import settings
++
++PREFIX = "io.browser-platform."
++NAME = r"^[A-Za-z0-9_-]{1,128}$"
++SHA = r"^[a-f0-9]{64}$"
++KINDS = {"internal", "egress", "relay", "guard", "probe"}
++logger = logging.getLogger(__name__)
++
++
++class NetworkPolicy(BaseModel):
++    """One operator-approved, immutable SOCKS5 policy revision."""
++
++    model_config = ConfigDict(extra="forbid", strict=True)
++    username: str = Field(pattern=NAME)
++    profile_id: str = Field(pattern=NAME)
++    home_name: str = Field(pattern=NAME)
++    application_id: str = Field(min_length=1, max_length=256)
++    relay_image: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
++    probe_image: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
++    upstream_host: str = Field(min_length=1, max_length=253)
++    upstream_port: int = Field(ge=1, le=65535)
++    username_file: str = ""
++    username_sha256: str = ""
++    password_file: str = ""
++    password_sha256: str = ""
++    probe_url: str = Field(min_length=1, max_length=2048)
++    probe_ca_file: str = ""
++    probe_ca_sha256: str = ""
++    probe_timeout_seconds: int = Field(default=10, ge=1, le=20)
++
++
++def base_dir() -> Path:
++    """Use SealSkin's persistent metadata directory, outside browser Homes."""
++    return Path(settings.sessions_db_path).parent
++
++
++def policy_path() -> Path:
++    """Locate the operator-owned policy registry."""
++    return base_dir() / "profile-network-policies.json"
++
++
++def runtime_dir() -> Path:
++    """Locate durable reservations and generated Relay configuration."""
++    return base_dir() / "profile-network-runtime"
++
++
++def digest(value: Any) -> str:
++    """Hash a canonical JSON representation with all policy defaults resolved."""
++    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
++
++
++def reject(code: str, status_code: int = 409):
++    """Return a stable diagnostic without paths, credentials or Docker bodies."""
++    raise HTTPException(status_code, code)
++
++
++def unique_json(pairs):
++    """Reject ambiguous duplicate metadata fields."""
++    value = {}
++    for key, item in pairs:
++        if key in value:
++            raise ValueError("Duplicate JSON key")
++        value[key] = item
++    return value
++
++
++def read_json(path: Path):
++    """Read bounded, private, regular metadata files."""
++    if path.is_symlink() or not stat.S_ISREG(path.stat().st_mode) or path.stat().st_mode & 0o077:
++        reject("NETWORK_METADATA_PERMISSIONS", 503)
++    raw = path.read_bytes()
++    if len(raw) > 1024 * 1024:
++        reject("NETWORK_METADATA_TOO_LARGE", 503)
++    return json.loads(raw, object_pairs_hook=unique_json)
++
++
++def secret_source(path: str, expected: str) -> str:
++    """Check a fixed file revision, without copying it to Worker storage."""
++    source = Path(path)
++    root = base_dir() / "network-secrets"
++    if (not re.fullmatch(SHA, expected) or not source.is_absolute() or source.is_symlink() or root.is_symlink() or
++            source.parent != root or source.name in {".", ".."}):
++        reject("NETWORK_SECRET_REFERENCE_INVALID", 422)
++    try:
++        info = source.stat()
++        if (not stat.S_ISDIR(root.stat().st_mode) or root.stat().st_mode & 0o077 or
++                not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_nlink != 1):
++            reject("NETWORK_SECRET_PERMISSIONS", 422)
++        if hashlib.sha256(source.read_bytes()).hexdigest() != expected:
++            reject("NETWORK_SECRET_REVISION_MISMATCH", 422)
++    except OSError as exc:
++        raise HTTPException(503, "NETWORK_SECRET_UNAVAILABLE") from exc
++    return translate_path_to_host(str(source))
++
++
++def policies() -> dict[str, NetworkPolicy]:
++    """Validate the complete registry; malformed metadata fails closed."""
++    if not policy_path().exists():
++        return {}
++    try:
++        raw = read_json(policy_path())
++        if set(raw) != {"version", "policies"} or raw["version"] != 1 or not isinstance(raw["policies"], dict):
++            reject("NETWORK_POLICY_REGISTRY_INVALID", 503)
++        result = {}
++        for key, value in raw["policies"].items():
++            if not re.fullmatch(NAME, key):
++                reject("NETWORK_POLICY_ID_INVALID", 503)
++            result[key] = NetworkPolicy(**value)
++        return result
++    except (OSError, ValueError, ValidationError, TypeError) as exc:
++        raise HTTPException(503, "NETWORK_POLICY_REGISTRY_INVALID") from exc
++
++
++def policy_for_launch(params: dict[str, Any], app=None) -> tuple[str, NetworkPolicy] | None:
++    """Protect configured applications even if a caller omits the policy ref."""
++    registry = policies()
++    policy_id = params.get("network_policy_id")
++    revision = params.get("network_policy_sha256")
++    config = getattr(app, "provider_config", None)
++    required_id = getattr(config, "network_policy_id", "")
++    required_sha = getattr(config, "network_policy_sha256", "")
++    protected = any(p.username == params["username"] and p.application_id == params["application_id"]
++                    for p in registry.values())
++    if not policy_id and not revision and not protected and not required_id and not required_sha:
++        return None
++    if not required_id or not required_sha or (policy_id, revision) != (required_id, required_sha):
++        reject("NETWORK_POLICY_APPLICATION_REF_MISMATCH", 422)
++    policy = registry.get(policy_id or "")
++    if not policy or not revision or digest(policy.model_dump()) != revision:
++        reject("NETWORK_POLICY_REFERENCE_MISMATCH", 422)
++    expected = (policy.username, policy.profile_id, policy.home_name, policy.application_id)
++    actual = tuple(params.get(key) for key in ("username", "profile_id", "home_name", "application_id"))
++    if actual != expected or not re.fullmatch(r"[a-f0-9]{32}", params.get("operation_id") or ""):
++        reject("NETWORK_POLICY_OWNERSHIP_MISMATCH", 422)
++    if params.get("launch_in_room_mode") or params.get("forced_rw_mount"):
++        reject("NETWORK_POLICY_REQUIRES_EXCLUSIVE_HOME", 422)
++    parsed = urlsplit(policy.probe_url)
++    try:
++        valid_port = parsed.port is None or 1 <= parsed.port <= 65535
++    except ValueError:
++        valid_port = False
++    if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.fragment or
++            not valid_port or not policy.probe_url.isascii() or
++            any(ord(c) <= 32 or ord(c) == 127 for c in policy.probe_url) or
++            not re.fullmatch(r"[A-Za-z0-9.-]+", parsed.hostname)):
++        reject("NETWORK_PROBE_TARGET_INVALID", 422)
++    if (not re.fullmatch(r"[A-Za-z0-9.:-]+", policy.upstream_host) or
++            bool(policy.username_file) != bool(policy.password_file)):
++        reject("NETWORK_UPSTREAM_INVALID", 422)
++    for kind in ("username", "password", "probe_ca"):
++        path, expected_sha = getattr(policy, kind + "_file"), getattr(policy, kind + "_sha256")
++        if path or expected_sha:
++            secret_source(path, expected_sha)
++    return policy_id, policy
++
++
++def reservation_path(identity: dict[str, str]) -> Path:
++    """Map one exact host Home source to its reservation file."""
++    return runtime_dir() / (identity["home_hash"] + ".json")
++
++
++def read_reservation(identity: dict[str, str]) -> dict[str, Any] | None:
++    """Verify the journal's identity and policy snapshot before using it."""
++    path = reservation_path(identity)
++    if not path.exists():
++        return None
++    try:
++        value = read_json(path)
++        if (value.get("version") != 1 or value.get("identity", {}).get("home_hash") != identity["home_hash"] or
++                any(value["identity"].get(k) != identity[k] for k in ("scope", "owner", "home", "home_source")) or
++                value.get("phase") not in {"preparing", "ready", "worker_starting", "running", "stopping"} or
++                not re.fullmatch(NAME, value.get("policy_id", "")) or
++                not re.fullmatch(SHA, value.get("policy_sha256", "")) or
++                not re.fullmatch(SHA, value.get("controller_id", "")) or
++                not re.fullmatch(r"[a-f0-9]{32}", value["identity"].get("operation", ""))):
++            reject("NETWORK_RESERVATION_INVALID", 503)
++        policy = NetworkPolicy(**value["policy"])
++        if (digest(policy.model_dump()) != value["policy_sha256"] or
++                (policy.username, policy.profile_id, policy.home_name, policy.application_id) !=
++                tuple(value["identity"].get(k) for k in ("owner", "profile", "home", "app"))):
++            reject("NETWORK_RESERVATION_INVALID", 503)
++        allocation = value.get("allocation")
++        if allocation and (any(not re.fullmatch(SHA, allocation.get(k, "")) for k in ("internal_id", "egress_id", "relay_id")) or
++                           allocation.get("internal_name") != resource_name(value["identity"], "internal") or
++                           allocation.get("policy_id") != value["policy_id"] or
++                           allocation.get("policy_sha256") != value["policy_sha256"]):
++            reject("NETWORK_RESERVATION_INVALID", 503)
++        if allocation and allocation.get("enforcement_version") == 1:
++            if (not re.fullmatch(SHA, allocation.get("guard_id", "")) or
++                    not re.fullmatch(SHA, allocation.get("guard_config_sha256", ""))):
++                reject("NETWORK_RESERVATION_INVALID", 503)
++            for key in ("guard_ip", "controller_ip", "relay_ip"):
++                if ipaddress.ip_address(allocation[key]).version != 4:
++                    reject("NETWORK_RESERVATION_INVALID", 503)
++        return value
++    except (OSError, ValueError, TypeError, KeyError) as exc:
++        raise HTTPException(503, "NETWORK_RESERVATION_INVALID") from exc
++
++
++def atomic_json(path: Path, value, exclusive=False) -> None:
++    """Durably write private JSON, optionally refusing an existing reservation."""
++    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
++    if path.parent.is_symlink() or path.parent.stat().st_mode & 0o077:
++        reject("NETWORK_METADATA_PERMISSIONS", 503)
++    fd, temporary = tempfile.mkstemp(prefix=".network-", dir=path.parent)
++    try:
++        with os.fdopen(fd, "w") as handle:
++            os.fchmod(handle.fileno(), 0o600)
++            json.dump(value, handle, sort_keys=True)
++            handle.flush()
++            os.fsync(handle.fileno())
++        if exclusive:
++            try:
++                os.link(temporary, path)
++            except FileExistsError as exc:
++                raise HTTPException(409, "NETWORK_HOME_RESERVED") from exc
++        else:
++            os.replace(temporary, path)
++        sync_directory(path.parent)
++    finally:
++        if os.path.exists(temporary):
++            os.unlink(temporary)
++
++
++def save_reservation(value: dict[str, Any], exclusive=False) -> None:
++    """Commit reservation state before the next external side effect."""
++    atomic_json(reservation_path(value["identity"]), value, exclusive)
++
++
++def sync_directory(path: Path):
++    """Make metadata renames and removals durable."""
++    fd = os.open(path, os.O_DIRECTORY | os.O_RDONLY)
++    try:
++        os.fsync(fd)
++    finally:
++        os.close(fd)
++
++
++def resource_name(identity: dict[str, str], kind: str) -> str:
++    """Make interrupted creates discoverable without a successful API reply."""
++    key = {k: identity[k] for k in ("scope", "owner", "home_hash", "operation")}
++    return "bp-" + kind + "-" + digest(key)[:40]
++
++
++def resource_labels(reservation: dict[str, Any], kind: str) -> dict[str, str]:
++    """Attach immutable generation and policy ownership to Docker resources."""
++    labels = {PREFIX + key: value for key, value in reservation["identity"].items() if key != "home_source"}
++    labels.update({PREFIX + "network-version": "1", PREFIX + "role": kind,
++                   PREFIX + "network-policy": reservation["policy_id"],
++                   PREFIX + "network-policy-sha256": reservation["policy_sha256"]})
++    return labels
++
++
++def resource_summary(identifier, kind, labels, identity, status, recorded=False):
++    """Project Docker metadata to the non-secret runtime protocol."""
++    owned = (labels.get(PREFIX + "network-version") == "1" and
++             all(labels.get(PREFIX + key) == identity[key] for key in ("scope", "owner", "home", "home_hash")) and
++             labels.get(PREFIX + "role") == kind and
++             bool(re.fullmatch(NAME, labels.get(PREFIX + "profile", ""))) and
++             bool(re.fullmatch(r"[a-f0-9]{32}", labels.get(PREFIX + "operation", ""))) and
++             bool(re.fullmatch(NAME, labels.get(PREFIX + "network-policy", ""))) and
++             bool(re.fullmatch(SHA, labels.get(PREFIX + "network-policy-sha256", ""))))
++    return {"id": identifier, "kind": kind, "owned": owned, "recorded": recorded, "status": status,
++            "profile_id": labels.get(PREFIX + "profile", ""), "operation_id": labels.get(PREFIX + "operation", ""),
++            "app_id": labels.get(PREFIX + "app", ""), "policy_id": labels.get(PREFIX + "network-policy", ""),
++            "policy_sha256": labels.get(PREFIX + "network-policy-sha256", "")}
++
++
++async def inventory(identity: dict[str, str], containers=None) -> list[dict[str, Any]]:
++    """Include reservations, exited containers and both networks; never guess absence."""
++    reservation = read_reservation(identity)
++    try:
++        client = await asyncio.to_thread(get_docker_client)
++        if containers is None:
++            containers = await asyncio.to_thread(client.containers.list, all=True, ignore_removed=True)
++        networks = await asyncio.to_thread(client.networks.list)
++    except Exception as exc:
++        raise HTTPException(503, "NETWORK_INVENTORY_UNAVAILABLE") from exc
++    expected = {resource_name(reservation["identity"], k): k for k in KINDS} if reservation else {}
++    result = []
++    if reservation:
++        result.append(resource_summary(identity["home_hash"], "reservation", {
++            **resource_labels(reservation, "reservation")}, identity, reservation["phase"], True))
++    for obj in [*networks, *containers]:
++        attrs = obj.attrs
++        is_container = "Config" in attrs
++        labels = (attrs.get("Config", {}).get("Labels") if is_container else attrs.get("Labels")) or {}
++        name = attrs.get("Name", getattr(obj, "name", "")).lstrip("/")
++        related = all(labels.get(PREFIX + k) == identity[k] for k in ("scope", "owner", "home_hash"))
++        kind = expected.get(name) or labels.get(PREFIX + "role")
++        if kind not in KINDS or (not related and name not in expected):
++            continue
++        state = attrs.get("State", {}).get("Status", "unknown") if is_container else "present"
++        summary = resource_summary(obj.id, kind, labels, identity, state, name in expected)
++        if kind in {"internal", "egress"} and (is_container or attrs.get("Driver") != "bridge" or
++                bool(attrs.get("Internal")) != (kind == "internal") or attrs.get("EnableIPv6")):
++            summary["owned"] = False
++        if kind in {"relay", "guard", "probe"} and not is_container:
++            summary["owned"] = False
++        result.append(summary)
++    return result
++
++
++def validate_resources(resources, request) -> None:
++    """Validate every resource before permitting any generation cleanup."""
++    for item in resources:
++        if (not item["owned"] or item["profile_id"] != request.profile_id or
++                item["operation_id"] != request.operation_id or item["app_id"] != request.application_id or
++                item["policy_id"] != request.network_policy_id or
++                item["policy_sha256"] != request.network_policy_sha256):
++            reject("NETWORK_RESOURCE_OWNERSHIP_UNPROVEN")
++
++
++async def set_phase(identity, phase):
++    """Persist an existing allocation's phase without changing its owner."""
++    reservation = read_reservation(identity)
++    if reservation:
++        if any(reservation["identity"][k] != identity[k] for k in ("operation", "profile", "app")):
++            reject("NETWORK_GENERATION_CHANGED")
++        reservation["phase"] = phase
++        await asyncio.to_thread(save_reservation, reservation)
++
++
++def self_container(client):
++    """Self lookup must never choose another deployment by partial name."""
++    container = client.containers.get(os.uname()[1])
++    config_source = os.path.normpath(translate_path_to_host(str(base_dir())))
++    mounts = container.attrs.get("Mounts", [])
++    if not any(config_source == m.get("Source") or config_source.startswith(m.get("Source", "") + "/") for m in mounts if m.get("Source")):
++        reject("NETWORK_CONTROL_OWNER_UNPROVEN", 503)
++    return container
++
++
++async def get_or_create_network(client, reservation, kind):
++    """Create only an exact generation network, refusing name collisions."""
++    name = resource_name(reservation["identity"], kind)
++    labels = resource_labels(reservation, kind)
++    try:
++        network = await asyncio.to_thread(client.networks.get, name)
++    except NotFound:
++        network = await asyncio.to_thread(client.networks.create, name, driver="bridge", internal=kind == "internal",
++                                         enable_ipv6=False, check_duplicate=True, labels=labels)
++    await asyncio.to_thread(network.reload)
++    if (network.attrs.get("Labels") != labels or network.attrs.get("Driver") != "bridge" or
++            bool(network.attrs.get("Internal")) != (kind == "internal") or network.attrs.get("EnableIPv6")):
++        reject("NETWORK_NAME_COLLISION")
++    return network
++
++
++def resolve_upstream(policy):
++    """Resolve the operator endpoint once, outside every Worker namespace.
++
++    The selected numeric address is frozen for this generation. The Relay has
++    no DNS access and cannot silently follow a changed hostname while active.
++    Website names remain SOCKS5 domain requests resolved by the upstream proxy.
++    """
++    values = socket.getaddrinfo(policy.upstream_host, policy.upstream_port,
++                               family=socket.AF_INET, type=socket.SOCK_STREAM)
++    addresses = list(dict.fromkeys(item[4][0] for item in values))
++    if not addresses or any(ipaddress.ip_address(value).is_loopback or
++                            ipaddress.ip_address(value).is_unspecified or
++                            ipaddress.ip_address(value).is_multicast for value in addresses):
++        reject("NETWORK_UPSTREAM_ADDRESS_INVALID", 422)
++    return addresses
++
++
++async def wait_guard(guard, expected):
++    """Do not share this namespace until initialization and privilege drop pass."""
++    deadline = time.monotonic() + 10
++    while time.monotonic() < deadline:
++        await asyncio.to_thread(guard.reload)
++        if guard.status != "running":
++            reject("NETWORK_GUARD_NOT_READY", 503)
++        raw = await asyncio.to_thread(guard.logs, stdout=True, stderr=False, tail=1)
++        try:
++            if json.loads(raw) == {"network_guard_ready": expected}:
++                return
++        except (ValueError, TypeError):
++            pass
++        await asyncio.sleep(0.1)
++    reject("NETWORK_GUARD_NOT_READY", 503)
++
++
++async def prepare(identity: dict[str, str], policy_id: str, policy: NetworkPolicy, display_port=3000) -> dict[str, Any]:
++    """Reserve first, construct isolated resources, then probe from the Worker network."""
++    if read_reservation(identity) or await inventory(identity):
++        reject("NETWORK_HOME_RESERVED")
++    client = await asyncio.to_thread(get_docker_client)
++    try:
++        image = await asyncio.to_thread(client.images.get, policy.relay_image)
++        await asyncio.to_thread(client.images.get, policy.probe_image)
++    except NotFound as exc:
++        raise HTTPException(422, "NETWORK_IMAGE_UNAVAILABLE") from exc
++    if (image.attrs.get("Config", {}).get("Labels") or {}).get(PREFIX + "network-guard") != "1":
++        reject("NETWORK_ENFORCEMENT_IMAGE_REQUIRED", 422)
++    if type(display_port) is not int or not 1 <= display_port <= 65535:
++        reject("NETWORK_DISPLAY_PORT_INVALID", 422)
++    controller = await asyncio.to_thread(self_container, client)
++    reservation = {"version": 1, "identity": identity, "policy_id": policy_id,
++                   "policy_sha256": digest(policy.model_dump()), "policy": policy.model_dump(),
++                   "phase": "preparing", "controller_id": controller.id}
++    await asyncio.to_thread(save_reservation, reservation, True)
++    try:
++        addresses = await asyncio.to_thread(resolve_upstream, policy)
++        reservation["upstream_ipv4"] = addresses
++        await asyncio.to_thread(save_reservation, reservation)
++        internal = await get_or_create_network(client, reservation, "internal")
++        egress = await get_or_create_network(client, reservation, "egress")
++        subnet = internal.attrs["IPAM"]["Config"][0]["Subnet"]
++        subnet_value = ipaddress.ip_network(subnet)
++        if subnet_value.version != 4 or not 16 <= subnet_value.prefixlen <= 29:
++            reject("NETWORK_IPV4_REQUIRED", 503)
++        # Each generation owns an empty bridge. Explicit addresses keep Relay
++        # restarts and controller replacement consistent with the frozen ACL.
++        relay_address, controller_address, guard_address = (
++            str(subnet_value.network_address + offset) for offset in (2, 3, 4)
++        )
++        directory = runtime_dir() / (identity["home_hash"] + "-" + identity["operation"])
++        directory.mkdir(mode=0o700, exist_ok=True)
++        relay_config = {"listen_address": "0.0.0.0:1080", "upstream_host": addresses[0],
++                        "upstream_port": policy.upstream_port, "client_cidrs": [subnet],
++                        "dial_timeout_seconds": policy.probe_timeout_seconds, "idle_timeout_seconds": 300,
++                        "username_file": "/run/secrets/username" if policy.username_file else "",
++                        "password_file": "/run/secrets/password" if policy.password_file else ""}
++        config = directory / "relay.json"
++        await asyncio.to_thread(atomic_json, config, relay_config)
++        volumes = {translate_path_to_host(str(config)): {"bind": "/run/config/relay.json", "mode": "ro"}}
++        relay_network = {"version": 1, "role": "relay", "uid": settings.puid, "gid": settings.pgid,
++                         "internal_cidr": subnet, "upstream_ip": addresses[0], "upstream_port": policy.upstream_port}
++        relay_network_path = directory / "relay-network.json"
++        await asyncio.to_thread(atomic_json, relay_network_path, relay_network)
++        volumes[translate_path_to_host(str(relay_network_path))] = {"bind": "/run/config/network.json", "mode": "ro"}
++        for kind in ("username", "password"):
++            if getattr(policy, kind + "_file"):
++                source = secret_source(getattr(policy, kind + "_file"), getattr(policy, kind + "_sha256"))
++                volumes[source] = {"bind": "/run/secrets/" + kind, "mode": "ro"}
++        relay = await asyncio.to_thread(client.containers.create, image=policy.relay_image,
++                                       name=resource_name(identity, "relay"),
++                                       command=["--network-config", "/run/config/network.json", "--relay-config", "/run/config/relay.json"],
++                                       labels=resource_labels(reservation, "relay"), network=internal.name,
++                                       networking_config={internal.name: client.api.create_endpoint_config(
++                                           aliases=["profile-relay"], ipv4_address=relay_address)},
++                                       volumes=volumes, user="0:0", read_only=True,
++                                       cap_drop=["ALL"], cap_add=["NET_ADMIN", "SETUID", "SETGID", "SETPCAP", "DAC_READ_SEARCH"],
++                                       security_opt=["no-new-privileges:true"], dns=["127.0.0.1"],
++                                       mem_limit="64m", nano_cpus=500000000, pids_limit=64, restart_policy={"Name": "no"})
++        await asyncio.to_thread(egress.connect, relay)
++        await asyncio.to_thread(relay.start)
++        await asyncio.to_thread(relay.reload)
++        relay_ip = relay.attrs["NetworkSettings"]["Networks"][internal.name]["IPAddress"]
++        if relay_ip != relay_address:
++            reject("NETWORK_RELAY_ADDRESS_UNKNOWN", 503)
++        await asyncio.to_thread(internal.connect, controller, ipv4_address=controller_address)
++        await asyncio.to_thread(controller.reload)
++        controller_ip = controller.attrs["NetworkSettings"]["Networks"][internal.name]["IPAddress"]
++        if controller_ip != controller_address:
++            reject("NETWORK_CONTROL_ADDRESS_UNKNOWN", 503)
++        guard_config = {"version": 1, "role": "worker", "uid": settings.puid, "gid": settings.pgid,
++                        "internal_cidr": subnet, "relay_ip": relay_ip, "controller_ip": controller_ip,
++                        "display_port": display_port}
++        guard_path = directory / "worker-network.json"
++        await asyncio.to_thread(atomic_json, guard_path, guard_config)
++        guard = await asyncio.to_thread(client.containers.create, image=policy.relay_image,
++                                       name=resource_name(identity, "guard"),
++                                       command=["--network-config", "/run/config/network.json"],
++                                       labels=resource_labels(reservation, "guard"), network=internal.name,
++                                       networking_config={internal.name: client.api.create_endpoint_config(ipv4_address=guard_address)},
++                                       volumes={translate_path_to_host(str(guard_path)): {"bind": "/run/config/network.json", "mode": "ro"}},
++                                       user="0:0", read_only=True, cap_drop=["ALL"],
++                                       cap_add=["NET_ADMIN", "SETUID", "SETGID", "SETPCAP", "DAC_READ_SEARCH"],
++                                       security_opt=["no-new-privileges:true"], dns=["127.0.0.1"],
++                                       dns_opt=["timeout:1", "attempts:1"], extra_hosts={"profile-relay": relay_ip},
++                                       mem_limit="64m", nano_cpus=500000000, pids_limit=32, restart_policy={"Name": "no"})
++        await asyncio.to_thread(guard.start)
++        await wait_guard(guard, digest(guard_config))
++        guard_ip = guard.attrs["NetworkSettings"]["Networks"][internal.name]["IPAddress"]
++        if guard_ip != guard_address:
++            reject("NETWORK_GUARD_ADDRESS_UNKNOWN", 503)
++        allocation = {"internal_id": internal.id, "internal_name": internal.name, "egress_id": egress.id,
++                      "relay_id": relay.id, "relay_ip": relay_ip, "policy_id": policy_id,
++                      "policy_sha256": reservation["policy_sha256"], "enforcement_version": 1,
++                      "guard_id": guard.id, "guard_ip": guard_ip, "controller_ip": controller_ip,
++                      "guard_config_sha256": digest(guard_config)}
++        reservation["allocation"] = allocation
++        await asyncio.to_thread(save_reservation, reservation)
++        await run_probe(client, reservation, policy, allocation)
++        reservation["phase"], reservation["ready_at"] = "ready", time.time()
++        await asyncio.to_thread(save_reservation, reservation)
++        return allocation
++    except HTTPException:
++        raise
++    except Exception as exc:
++        raise HTTPException(503, "NETWORK_PREPARE_INCOMPLETE; reservation retained") from exc
++
++
++async def restore_controller_attachment(identity):
++    """Reconnect only a fully verified live generation, without touching Workers.
++
++    The frozen guard admits display requests from one controller address. A new
++    controller may reclaim that address only after the former controller stops.
++    Partial, legacy and stopped generations retain their journal for reconcile.
++    """
++    from .profile_runtime import StopProfileRequest, inspect_home, validate_stop_inventory
++
++    reservation = read_reservation(identity)
++    allocation = reservation.get("allocation") if reservation else None
++    if (not allocation or allocation.get("enforcement_version") != 1 or
++            reservation["phase"] not in {"ready", "worker_starting", "running"}):
++        return "retained"
++    snapshot = await inspect_home(identity["owner"], identity["home"])
++    request = StopProfileRequest(profile_id=identity["profile"], operation_id=identity["operation"],
++                                 application_id=identity["app"], bootstrap_url="network-controller-recovery",
++                                 network_policy_id=reservation["policy_id"],
++                                 network_policy_sha256=reservation["policy_sha256"])
++    validate_stop_inventory(snapshot, request)
++    if not snapshot["workers"]:
++        return "retained"
++    if len(snapshot["workers"]) != 1 or snapshot["workers"][0]["status"] != "running":
++        reject("NETWORK_RECOVERY_WORKER_NOT_RUNNING")
++    expected = {"reservation": identity["home_hash"], **{
++        kind: allocation[kind + "_id"] for kind in ("internal", "egress", "relay", "guard")
++    }}
++    if (len(snapshot["resources"]) != len(expected) or
++            any(expected.get(item["kind"]) != item["id"] for item in snapshot["resources"])):
++        reject("NETWORK_RECOVERY_RESOURCES_INCOMPLETE")
++    client = await asyncio.to_thread(get_docker_client)
++    controller = await asyncio.to_thread(self_container, client)
++    previous = None
++    if reservation["controller_id"] != controller.id:
++        try:
++            previous = await asyncio.to_thread(client.containers.get, reservation["controller_id"])
++        except NotFound:
++            pass
++        if previous and previous.status not in {"exited", "dead"}:
++            reject("NETWORK_PREVIOUS_CONTROLLER_PRESENT")
++    internal = await asyncio.to_thread(client.networks.get, allocation["internal_id"])
++    egress = await asyncio.to_thread(client.networks.get, allocation["egress_id"])
++    guard = await asyncio.to_thread(client.containers.get, allocation["guard_id"])
++    relay = await asyncio.to_thread(client.containers.get, allocation["relay_id"])
++    worker = await asyncio.to_thread(client.containers.get, snapshot["workers"][0]["instance_id"])
++    for kind, resource in (("internal", internal), ("egress", egress), ("relay", relay), ("guard", guard)):
++        labels = resource.attrs.get("Config", {}).get("Labels") if kind in {"relay", "guard"} else resource.attrs.get("Labels")
++        if (any((labels or {}).get(key) != value for key, value in resource_labels(reservation, kind).items()) or
++                resource.name != resource_name(identity, kind)):
++            reject("NETWORK_RESOURCE_OWNERSHIP_UNPROVEN")
++    if worker.attrs.get("HostConfig", {}).get("NetworkMode") != "container:" + guard.id:
++        reject("NETWORK_RECOVERY_NAMESPACE_CHANGED")
++    if guard.status != "running":
++        reject("NETWORK_GUARD_NOT_READY", 503)
++    guard_networks = guard.attrs.get("NetworkSettings", {}).get("Networks", {})
++    relay_networks = relay.attrs.get("NetworkSettings", {}).get("Networks", {})
++    if (set(guard_networks) != {internal.name} or
++            guard_networks[internal.name].get("IPAddress") != allocation["guard_ip"] or
++            set(relay_networks) != {internal.name, egress.name} or
++            relay.status == "running" and relay_networks[internal.name].get("IPAddress") != allocation["relay_ip"]):
++        reject("NETWORK_RECOVERY_TOPOLOGY_CHANGED")
++    guard_path = runtime_dir() / (identity["home_hash"] + "-" + identity["operation"]) / "worker-network.json"
++    guard_config = read_json(guard_path)
++    if (digest(guard_config) != allocation["guard_config_sha256"] or
++            guard_config.get("controller_ip") != allocation["controller_ip"] or
++            guard_config.get("relay_ip") != allocation["relay_ip"] or
++            guard_config.get("internal_cidr") != internal.attrs["IPAM"]["Config"][0]["Subnet"] or
++            not any(m.get("Source") == translate_path_to_host(str(guard_path)) and
++                    m.get("Destination") == "/run/config/network.json" for m in guard.attrs.get("Mounts", []))):
++        reject("NETWORK_RECOVERY_GUARD_CHANGED")
++    allowed = {guard.id, relay.id, controller.id, reservation["controller_id"]}
++    if (set(internal.attrs.get("Containers", {})) - allowed or
++            set(egress.attrs.get("Containers", {})) - {relay.id}):
++        reject("NETWORK_HAS_FOREIGN_ENDPOINTS")
++    for identifier, endpoint in internal.attrs.get("Containers", {}).items():
++        if (endpoint.get("IPv4Address", "").split("/")[0] == allocation["controller_ip"] and
++                identifier not in {controller.id, reservation["controller_id"]}):
++            reject("NETWORK_CONTROL_ADDRESS_OCCUPIED")
++    attached = controller.attrs.get("NetworkSettings", {}).get("Networks", {}).get(internal.name)
++    if attached and attached.get("IPAddress") != allocation["controller_ip"]:
++        reject("NETWORK_CONTROL_ADDRESS_CHANGED")
++    # All ownership, topology and ACL checks precede the first mutation.
++    if previous and internal.name in previous.attrs.get("NetworkSettings", {}).get("Networks", {}):
++        await asyncio.to_thread(internal.disconnect, previous)
++    if not attached:
++        try:
++            await asyncio.to_thread(internal.connect, controller, ipv4_address=allocation["controller_ip"])
++        except Exception:
++            # A lost connect reply can still have attached the exact endpoint.
++            await asyncio.to_thread(controller.reload)
++            attached = controller.attrs.get("NetworkSettings", {}).get("Networks", {}).get(internal.name, {})
++            if attached.get("IPAddress") != allocation["controller_ip"]:
++                raise
++    await asyncio.to_thread(controller.reload)
++    await asyncio.to_thread(internal.reload)
++    endpoint = internal.attrs.get("Containers", {}).get(controller.id, {})
++    attached = controller.attrs.get("NetworkSettings", {}).get("Networks", {}).get(internal.name, {})
++    if (attached.get("IPAddress") != allocation["controller_ip"] or
++            endpoint.get("IPv4Address", "").split("/")[0] != allocation["controller_ip"]):
++        reject("NETWORK_CONTROL_ATTACHMENT_UNCONFIRMED", 503)
++    reservation["controller_id"] = controller.id
++    await asyncio.to_thread(save_reservation, reservation)
++    return "attached"
++
++
++async def restore_controller_networks():
++    """Isolate each startup recovery failure; never discard a reservation."""
++    from .profile_runtime import home_path, lifecycle_lock, runtime_identity
++
++    root = runtime_dir()
++    if not root.exists():
++        return []
++    results = []
++    try:
++        if root.is_symlink() or root.stat().st_mode & 0o077:
++            reject("NETWORK_METADATA_PERMISSIONS", 503)
++        paths = sorted(root.glob("*.json"))
++    except Exception as exc:
++        logger.error("Network controller recovery could not read its journal (%s).", type(exc).__name__)
++        return [{"result": "failed", "reason": "NETWORK_METADATA_UNAVAILABLE"}]
++    for path in paths:
++        try:
++            if not re.fullmatch(SHA, path.stem):
++                reject("NETWORK_RESERVATION_INVALID", 503)
++            stored = read_json(path)["identity"]
++            if any(not isinstance(stored.get(k), str) or not re.fullmatch(NAME, stored[k]) for k in ("owner", "home", "profile")):
++                reject("NETWORK_RESERVATION_INVALID", 503)
++            identity = runtime_identity(stored["owner"], stored["home"], stored["app"], stored["profile"], stored["operation"])
++            if identity != stored or path != reservation_path(identity):
++                reject("NETWORK_RESERVATION_INVALID", 503)
++            async with lifecycle_lock("home:" + home_path(identity["owner"], identity["home"])):
++                result = await restore_controller_attachment(identity)
++            results.append({"home_hash": path.stem, "result": result})
++        except Exception as exc:
++            reason = exc.detail if isinstance(exc, HTTPException) and str(exc.detail).startswith("NETWORK_") else type(exc).__name__
++            logger.warning("Network controller recovery retained one journal (%s).", reason)
++            results.append({"home_hash": path.stem, "result": "failed", "reason": reason})
++    return results
++
++
++async def run_probe(client, reservation, policy, allocation):
++    """Require verified TLS through Relay and blocked direct paths before launch."""
++    from .providers.docker_provider import DockerProvider
++
++    script = Path(__file__).with_name("network_probe.py").read_text()
++    volumes = {}
++    if policy.probe_ca_file:
++        volumes[secret_source(policy.probe_ca_file, policy.probe_ca_sha256)] = {"bind": "/run/probe-ca.pem", "mode": "ro"}
++    probe = await asyncio.to_thread(client.containers.create, image=policy.probe_image,
++                                   name=resource_name(reservation["identity"], "probe"),
++                                   entrypoint=["python3", "-c", script], command=[allocation["relay_ip"], policy.probe_url,
++                                   str(policy.probe_timeout_seconds), "/run/probe-ca.pem" if volumes else ""],
++                                   labels=resource_labels(reservation, "probe"),
++                                   network_mode="container:" + allocation["guard_id"], volumes=volumes,
++                                   user=f"{settings.puid}:{settings.pgid}", read_only=True, cap_drop=["ALL"],
++                                   security_opt=["no-new-privileges:true"], mem_limit="128m", nano_cpus=500000000,
++                                   pids_limit=32, restart_policy={"Name": "no"})
++    await asyncio.to_thread(probe.start)
++    result = await asyncio.to_thread(probe.wait, timeout=policy.probe_timeout_seconds * 2 + 10)
++    raw = await asyncio.to_thread(probe.logs, stdout=True, stderr=False, tail=1)
++    try:
++        evidence = json.loads(raw)
++    except (ValueError, TypeError) as exc:
++        raise HTTPException(503, "NETWORK_PROBE_INVALID") from exc
++    if result.get("StatusCode") != 0 or evidence != {"proxy_tls": True, "direct_ipv4_blocked": True,
++                                                  "direct_ipv6_blocked": True, "local_dns_blocked": True}:
++        reject("NETWORK_PROBE_FAILED", 503)
++    await DockerProvider({"provider_config": {}}).stop(probe.id)
++
++
++async def remove_after_exit(identity, request):
++    """Called under the Home lock, after independent absence of all Home workers."""
++    from .profile_runtime import inspect_home
++    from .providers.docker_provider import DockerProvider
++
++    snapshot = await inspect_home(identity["owner"], identity["home"])
++    if snapshot["records"] or snapshot["workers"]:
++        reject("NETWORK_WORKER_EXIT_UNCONFIRMED", 503)
++    resources = snapshot["resources"]
++    validate_resources(resources, request)
++    if not resources:
++        return
++    await set_phase(identity, "stopping")
++    client = await asyncio.to_thread(get_docker_client)
++    reservation = read_reservation(identity)
++    controller = await asyncio.to_thread(self_container, client)
++    if reservation and reservation["controller_id"] != controller.id:
++        try:
++            previous = await asyncio.to_thread(client.containers.get, reservation["controller_id"])
++        except NotFound:
++            previous = None
++        if previous and previous.status not in {"exited", "dead"}:
++            reject("NETWORK_PREVIOUS_CONTROLLER_PRESENT")
++    allowed = {r["id"] for r in resources if r["kind"] in {"relay", "guard", "probe"}}
++    allowed.add(controller.id)
++    if reservation:
++        allowed.add(reservation["controller_id"])
++    networks = []
++    for item in resources:
++        if item["kind"] not in {"internal", "egress"}:
++            continue
++        try:
++            network = await asyncio.to_thread(client.networks.get, item["id"])
++        except NotFound:
++            continue
++        # A foreign attachment must not lose its connectivity during cleanup.
++        if set(network.attrs.get("Containers", {})) - allowed:
++            reject("NETWORK_HAS_FOREIGN_ENDPOINTS")
++        networks.append(network)
++    provider = DockerProvider({"provider_config": {}})
++    for item in resources:
++        if item["kind"] in {"probe", "guard", "relay"}:
++            await provider.stop(item["id"])
++    for network in networks:
++        try:
++            await asyncio.to_thread(network.reload)
++            endpoints = network.attrs.get("Containers", {})
++            for controller_id in {controller.id, reservation["controller_id"] if reservation else controller.id}:
++                if controller_id in endpoints:
++                    await asyncio.to_thread(network.disconnect, controller_id)
++            await asyncio.to_thread(network.remove)
++            try:
++                await asyncio.to_thread(client.networks.get, network.id)
++            except NotFound:
++                continue
++            reject("NETWORK_REMOVAL_UNCONFIRMED", 503)
++        except NotFound:
++            pass
++    remaining = await inventory(identity)
++    if any(item["kind"] != "reservation" for item in remaining):
++        reject("NETWORK_RESOURCES_STILL_PRESENT", 503)
++    directory = runtime_dir() / (identity["home_hash"] + "-" + identity["operation"])
++    if directory.exists():
++        import shutil
++        await asyncio.to_thread(shutil.rmtree, directory)
++    path = reservation_path(identity)
++    if path.exists():
++        path.unlink()
++        sync_directory(path.parent)
++
++
++def enforce_worker_network(run_kwargs, allocation):
++    """Share the pre-filtered namespace; Worker never receives firewall authority."""
++    if (run_kwargs.get("network_mode") or run_kwargs.get("privileged") or run_kwargs.get("ports") or
++            run_kwargs.get("publish_all_ports") or run_kwargs.get("cap_add") or run_kwargs.get("pid_mode") == "host" or
++            run_kwargs.get("ipc_mode") == "host" or run_kwargs.get("volumes_from") or run_kwargs.get("links")):
++        reject("NETWORK_WORKER_OVERRIDE_FORBIDDEN", 422)
++    if allocation.get("enforcement_version") != 1 or not re.fullmatch(SHA, allocation.get("guard_id", "")):
++        reject("NETWORK_GUARD_ALLOCATION_REQUIRED", 422)
++    for key in ("network", "networking_config", "dns", "dns_opt", "dns_search", "extra_hosts"):
++        run_kwargs.pop(key, None)
++    run_kwargs["network_mode"] = "container:" + allocation["guard_id"]
++    run_kwargs["cap_drop"] = sorted(set(run_kwargs.get("cap_drop") or []) | {"NET_ADMIN", "NET_RAW"})
++    run_kwargs["security_opt"] = sorted(set(run_kwargs.get("security_opt") or []) | {"no-new-privileges:true"})
+diff --git a/server/app/persistence.py b/server/app/persistence.py
+index 1852e39..070924e 100644
+--- a/server/app/persistence.py
++++ b/server/app/persistence.py
+@@ -109,6 +109,11 @@ def write_yaml_sync(path: str, data: Any) -> None:
+             except OSError:
+                 pass
+         os.replace(temp_path, path)
++        directory_fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
++        try:
++            os.fsync(directory_fd)
++        finally:
++            os.close(directory_fd)
+         _LAST_WRITTEN[os.path.abspath(path)] = content_hash(encoded)
+     except Exception:
+         if os.path.exists(temp_path):
+diff --git a/server/app/profile_runtime.py b/server/app/profile_runtime.py
+new file mode 100644
+index 0000000..ad4fc5c
+--- /dev/null
++++ b/server/app/profile_runtime.py
+@@ -0,0 +1,363 @@
++"""Verified Profile lifecycle for the pinned browser-platform integration.
++
++Docker remains owned by SealSkin. Inventory contains no access tokens, browser
++credentials or environment values. An orphan can be stopped only when its
++immutable labels identify this deployment, user, Home and launch operation.
++"""
++
++from __future__ import annotations
++
++import asyncio
++import functools
++import hashlib
++import inspect
++import logging
++import os
++import re
++import shutil
++from typing import Any
++from weakref import WeakValueDictionary
++
++from fastapi import APIRouter, Depends, HTTPException, Response
++from pydantic import BaseModel, Field, ValidationError
++
++from . import config_store, network_runtime
++from .docker_utils import get_docker_client, translate_path_to_host
++from .fsutil import safe_join
++from .security import EncryptedRoute, get_decrypted_request_body, verify_token
++from .settings import settings
++from .state import state
++
++logger = logging.getLogger(__name__)
++PREFIX = "io.browser-platform."
++VERSION = 1
++NAME = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
++OPERATION = re.compile(r"^[a-f0-9]{32}$")
++INSTANCE = re.compile(r"^[a-f0-9]{64}$")
++_LOCKS: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
++
++
++def lifecycle_lock(key: str) -> asyncio.Lock:
++    """Share a lock while an operation or a waiter still references it."""
++    lock = _LOCKS.get(key)
++    if lock is None:
++        lock = asyncio.Lock()
++        _LOCKS[key] = lock
++    return lock
++
++
++def home_path(username: str, home_name: str) -> str:
++    """Resolve one named persistent Home, refusing symlinks outside storage."""
++    if not NAME.fullmatch(home_name) or home_name.lower() == "cleanroom":
++        raise HTTPException(422, "A named persistent Home is required.")
++    try:
++        user_root = safe_join(settings.storage_path, username)
++        return safe_join(user_root, home_name)
++    except ValueError as exc:
++        raise HTTPException(422, "Invalid Home path.") from exc
++
++
++def scope_id() -> str:
++    """Bind labels to the stable host location of this server's state file."""
++    path = os.path.normpath(translate_path_to_host(settings.sessions_db_path))
++    return hashlib.sha256(path.encode()).hexdigest()
++
++
++def home_source(username: str, home_name: str) -> str:
++    """Return the host-side source expected at the Worker's /config mount."""
++    return os.path.normpath(translate_path_to_host(home_path(username, home_name)))
++
++
++def runtime_identity(username: str, home_name: str, app_id: str,
++                     profile_id: str | None, operation_id: str | None) -> dict[str, str]:
++    """Build reserved launch metadata independently of app Docker overrides."""
++    source = home_source(username, home_name)
++    return {"scope": scope_id(), "owner": username, "home": home_name,
++            "home_source": source, "home_hash": hashlib.sha256(source.encode()).hexdigest(),
++            "app": app_id, "profile": profile_id or "", "operation": operation_id or ""}
++
++
++def instance_ids(data: dict[str, Any]) -> list[str]:
++    """Include the primary instance even when the room registry is incomplete."""
++    ids = {data.get("instance_id")}
++    ids.update(entry.get("instance_id") for entry in (data.get("container_registry") or {}).values())
++    ids.discard(None)
++    ids.discard("")
++    if not ids or any(not isinstance(value, str) or not INSTANCE.fullmatch(value) for value in ids):
++        raise HTTPException(409, "Session instance ownership is incomplete; recovery is required.")
++    return sorted(ids)
++
++
++def record_summary(session_id: str, data: dict[str, Any]) -> dict[str, Any]:
++    """Project a session record to non-secret lifecycle fields."""
++    return {"session_id": session_id, "app_id": data.get("provider_app_id", ""),
++            "profile_id": data.get("profile_id", ""), "operation_id": data.get("operation_id", ""),
++            "network_policy_id": data.get("network_policy_id", ""),
++            "network_policy_sha256": data.get("network_policy_sha256", ""),
++            "instance_ids": instance_ids(data), "phase": data.get("lifecycle_phase", "running"),
++            "launch_context": data.get("launch_context"),
++            "is_collaboration": data.get("is_collaboration", False)}
++
++
++async def inspect_home(username: str, home_name: str) -> dict[str, Any]:
++    """Inspect both YAML ownership and every container mounting this Home.
++
++    Docker failures are errors, never an empty inventory. Exited and paused
++    containers still reserve a Home until verified removal.
++    """
++    path = home_path(username, home_name)
++    source = home_source(username, home_name)
++    records = []
++    async with state.sessions_lock:
++        for sid, data in state.sessions.items():
++            if data.get("username") == username and data.get("host_mount_path") and os.path.realpath(data["host_mount_path"]) == path:
++                records.append(record_summary(sid, data))
++    by_instance: dict[str, list[dict[str, Any]]] = {}
++    for record in records:
++        for instance_id in record["instance_ids"]:
++            by_instance.setdefault(instance_id, []).append(record)
++    try:
++        client = await asyncio.to_thread(get_docker_client)
++        containers = await asyncio.to_thread(client.containers.list, all=True, ignore_removed=True)
++    except Exception as exc:
++        logger.error("Profile inventory could not query Docker (%s).", type(exc).__name__)
++        raise HTTPException(503, "Docker inventory is unavailable; Home remains reserved.") from exc
++    workers = []
++    for container in containers:
++        attrs = container.attrs
++        mounts = attrs.get("Mounts", [])
++        if not any(m.get("Destination") == settings.container_config_path and
++                   os.path.normpath(m.get("Source", "")) == source for m in mounts):
++            continue
++        labels = attrs.get("Config", {}).get("Labels") or {}
++        policy_id = labels.get(PREFIX + "network-policy", "")
++        policy_sha = labels.get(PREFIX + "network-policy-sha256", "")
++        ownership = by_instance.get(container.id, [])
++        managed = labels.get(PREFIX + "version") == str(VERSION)
++        owned = (managed and labels.get(PREFIX + "scope") == scope_id() and
++                 labels.get(PREFIX + "owner") == username and labels.get(PREFIX + "home") == home_name and
++                 labels.get(PREFIX + "home_hash") == hashlib.sha256(source.encode()).hexdigest())
++        if managed:
++            sid = labels.get(PREFIX + "session", "")
++            app_id = labels.get(PREFIX + "app", "")
++            profile_id = labels.get(PREFIX + "profile", "")
++            operation_id = labels.get(PREFIX + "operation", "")
++            if ownership and (len(ownership) != 1 or ownership[0]["session_id"] != sid):
++                owned = False
++        elif len(ownership) == 1:
++            record = ownership[0]
++            owned = True
++            sid, app_id = record["session_id"], record["app_id"]
++            profile_id, operation_id = record["profile_id"], record["operation_id"]
++            policy_id, policy_sha = record["network_policy_id"], record["network_policy_sha256"]
++            # A policy-managed Worker is never adopted through legacy records.
++            if policy_id or policy_sha:
++                owned = False
++        else:
++            sid = app_id = profile_id = operation_id = ""
++        workers.append({"instance_id": container.id, "session_id": sid, "app_id": app_id,
++                        "profile_id": profile_id, "operation_id": operation_id,
++                        "network_policy_id": policy_id, "network_policy_sha256": policy_sha,
++                        "status": attrs.get("State", {}).get("Status", "unknown"),
++                        "owned": bool(owned), "managed": managed, "recorded": bool(ownership)})
++    identity = runtime_identity(username, home_name, "", "", "")
++    resources = await network_runtime.inventory(identity, containers)
++    return {"version": VERSION, "home_name": home_name, "records": records, "workers": workers,
++            "network_runtime_version": 1, "network_enforcement_version": 1, "resources": resources}
++
++
++def guard_launch(function):
++    """Serialize explicit named-Home launches with stop, including legacy API calls."""
++    signature = inspect.signature(function)
++
++    @functools.wraps(function)
++    async def guarded(*args, **kwargs):
++        values = signature.bind(*args, **kwargs)
++        values.apply_defaults()
++        params = values.arguments
++        profile_id, operation_id = params.get("profile_id"), params.get("operation_id")
++        home_name, username = params.get("home_name"), params["username"]
++        app = state.installed_apps.get(params["application_id"])
++        policy = network_runtime.policy_for_launch(params, app)
++        named = (home_name and home_name.lower() != "cleanroom" and app and
++                 not app.is_meta_app and app.home_directories and
++                 params["effective_settings"].get("persistent_storage") and not params.get("forced_rw_mount"))
++        if profile_id is not None or operation_id is not None:
++            if (not isinstance(profile_id, str) or not NAME.fullmatch(profile_id) or
++                    not isinstance(operation_id, str) or not OPERATION.fullmatch(operation_id) or
++                    not named or params.get("launch_in_room_mode")):
++                raise HTTPException(422, "Profile launches require one named Home and a valid operation; rooms are unsupported.")
++        if not named:
++            if policy:
++                raise HTTPException(422, "Network policies require a named persistent Home.")
++            return await function(*args, **kwargs)
++        async with lifecycle_lock("home:" + home_path(username, home_name)):
++            snapshot = await inspect_home(username, home_name)
++            if snapshot["records"] or snapshot["workers"] or snapshot["resources"]:
++                raise HTTPException(409, "Home is reserved by an existing session, container or network allocation.")
++            if policy:
++                params["_network_policy"] = policy
++            return await function(*values.args, **values.kwargs)
++
++    return guarded
++
++
++def guard_session(function):
++    """Serialize room registry changes with full-session stop."""
++    signature = inspect.signature(function)
++
++    @functools.wraps(function)
++    async def guarded(*args, **kwargs):
++        session_id = signature.bind(*args, **kwargs).arguments["session_id"]
++        async with lifecycle_lock("session:" + session_id):
++            if state.sessions.get(session_id, {}).get("lifecycle_phase") == "stopping":
++                raise HTTPException(409, "Session is stopping.")
++            return await function(*args, **kwargs)
++
++    return guarded
++
++
++async def stop_session_confirmed(session_id: str) -> None:
++    """Persist intent, remove every Docker instance, then commit record deletion."""
++    from . import collaboration
++    from .launch import ephemeral_base
++    from .providers.docker_provider import DockerProvider
++
++    async with lifecycle_lock("session:" + session_id):
++        session = state.sessions.get(session_id)
++        if session is None:
++            return
++        ids = instance_ids(session)
++        session["lifecycle_phase"] = "stopping"
++        try:
++            await config_store.save_sessions()
++        except Exception as exc:
++            raise HTTPException(503, "Stop intent could not be saved; session remains reserved.") from exc
++        try:
++            provider = DockerProvider({"provider_config": {}})
++            for instance_id in ids:
++                await provider.stop(instance_id)
++        except Exception as exc:
++            logger.error("[%s] Stop remains pending (%s).", session_id, type(exc).__name__)
++            raise HTTPException(503, "Container removal was not confirmed; stop can be retried.") from exc
++        async with state.sessions_lock:
++            if state.sessions.get(session_id) is not session:
++                raise HTTPException(409, "Session ownership changed during stop.")
++            del state.sessions[session_id]
++        try:
++            await config_store.save_sessions()
++        except Exception as exc:
++            async with state.sessions_lock:
++                state.sessions.setdefault(session_id, session)
++            raise HTTPException(503, "Containers are gone but stop commit failed; retry is required.") from exc
++        try:
++            await collaboration.notify_session_ended(session_id)
++        except Exception as exc:
++            logger.warning("[%s] Could not broadcast completed stop (%s).", session_id, type(exc).__name__)
++        base = os.path.realpath(ephemeral_base())
++        for key in ("host_mount_path", "shared_files_path"):
++            path = session.get(key)
++            if path and os.path.realpath(path).startswith(base + os.sep):
++                await asyncio.to_thread(shutil.rmtree, path, ignore_errors=True)
++
++
++class StopProfileRequest(BaseModel):
++    """Expected launch generation; never a wildcard stop for a Home."""
++
++    profile_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,128}$")
++    operation_id: str = Field(pattern=r"^[a-f0-9]{32}$")
++    application_id: str = Field(min_length=1, max_length=256)
++    session_id: str = Field(default="", max_length=128)
++    bootstrap_url: str = Field(min_length=1, max_length=4096)
++    network_policy_id: str = Field(default="", pattern=r"^(?:[A-Za-z0-9_-]{1,128})?$")
++    network_policy_sha256: str = Field(default="", pattern=r"^(?:[a-f0-9]{64})?$")
++
++
++def record_matches(record: dict[str, Any], request: StopProfileRequest) -> bool:
++    """Require immutable generation metadata or the exact legacy launch marker."""
++    if (record["is_collaboration"] or record["app_id"] != request.application_id or
++            record.get("network_policy_id", "") != request.network_policy_id or
++            record.get("network_policy_sha256", "") != request.network_policy_sha256):
++        return False
++    if record["profile_id"] or record["operation_id"]:
++        return record["profile_id"] == request.profile_id and record["operation_id"] == request.operation_id
++    context = record.get("launch_context") or {}
++    return bool(request.session_id and record["session_id"] == request.session_id and
++                context.get("type") == "url" and context.get("value") == request.bootstrap_url)
++
++
++def validate_stop_inventory(snapshot: dict[str, Any], request: StopProfileRequest) -> None:
++    """Refuse stale generations, foreign mounts and ambiguous legacy orphans."""
++    records = {r["session_id"]: r for r in snapshot["records"]}
++    network_runtime.validate_resources(snapshot["resources"], request)
++    if any(not record_matches(r, request) for r in records.values()):
++        raise HTTPException(409, "Home belongs to a different or unproven launch operation.")
++    for worker in snapshot["workers"]:
++        if (not worker["owned"] or worker["app_id"] != request.application_id or
++                worker.get("network_policy_id", "") != request.network_policy_id or
++                worker.get("network_policy_sha256", "") != request.network_policy_sha256):
++            raise HTTPException(409, "Container ownership is unproven; no container was stopped.")
++        if worker["profile_id"] or worker["operation_id"]:
++            matches = worker["profile_id"] == request.profile_id and worker["operation_id"] == request.operation_id
++        else:
++            matches = worker["session_id"] in records and record_matches(records[worker["session_id"]], request)
++        if not matches:
++            raise HTTPException(409, "Container belongs to a different launch operation.")
++
++
++async def stop_profile_locked(username: str, home_name: str, request: StopProfileRequest) -> None:
++    """The caller holds the Home lock; network cleanup follows Worker removal."""
++    from .providers.docker_provider import DockerProvider
++
++    snapshot = await inspect_home(username, home_name)
++    validate_stop_inventory(snapshot, request)
++    identity = runtime_identity(username, home_name, request.application_id, request.profile_id, request.operation_id)
++    # This intent survives direct UI stops whose Session record is later removed.
++    await network_runtime.set_phase(identity, "stopping")
++    for record in snapshot["records"]:
++        await stop_session_confirmed(record["session_id"])
++    try:
++        if snapshot["workers"]:
++            provider = DockerProvider({"provider_config": {}})
++            for worker in snapshot["workers"]:
++                await provider.stop(worker["instance_id"])
++    except Exception as exc:
++        raise HTTPException(503, "Orphan removal was not confirmed; stop can be retried.") from exc
++    remaining = await inspect_home(username, home_name)
++    if remaining["records"] or remaining["workers"]:
++        raise HTTPException(503, "Home is still reserved; stop was not completed.")
++    try:
++        await network_runtime.remove_after_exit(identity, request)
++    except HTTPException:
++        raise
++    except Exception as exc:
++        raise HTTPException(503, "NETWORK_CLEANUP_INCOMPLETE; reservation retained") from exc
++    remaining = await inspect_home(username, home_name)
++    if remaining["records"] or remaining["workers"] or remaining["resources"]:
++        raise HTTPException(503, "Home resources still exist; stop was not completed.")
++
++
++router = APIRouter(prefix="/api/profile-runtime", route_class=EncryptedRoute,
++                   dependencies=[Depends(verify_token)])
++
++
++@router.get("/{home_name}")
++async def get_profile_runtime(home_name: str, user: dict[str, Any] = Depends(verify_token)) -> dict[str, Any]:
++    """Return a fresh Docker-backed snapshot while holding the Home lock."""
++    async with lifecycle_lock("home:" + home_path(user["username"], home_name)):
++        return await inspect_home(user["username"], home_name)
++
++
++@router.post("/{home_name}/stop", status_code=204)
++async def stop_profile_runtime(home_name: str,
++                               decrypted_body: dict[str, Any] = Depends(get_decrypted_request_body),
++                               user: dict[str, Any] = Depends(verify_token)) -> Response:
++    """Stop one generation, including labeled orphans, and verify an empty Home."""
++    try:
++        request = StopProfileRequest(**decrypted_body)
++    except ValidationError as exc:
++        raise HTTPException(422, "Invalid Profile stop request.") from exc
++    username = user["username"]
++    async with lifecycle_lock("home:" + home_path(username, home_name)):
++        await stop_profile_locked(username, home_name, request)
++        return Response(status_code=204)
+diff --git a/server/app/providers/docker_provider.py b/server/app/providers/docker_provider.py
+index d662432..09c1a91 100644
+--- a/server/app/providers/docker_provider.py
++++ b/server/app/providers/docker_provider.py
+@@ -133,6 +133,11 @@ class DockerProvider(BaseProvider):
+         """
+         config = self.app_config["provider_config"]
+         image = config["image"]
++        allocation = self.app_config.get("network_runtime")
++        required = (config.get("network_policy_id") or "", config.get("network_policy_sha256") or "")
++        if any(required) or allocation:
++            if not allocation or (allocation["policy_id"], allocation["policy_sha256"]) != required:
++                raise HTTPException(422, "NETWORK_POLICY_ALLOCATION_REQUIRED")
+ 
+         try:
+             await asyncio.to_thread(self.client.images.get, image)
+@@ -154,6 +159,37 @@ class DockerProvider(BaseProvider):
+         if config.get("docker_overrides"):
+             run_kwargs.update(config["docker_overrides"])
+ 
++        identity = self.app_config.get("profile_runtime")
++        if identity:
++            from ..profile_runtime import PREFIX, VERSION
++            from ..settings import settings
++
++            actual_volumes = run_kwargs.get("volumes") or {}
++            if not isinstance(actual_volumes, dict) or not any(
++                source == identity["home_source"] and isinstance(bind, dict) and
++                bind.get("bind") == settings.container_config_path
++                for source, bind in actual_volumes.items()
++            ):
++                raise HTTPException(422, "Profile Home mount cannot be replaced by Docker overrides.")
++            for mount in run_kwargs.get("mounts") or []:
++                target = (mount.get("Target") or mount.get("target") or "").rstrip("/")
++                if not target or settings.container_config_path == target or settings.container_config_path.startswith(target + "/"):
++                    raise HTTPException(422, "Profile Home mount cannot be shadowed by Docker overrides.")
++            labels = dict(run_kwargs.get("labels") or {})
++            labels.update({PREFIX + key: value for key, value in identity.items() if key != "home_source"})
++            labels[PREFIX + "version"] = str(VERSION)
++            labels[PREFIX + "session"] = session_id
++            run_kwargs["labels"] = labels
++            # Docker reserves the name atomically, including across API restarts.
++            run_kwargs["name"] = "bp-home-" + identity["home_hash"]
++
++        if allocation:
++            from ..network_runtime import enforce_worker_network
++
++            enforce_worker_network(run_kwargs, allocation)
++            run_kwargs["labels"]["io.browser-platform.network-policy"] = allocation["policy_id"]
++            run_kwargs["labels"]["io.browser-platform.network-policy-sha256"] = allocation["policy_sha256"]
++
+         if gpu_config:
+             if gpu_config["type"] == "nvidia":
+                 run_kwargs["runtime"] = "nvidia"
+@@ -225,28 +261,41 @@ class DockerProvider(BaseProvider):
+         return {"instance_id": container.id, "ip": ip_address, "port": config["port"]}
+ 
+     async def stop(self, instance_id: str) -> None:
+-        """Stop (and remove) a container.
++        """Return only after a fresh Docker lookup proves the container is gone.
+ 
+-        Args:
+-            instance_id: Container id.
++        Errors propagate so callers retain their durable ownership record.
++        An auto-remove race is successful only after the final lookup returns
++        NotFound. An exited container still reserves its Home until removed.
+         """
+-        try:
+-            container = await asyncio.to_thread(self.client.containers.get, instance_id)
+-            if container.status == "running":
+-                logger.info("Stopping container %s...", container.short_id)
+-                await asyncio.to_thread(container.stop, timeout=5)
+-                logger.info("Stopped container %s.", container.short_id)
+-            else:
+-                logger.info("Container %s is not running, removing it.", container.short_id)
+-                try:
++        deadline = time.monotonic() + 15
++        stop_requested = False
++        while True:
++            try:
++                container = await asyncio.to_thread(self.client.containers.get, instance_id)
++            except NotFound:
++                return
++            if time.monotonic() >= deadline:
++                raise RuntimeError("Container removal could not be confirmed before the deadline.")
++            try:
++                if container.status == "paused":
++                    await asyncio.to_thread(container.unpause)
++                if container.status in {"running", "restarting", "paused"}:
++                    if stop_requested:
++                        raise RuntimeError("Docker acknowledged stop but the container is still active.")
++                    await asyncio.to_thread(container.stop, timeout=5)
++                    stop_requested = True
++                    # Re-inspect before choosing removal, including auto-remove.
++                    continue
++                if container.status not in {"created", "exited", "dead", "removing"}:
++                    raise RuntimeError("Unexpected container state during stop.")
++                if container.status != "removing":
+                     await asyncio.to_thread(container.remove)
+-                except APIError as exc:
+-                    if exc.response is None or exc.response.status_code != 409:
+-                        raise
+-        except NotFound:
+-            logger.warning("Attempted to stop container %s, but it was not found.", instance_id)
+-        except Exception as exc:  # noqa: BLE001
+-            logger.error("Error stopping container %s: %s", instance_id, exc)
++            except NotFound:
++                pass
++            except APIError as exc:
++                if exc.response is None or exc.response.status_code != 409:
++                    raise
++            await asyncio.sleep(0.1)
+ 
+     async def _wait_for_container_ready(
+         self,
+@@ -288,7 +337,13 @@ class DockerProvider(BaseProvider):
+         while time.time() - start_time < timeout:
+             try:
+                 await asyncio.to_thread(container.reload)
+-                ip_address = self._get_container_ip(container.attrs)
++                allocation = self.app_config.get("network_runtime")
++                if allocation:
++                    if container.attrs.get("HostConfig", {}).get("NetworkMode") != "container:" + allocation["guard_id"]:
++                        raise RuntimeError("Worker left its guarded network namespace")
++                    ip_address = allocation["guard_ip"]
++                else:
++                    ip_address = self._get_container_ip(container.attrs)
+                 if not ip_address:
+                     await asyncio.sleep(0.5)
+                     continue
+diff --git a/server/app/routers/launch.py b/server/app/routers/launch.py
+index f710b5b..2d7c3a9 100644
+--- a/server/app/routers/launch.py
++++ b/server/app/routers/launch.py
+@@ -76,6 +76,10 @@ async def launch_url(
+         launch_in_room_mode=req.launch_in_room_mode,
+         wayland_mode=req.wayland_mode,
+         timezone=req.timezone,
++        profile_id=req.profile_id,
++        operation_id=req.operation_id,
++        network_policy_id=req.network_policy_id,
++        network_policy_sha256=req.network_policy_sha256,
+     )
+ 
+ 
+diff --git a/server/app/routers/sessions.py b/server/app/routers/sessions.py
+index 1c5925f..d93bfe4 100644
+--- a/server/app/routers/sessions.py
++++ b/server/app/routers/sessions.py
+@@ -56,6 +56,11 @@ def session_info(session_id: str, data: dict[str, Any], for_owner: bool = True)
+         session_url=url,
+         launch_context=data.get("launch_context"),
+         is_collaboration=data.get("is_collaboration", False),
++        home_name=data.get("home_name"),
++        instance_id=data.get("instance_id"),
++        profile_id=data.get("profile_id", ""),
++        operation_id=data.get("operation_id", ""),
++        lifecycle_phase=data.get("lifecycle_phase", "running"),
+     )
+ 
+ 
+diff --git a/server/tests/test_network_runtime.py b/server/tests/test_network_runtime.py
+new file mode 100644
+index 0000000..4a561c1
+--- /dev/null
++++ b/server/tests/test_network_runtime.py
+@@ -0,0 +1,689 @@
++"""Generation ownership and partial Docker failures must retain the Home."""
++
++from __future__ import annotations
++
++import asyncio
++import hashlib
++import json
++import os
++from pathlib import Path
++from types import SimpleNamespace
++from unittest.mock import AsyncMock
++
++import pytest
++from docker.errors import APIError, NotFound
++from fastapi import HTTPException
++
++from app import config_store, docker_utils
++from app import network_runtime as network
++from app import profile_runtime as runtime
++from app.launch import ensure_container_for_session, launch_application, stop_session
++from app.models import InstalledApp
++from app.providers import docker_provider
++from app.state import state
++
++OPERATION = "b" * 32
++RELAY_IMAGE = "sha256:" + "c" * 64
++PROBE_IMAGE = "sha256:" + "d" * 64
++WORKER_IMAGE = "sha256:" + "e" * 64
++POLICY_ID = "qa-socks-r1"
++EVIDENCE = {"proxy_tls": True, "direct_ipv4_blocked": True,
++            "direct_ipv6_blocked": True, "local_dns_blocked": True}
++
++
++class FakeNetwork:
++    def __init__(self, docker, name, internal, labels):
++        self.docker, self.name = docker, name
++        self.id = docker.identifier()
++        self.attrs = {"Id": self.id, "Name": name, "Labels": labels, "Driver": "bridge",
++                      "Internal": internal, "EnableIPv6": False,
++                      "IPAM": {"Config": [{"Subnet": "172.28.1.0/24"}]}, "Containers": {}}
++
++    def reload(self):
++        return None
++
++    def connect(self, container, ipv4_address=None):
++        if isinstance(container, str):
++            container = self.docker.containers.get(container)
++        address = ipv4_address or f"172.28.1.{len(self.attrs['Containers']) + 2}"
++        assert not any(value["IPv4Address"].split("/")[0] == address for value in self.attrs["Containers"].values())
++        self.docker.event("connect", container.role)
++        self.attrs["Containers"][container.id] = {"Name": container.name, "IPv4Address": address + "/24"}
++        container.attrs["NetworkSettings"]["Networks"][self.name] = {"IPAddress": address}
++        if self.docker.lost_connect_reply:
++            self.docker.lost_connect_reply = False
++            raise APIError("connect response lost after attachment")
++
++    def disconnect(self, instance):
++        if not isinstance(instance, str):
++            instance = instance.id
++        self.docker.event("disconnect", self.docker.containers.get(instance).role)
++        self.attrs["Containers"].pop(instance, None)
++        container = self.docker.containers.get(instance)
++        container.attrs["NetworkSettings"]["Networks"].pop(self.name, None)
++
++    def remove(self):
++        self.docker.event("remove", self.attrs["Labels"][network.PREFIX + "role"])
++        if self.docker.network_remove_error:
++            raise APIError("network remove failed")
++        assert not self.attrs["Containers"]
++        self.docker.network_values.pop(self.id)
++
++
++class FakeContainer:
++    def __init__(self, docker, kwargs, role="controller"):
++        self.docker, self.kwargs, self.role = docker, kwargs, role
++        self.id = docker.identifier()
++        self.short_id = self.id[:12]
++        self.name = kwargs.get("name", role)
++        self.status = "created"
++        inherited = {network.PREFIX + "network-guard": "1", "image-vendor": "qa"} if role in {"guard", "relay"} else {}
++        self.attrs = {"Id": self.id, "Name": "/" + self.name,
++                      "Config": {"Labels": {**inherited, **kwargs.get("labels", {})}},
++                      "Mounts": [{"Source": source, "Destination": bind["bind"]}
++                                 for source, bind in (kwargs.get("volumes") or {}).items()],
++                      "NetworkSettings": {"Networks": {}}, "State": {"Status": self.status}}
++
++    def reload(self):
++        self.attrs["State"]["Status"] = self.status
++
++    def start(self):
++        self.docker.event("start", self.role)
++        self.status = "running"
++        if self.role == "guard" and self.docker.guard_failure:
++            self.status = "exited"
++        self.reload()
++
++    def wait(self, timeout):
++        self.status = "exited"
++        self.reload()
++        return {"StatusCode": self.docker.probe_status}
++
++    def logs(self, **kwargs):
++        if self.role == "guard":
++            source = next(iter(self.kwargs["volumes"]))
++            return json.dumps({"network_guard_ready": network.digest(json.loads(Path(source).read_text()))}).encode()
++        return json.dumps(self.docker.probe_evidence).encode()
++
++    def stop(self, timeout):
++        self.docker.event("stop", self.role)
++        if self.docker.stop_failure == self.role:
++            raise APIError("injected stop failure")
++        self.status = "exited"
++        self.reload()
++
++    def remove(self):
++        self.docker.event("remove", self.role)
++        for value in self.docker.network_values.values():
++            value.attrs["Containers"].pop(self.id, None)
++        self.docker.container_values.pop(self.id)
++
++
++class FakeDocker:
++    def __init__(self):
++        self.serial, self.events = 100, []
++        self.container_values, self.network_values = {}, {}
++        self.probe_status, self.probe_evidence = 0, EVIDENCE
++        self.stop_failure = self.create_failure = None
++        self.network_remove_error = False
++        self.list_error = False
++        self.guard_failure = False
++        self.lost_connect_reply = False
++        self.containers = SimpleNamespace(get=self.get_container, list=self.list_containers,
++                                          create=self.create_container, run=self.run_container)
++        self.networks = SimpleNamespace(get=self.get_network, list=self.list_networks, create=self.create_network)
++        self.images = SimpleNamespace(get=lambda _: SimpleNamespace(attrs={"Config": {"Labels": {network.PREFIX + "network-guard": "1"}}}))
++        self.api = SimpleNamespace(create_endpoint_config=lambda **kwargs: kwargs)
++        controller = FakeContainer(self, {"volumes": {str(network.base_dir()): {"bind": str(network.base_dir())}}})
++        controller.status = "running"
++        controller.reload()
++        self.controller = controller
++        self.container_values[controller.id] = controller
++
++    def identifier(self):
++        self.serial += 1
++        return f"{self.serial:064x}"
++
++    def event(self, action, role):
++        # Docker allocations and Worker creates can only follow a durable reservation.
++        assert list(network.runtime_dir().glob("*.json"))
++        self.events.append((action, role))
++
++    def get_container(self, identifier):
++        if identifier == os.uname()[1]:
++            return self.controller
++        for container in self.container_values.values():
++            if identifier in {container.id, container.name}:
++                return container
++        raise NotFound("missing")
++
++    def list_containers(self, **kwargs):
++        if self.list_error:
++            raise APIError("inventory unavailable")
++        return list(self.container_values.values())
++
++    def get_network(self, identifier):
++        for value in self.network_values.values():
++            if identifier in {value.id, value.name}:
++                return value
++        raise NotFound("missing")
++
++    def list_networks(self):
++        if self.list_error:
++            raise APIError("network inventory unavailable")
++        return list(self.network_values.values())
++
++    def create_network(self, name, **kwargs):
++        role = kwargs["labels"][network.PREFIX + "role"]
++        self.event("create", role)
++        value = FakeNetwork(self, name, kwargs["internal"], kwargs["labels"])
++        self.network_values[value.id] = value
++        if self.create_failure == role:
++            raise APIError("create response lost after allocation")
++        return value
++
++    def create_container(self, **kwargs):
++        role = kwargs.get("labels", {}).get(network.PREFIX + "role", "worker")
++        self.event("create", role)
++        container = FakeContainer(self, kwargs, role)
++        self.container_values[container.id] = container
++        if kwargs.get("network_mode", "").startswith("container:"):
++            self.get_container(kwargs["network_mode"].split(":", 1)[1])
++            container.attrs["HostConfig"] = {"NetworkMode": kwargs["network_mode"]}
++        else:
++            endpoint = kwargs.get("networking_config", {}).get(kwargs["network"], {})
++            self.get_network(kwargs["network"]).connect(container, ipv4_address=endpoint.get("ipv4_address"))
++        if self.create_failure == role:
++            raise APIError("create response lost after allocation")
++        return container
++
++    def run_container(self, **kwargs):
++        container = self.create_container(**kwargs)
++        container.start()
++        return container
++
++
++@pytest.fixture
++def managed(monkeypatch):
++    home = Path(runtime.home_path("qa", "qa-home"))
++    home.mkdir(parents=True)
++    (home / "sentinel.txt").write_text("persistent Home 中文")
++    secrets = network.base_dir() / "network-secrets"
++    secrets.mkdir(mode=0o700, parents=True)
++    paths = {}
++    for kind in ("username", "password"):
++        path = secrets / kind
++        path.write_text("qa-only-" + kind)
++        path.chmod(0o600)
++        paths[kind + "_file"] = str(path)
++        paths[kind + "_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
++    policy = network.NetworkPolicy(username="qa", profile_id="personal", home_name="qa-home", application_id="firefox",
++                                   relay_image=RELAY_IMAGE, probe_image=PROBE_IMAGE, upstream_host="qa.example",
++                                   upstream_port=1080, probe_url="https://probe.example/", **paths)
++    network.policy_path().write_text(json.dumps({"version": 1, "policies": {POLICY_ID: policy.model_dump()}}))
++    network.policy_path().chmod(0o600)
++    state.installed_apps["firefox"] = InstalledApp(
++        id="firefox", name="QA", logo="", url="https://example.invalid", source="qa", source_app_id="qa",
++        provider="docker", home_directories=True, users=["qa"], groups=[], app_template="Default", auto_update=False,
++        provider_config={"image": WORKER_IMAGE, "port": 3000, "type": "browser", "url_support": True,
++                         "nvidia_support": False, "dri3_support": False, "open_support": False, "extensions": [],
++                         "network_policy_id": POLICY_ID, "network_policy_sha256": network.digest(policy.model_dump()),
++                         "docker_overrides": {"network": "untrusted-static-network"}})
++    docker = FakeDocker()
++    for module in (network, runtime, docker_utils, docker_provider):
++        monkeypatch.setattr(module, "get_docker_client", lambda: docker)
++    monkeypatch.setattr(network, "resolve_upstream", lambda _: ["203.0.113.9"])
++    monkeypatch.setattr(docker_provider.DockerProvider, "_wait_for_container_ready", AsyncMock(return_value="172.28.1.4"))
++    from app import collaboration
++    monkeypatch.setattr(collaboration, "notify_session_ended", AsyncMock())
++    return SimpleNamespace(docker=docker, policy=policy, home=home,
++                           identity=runtime.runtime_identity("qa", "qa-home", "firefox", "personal", OPERATION))
++
++
++def launch_args(managed, **overrides):
++    args = dict(application_id="firefox", username="qa", effective_settings={"persistent_storage": True},
++                home_name="qa-home", env_vars={"SEALSKIN_URL": "https://adapter.example/bootstrap/personal/" + OPERATION},
++                language=None, selected_gpu=None, wayland_mode=False, profile_id="personal", operation_id=OPERATION,
++                network_policy_id=POLICY_ID, network_policy_sha256=network.digest(managed.policy.model_dump()))
++    return {**args, **overrides}
++
++
++def stop_request(managed, **overrides):
++    return {"profile_id": "personal", "operation_id": OPERATION, "application_id": "firefox",
++            "bootstrap_url": "https://adapter.example/bootstrap/personal/" + OPERATION,
++            "network_policy_id": POLICY_ID, "network_policy_sha256": network.digest(managed.policy.model_dump()), **overrides}
++
++
++async def stop(managed, **overrides):
++    return await runtime.stop_profile_runtime("qa-home", stop_request(managed, **overrides), {"username": "qa"})
++
++
++async def assert_empty(managed):
++    snapshot = await runtime.inspect_home("qa", "qa-home")
++    assert snapshot["records"] == snapshot["workers"] == snapshot["resources"] == []
++    assert set(managed.docker.container_values) == {managed.docker.controller.id}
++    assert not managed.docker.network_values
++    assert (managed.home / "sentinel.txt").read_text() == "persistent Home 中文"
++
++
++async def test_full_launch_orders_probe_before_worker_and_cleanup_after_worker(managed):
++    launched = await launch_application(**launch_args(managed))
++    docker = managed.docker
++    assert docker.events.index(("remove", "probe")) < docker.events.index(("create", "worker"))
++    snapshot = await runtime.inspect_home("qa", "qa-home")
++    assert snapshot["network_runtime_version"] == 1
++    assert snapshot["network_enforcement_version"] == 1
++    assert {item["kind"] for item in snapshot["resources"]} == {"reservation", "internal", "egress", "relay", "guard"}
++    assert all(item["owned"] for item in snapshot["resources"])
++    worker = next(c for c in docker.container_values.values() if c.role == "worker")
++    relay = next(c for c in docker.container_values.values() if c.role == "relay")
++    guard = next(c for c in docker.container_values.values() if c.role == "guard")
++    assert worker.kwargs["network_mode"] == "container:" + guard.id
++    assert not worker.attrs["NetworkSettings"]["Networks"]
++    assert len(guard.attrs["NetworkSettings"]["Networks"]) == 1
++    assert len(relay.attrs["NetworkSettings"]["Networks"]) == 2
++    assert guard.kwargs["extra_hosts"]["profile-relay"]
++    assert guard.kwargs["dns"] == ["127.0.0.1"]
++    assert "cap_add" not in worker.kwargs
++    assert "network" not in worker.kwargs and "extra_hosts" not in worker.kwargs
++    assert set(worker.kwargs["cap_drop"]) >= {"NET_ADMIN", "NET_RAW"}
++    assert "qa-only-password" not in json.dumps(snapshot)
++    assert "network-secrets" not in json.dumps(worker.kwargs)
++    assert state.sessions[launched["session_id"]]["network_policy_id"] == POLICY_ID
++    await stop(managed)
++    assert docker.events.index(("remove", "worker")) < docker.events.index(("stop", "relay"))
++    assert docker.events.index(("remove", "worker")) < docker.events.index(("stop", "guard"))
++    assert docker.events.index(("remove", "relay")) < docker.events.index(("remove", "internal"))
++    await assert_empty(managed)
++    await stop(managed)
++
++
++async def test_twenty_starts_create_one_generation(managed):
++    results = await asyncio.gather(*(launch_application(**launch_args(managed)) for _ in range(20)), return_exceptions=True)
++    assert sum(isinstance(value, dict) for value in results) == 1
++    assert sum(isinstance(value, HTTPException) and value.status_code == 409 for value in results) == 19
++    assert managed.docker.events.count(("create", "relay")) == 1
++    assert managed.docker.events.count(("create", "worker")) == 1
++    await stop(managed)
++
++
++@pytest.mark.parametrize("override", [{"network_policy_id": None, "network_policy_sha256": None},
++                                    {"network_policy_sha256": "f" * 64}, {"profile_id": "other"},
++                                    {"operation_id": None}, {"home_name": "cleanroom"}, {"launch_in_room_mode": True}])
++async def test_bad_policy_reference_never_allocates(managed, override):
++    with pytest.raises(HTTPException):
++        await launch_application(**launch_args(managed, **override))
++    assert managed.docker.events == []
++
++
++async def test_removed_registry_still_refuses_bare_managed_app_launch(managed):
++    network.policy_path().unlink()
++    with pytest.raises(HTTPException, match="NETWORK_POLICY"):
++        await launch_application(**launch_args(managed, network_policy_id=None, network_policy_sha256=None))
++    assert managed.docker.events == []
++
++
++@pytest.mark.parametrize("failure", ["content", "permissions", "symlink", "hardlink"])
++async def test_secret_revision_drift_never_creates_relay(managed, failure):
++    secret = Path(managed.policy.password_file)
++    if failure == "content":
++        secret.write_text("different credential")
++    elif failure == "permissions":
++        secret.chmod(0o644)
++    elif failure == "symlink":
++        secret.unlink()
++        secret.symlink_to(Path(managed.policy.username_file))
++    else:
++        os.link(secret, secret.with_name("hardlink"))
++    with pytest.raises(HTTPException, match="NETWORK_SECRET"):
++        await launch_application(**launch_args(managed))
++    assert managed.docker.events == []
++
++
++@pytest.mark.parametrize("evidence", [{"proxy_tls": False}, {**EVIDENCE, "local_dns_blocked": False},
++                                     {**EVIDENCE, "direct_ipv4_blocked": False}, {**EVIDENCE, "direct_ipv6_blocked": False}])
++async def test_probe_failure_reserves_home_without_worker(managed, evidence):
++    managed.docker.probe_evidence = evidence
++    with pytest.raises(HTTPException, match="NETWORK_PROBE_FAILED"):
++        await launch_application(**launch_args(managed))
++    assert ("create", "worker") not in managed.docker.events
++    assert network.read_reservation(managed.identity)["phase"] == "preparing"
++    with pytest.raises(HTTPException, match="reserved"):
++        await launch_application(**launch_args(managed))
++    await stop(managed)
++    await assert_empty(managed)
++
++
++@pytest.mark.parametrize("role", ["internal", "egress", "relay", "guard", "probe", "worker"])
++async def test_lost_create_response_remains_discoverable_after_reload(managed, role):
++    managed.docker.create_failure = role
++    with pytest.raises(HTTPException):
++        await launch_application(**launch_args(managed))
++    state.sessions.clear()
++    await config_store.load_sessions()
++    snapshot = await runtime.inspect_home("qa", "qa-home")
++    assert snapshot["resources"] and all(value["owned"] for value in snapshot["resources"])
++    with pytest.raises(HTTPException, match="reserved"):
++        await launch_application(**launch_args(managed))
++    await stop(managed)
++    await assert_empty(managed)
++
++
++async def test_failed_worker_stop_preserves_relay_and_networks(managed):
++    await launch_application(**launch_args(managed))
++    managed.docker.stop_failure = "worker"
++    with pytest.raises(HTTPException):
++        await stop(managed)
++    assert ("stop", "relay") not in managed.docker.events
++    assert ("stop", "guard") not in managed.docker.events
++    assert len(managed.docker.network_values) == 2
++    assert network.read_reservation(managed.identity)["phase"] == "stopping"
++    managed.docker.stop_failure = None
++    await stop(managed)
++    await assert_empty(managed)
++
++
++async def test_direct_ui_stop_failure_retains_network_intent_after_record_disappears(managed):
++    launched = await launch_application(**launch_args(managed))
++    managed.docker.stop_failure = "relay"
++    with pytest.raises(HTTPException, match="NETWORK_CLEANUP_INCOMPLETE"):
++        await stop_session(launched["session_id"])
++    assert not state.sessions
++    assert all(container.role != "worker" for container in managed.docker.container_values.values())
++    assert network.read_reservation(managed.identity)["phase"] == "stopping"
++    managed.docker.stop_failure = None
++    await stop(managed)
++    await assert_empty(managed)
++
++
++async def test_network_remove_error_retains_reservation_until_retry(managed):
++    await launch_application(**launch_args(managed))
++    managed.docker.network_remove_error = True
++    with pytest.raises(HTTPException, match="NETWORK_CLEANUP_INCOMPLETE"):
++        await stop(managed)
++    assert network.read_reservation(managed.identity)["phase"] == "stopping"
++    assert not state.sessions and len(managed.docker.container_values) == 1
++    managed.docker.network_remove_error = False
++    await stop(managed)
++    await assert_empty(managed)
++
++
++async def test_foreign_endpoint_prevents_network_and_relay_cleanup(managed):
++    await launch_application(**launch_args(managed))
++    internal = next(value for value in managed.docker.network_values.values() if value.attrs["Internal"])
++    internal.attrs["Containers"]["f" * 64] = {"Name": "foreign"}
++    with pytest.raises(HTTPException, match="FOREIGN_ENDPOINTS"):
++        await stop(managed)
++    assert ("stop", "relay") not in managed.docker.events
++    internal.attrs["Containers"].pop("f" * 64)
++    await stop(managed)
++    await assert_empty(managed)
++
++
++@pytest.mark.parametrize("override", [{"operation_id": "a" * 32}, {"network_policy_sha256": "f" * 64},
++                                    {"network_policy_id": "another-policy"}, {"profile_id": "work"}])
++async def test_stale_stop_cannot_mutate_any_resource(managed, override):
++    await launch_application(**launch_args(managed))
++    before = list(managed.docker.events)
++    with pytest.raises(HTTPException):
++        await stop(managed, **override)
++    assert before == managed.docker.events
++    await stop(managed)
++
++
++async def test_network_inventory_error_is_not_empty_home(managed):
++    await launch_application(**launch_args(managed))
++    managed.docker.list_error = True
++    with pytest.raises(HTTPException):
++        await stop(managed)
++    assert ("stop", "worker") not in managed.docker.events
++    managed.docker.list_error = False
++    await stop(managed)
++
++
++async def test_foreign_network_name_collision_is_never_deleted(managed):
++    managed.docker.create_failure = "internal"
++    with pytest.raises(HTTPException):
++        await launch_application(**launch_args(managed))
++    internal = next(iter(managed.docker.network_values.values()))
++    internal.attrs["Labels"] = {}
++    with pytest.raises(HTTPException, match="OWNERSHIP_UNPROVEN"):
++        await stop(managed)
++    assert internal.id in managed.docker.network_values
++
++
++@pytest.mark.parametrize("override", [{"network_mode": "host"}, {"privileged": True}, {"cap_add": ["NET_ADMIN"]},
++                                    {"ports": {3000: 3000}}, {"publish_all_ports": True}, {"pid_mode": "host"},
++                                    {"volumes_from": ["other"]}])
++async def test_network_escape_overrides_never_create_worker(managed, override):
++    state.installed_apps["firefox"].provider_config.docker_overrides.update(override)
++    with pytest.raises(HTTPException, match="NETWORK_WORKER_OVERRIDE_FORBIDDEN"):
++        await launch_application(**launch_args(managed))
++    assert ("create", "worker") not in managed.docker.events
++    await stop(managed)
++    await assert_empty(managed)
++
++
++async def test_duplicate_reservation_cannot_replace_generation(managed):
++    await network.prepare(managed.identity, POLICY_ID, managed.policy)
++    first = network.read_reservation(managed.identity)
++    other = {**first, "identity": {**first["identity"], "operation": "a" * 32}}
++    with pytest.raises(HTTPException, match="NETWORK_HOME_RESERVED"):
++        network.save_reservation(other, True)
++    assert network.read_reservation(managed.identity)["identity"]["operation"] == OPERATION
++    await stop(managed)
++
++
++async def test_corrupted_journal_never_authorizes_cleanup(managed):
++    await launch_application(**launch_args(managed))
++    value = network.read_reservation(managed.identity)
++    value["policy"]["upstream_host"] = "changed.example"
++    network.save_reservation(value)
++    before = list(managed.docker.events)
++    with pytest.raises(HTTPException, match="NETWORK_RESERVATION_INVALID"):
++        await stop(managed)
++    assert managed.docker.events == before
++
++
++async def test_provider_cannot_bypass_managed_app_allocation(managed):
++    provider = docker_provider.DockerProvider(state.installed_apps["firefox"].model_dump())
++    with pytest.raises(HTTPException, match="NETWORK_POLICY_ALLOCATION_REQUIRED"):
++        await provider.launch("unmanaged-caller", {}, {})
++    assert managed.docker.events == []
++
++
++async def test_room_cannot_launch_a_protected_app_or_change_home(managed):
++    state.sessions["room"] = {"username": "qa", "is_collaboration": True, "host_mount_path": str(managed.home),
++                              "container_registry": {}}
++    with pytest.raises(HTTPException, match="NETWORK_POLICY_SINGLE_WORKER"):
++        await ensure_container_for_session("room", "firefox")
++    assert state.sessions["room"]["host_mount_path"] == str(managed.home)
++    assert managed.docker.events == []
++
++
++async def test_unguarded_relay_image_is_rejected_before_allocation(managed):
++    managed.docker.images.get = lambda _: SimpleNamespace(attrs={"Config": {"Labels": {}}})
++    with pytest.raises(HTTPException, match="NETWORK_ENFORCEMENT_IMAGE_REQUIRED"):
++        await launch_application(**launch_args(managed))
++    assert managed.docker.events == []
++    assert not network.read_reservation(managed.identity)
++
++
++async def test_failed_guard_initialization_never_creates_probe_or_worker(managed):
++    managed.docker.guard_failure = True
++    with pytest.raises(HTTPException, match="NETWORK_GUARD_NOT_READY"):
++        await launch_application(**launch_args(managed))
++    assert ("create", "probe") not in managed.docker.events
++    assert ("create", "worker") not in managed.docker.events
++    assert network.read_reservation(managed.identity)
++    await stop(managed)
++    await assert_empty(managed)
++
++
++async def test_guard_stop_failure_retains_home_and_networks(managed):
++    await launch_application(**launch_args(managed))
++    managed.docker.stop_failure = "guard"
++    with pytest.raises(HTTPException, match="NETWORK_CLEANUP_INCOMPLETE"):
++        await stop(managed)
++    assert network.read_reservation(managed.identity)["phase"] == "stopping"
++    assert ("remove", "internal") not in managed.docker.events
++    managed.docker.stop_failure = None
++    await stop(managed)
++    await assert_empty(managed)
++
++
++async def test_upstream_resolution_is_frozen_before_relay_start(managed):
++    await launch_application(**launch_args(managed))
++    reservation = network.read_reservation(managed.identity)
++    assert reservation["upstream_ipv4"] == ["203.0.113.9"]
++    relay = next(c for c in managed.docker.container_values.values() if c.role == "relay")
++    sources = {bind["bind"]: Path(source) for source, bind in relay.kwargs["volumes"].items()}
++    config = json.loads(sources["/run/config/relay.json"].read_text())
++    firewall = json.loads(sources["/run/config/network.json"].read_text())
++    assert config["upstream_host"] == firewall["upstream_ip"] == "203.0.113.9"
++    assert reservation["policy"]["upstream_host"] == "qa.example"
++    await stop(managed)
++
++
++async def test_failed_endpoint_resolution_retains_reservation_without_docker_resources(managed, monkeypatch):
++    def failed(_):
++        raise OSError("resolver unavailable")
++    monkeypatch.setattr(network, "resolve_upstream", failed)
++    with pytest.raises(HTTPException, match="NETWORK_PREPARE_INCOMPLETE"):
++        await launch_application(**launch_args(managed))
++    assert managed.docker.events == []
++    assert network.read_reservation(managed.identity)
++    await stop(managed)
++    await assert_empty(managed)
++
++
++def replace_controller(managed, previous_state="removed"):
++    docker = managed.docker
++    previous = docker.controller
++    if previous_state == "removed":
++        previous.remove()
++    else:
++        previous.status = previous_state
++        previous.reload()
++    current = FakeContainer(docker, {"volumes": {str(network.base_dir()): {"bind": str(network.base_dir())}}})
++    current.status = "running"
++    current.reload()
++    docker.controller = current
++    docker.container_values[current.id] = current
++    return previous, current
++
++
++@pytest.mark.parametrize("previous_state", ["removed", "exited"])
++async def test_controller_replacement_reclaims_frozen_address_without_worker_restart(managed, previous_state):
++    await launch_application(**launch_args(managed))
++    before = network.read_reservation(managed.identity)
++    worker = next(value for value in managed.docker.container_values.values() if value.role == "worker")
++    previous, current = replace_controller(managed, previous_state)
++    events = len(managed.docker.events)
++    results = await network.restore_controller_networks()
++    assert results == [{"home_hash": managed.identity["home_hash"], "result": "attached"}]
++    restored = network.read_reservation(managed.identity)
++    assert restored["controller_id"] == current.id
++    assert restored["allocation"] == before["allocation"]
++    internal = managed.docker.get_network(before["allocation"]["internal_id"])
++    assert previous.id not in internal.attrs["Containers"]
++    assert current.attrs["NetworkSettings"]["Networks"][internal.name]["IPAddress"] == before["allocation"]["controller_ip"]
++    assert all(role == "controller" and action in {"connect", "disconnect"} for action, role in managed.docker.events[events:])
++    assert managed.docker.get_container(worker.id) is worker and worker.status == "running"
++    repeated = len(managed.docker.events)
++    assert (await network.restore_controller_networks())[0]["result"] == "attached"
++    assert len(managed.docker.events) == repeated
++
++
++async def test_controller_recovery_refuses_an_active_previous_controller(managed):
++    await launch_application(**launch_args(managed))
++    previous, _ = replace_controller(managed, "running")
++    before = list(managed.docker.events)
++    results = await network.restore_controller_networks()
++    assert results[0]["reason"] == "NETWORK_PREVIOUS_CONTROLLER_PRESENT"
++    assert managed.docker.events == before
++    assert network.read_reservation(managed.identity)["controller_id"] == previous.id
++
++
++async def test_controller_recovery_does_not_disconnect_a_foreign_or_occupied_endpoint(managed):
++    await launch_application(**launch_args(managed))
++    previous, _ = replace_controller(managed, "exited")
++    value = network.read_reservation(managed.identity)
++    internal = managed.docker.get_network(value["allocation"]["internal_id"])
++    internal.attrs["Containers"]["f" * 64] = {"Name": "foreign", "IPv4Address": value["allocation"]["controller_ip"] + "/24"}
++    before = list(managed.docker.events)
++    results = await network.restore_controller_networks()
++    assert results[0]["reason"] == "NETWORK_HAS_FOREIGN_ENDPOINTS"
++    assert managed.docker.events == before
++    assert previous.id in internal.attrs["Containers"]
++
++
++async def test_controller_recovery_verifies_attachment_after_lost_connect_reply(managed):
++    await launch_application(**launch_args(managed))
++    _, current = replace_controller(managed)
++    managed.docker.lost_connect_reply = True
++    results = await network.restore_controller_networks()
++    assert results[0]["result"] == "attached"
++    assert network.read_reservation(managed.identity)["controller_id"] == current.id
++
++
++@pytest.mark.parametrize("corruption", ["scope", "policy", "guard_config", "worker_namespace", "relay_address"])
++async def test_controller_recovery_rejects_changed_ownership_or_topology_before_mutation(managed, corruption):
++    await launch_application(**launch_args(managed))
++    replace_controller(managed)
++    value = network.read_reservation(managed.identity)
++    if corruption == "scope":
++        value["identity"]["scope"] = "f" * 64
++        network.save_reservation(value)
++    elif corruption == "policy":
++        value["policy"]["upstream_host"] = "foreign.invalid"
++        network.save_reservation(value)
++    elif corruption == "guard_config":
++        path = network.runtime_dir() / (managed.identity["home_hash"] + "-" + OPERATION) / "worker-network.json"
++        content = json.loads(path.read_text())
++        content["controller_ip"] = "172.28.1.20"
++        network.atomic_json(path, content)
++    elif corruption == "worker_namespace":
++        worker = next(c for c in managed.docker.container_values.values() if c.role == "worker")
++        worker.attrs["HostConfig"]["NetworkMode"] = "bridge"
++    else:
++        relay = managed.docker.get_container(value["allocation"]["relay_id"])
++        relay.attrs["NetworkSettings"]["Networks"][value["allocation"]["internal_name"]]["IPAddress"] = "172.28.1.20"
++    before = list(managed.docker.events)
++    results = await network.restore_controller_networks()
++    assert results[0]["result"] == "failed"
++    assert managed.docker.events == before
++
++
++async def test_one_corrupted_journal_does_not_block_other_controller_recovery(managed):
++    await launch_application(**launch_args(managed))
++    replace_controller(managed)
++    invalid = network.runtime_dir() / ("f" * 64 + ".json")
++    network.atomic_json(invalid, {"identity": {"owner": "foreign"}})
++    results = await network.restore_controller_networks()
++    assert sorted(value["result"] for value in results) == ["attached", "failed"]
++    assert invalid.exists()
++
++
++async def test_controller_recovery_retains_a_stopped_guard_without_restarting_it(managed):
++    await launch_application(**launch_args(managed))
++    replace_controller(managed)
++    value = network.read_reservation(managed.identity)
++    managed.docker.get_container(value["allocation"]["guard_id"]).stop(timeout=2)
++    before = list(managed.docker.events)
++    assert (await network.restore_controller_networks())[0]["reason"] == "NETWORK_GUARD_NOT_READY"
++    assert managed.docker.events == before
++
++
++@pytest.mark.parametrize("missing", [RELAY_IMAGE, PROBE_IMAGE])
++async def test_missing_image_never_creates_a_reservation(managed, missing):
++    original = managed.docker.images.get
++    def get(identifier):
++        if identifier == missing:
++            raise NotFound("image unavailable")
++        return original(identifier)
++    managed.docker.images.get = get
++    with pytest.raises(HTTPException, match="NETWORK_IMAGE_UNAVAILABLE"):
++        await launch_application(**launch_args(managed))
++    assert not managed.docker.events
++    assert not network.read_reservation(managed.identity)
+diff --git a/server/tests/test_profile_runtime.py b/server/tests/test_profile_runtime.py
+new file mode 100644
+index 0000000..b5a65c8
+--- /dev/null
++++ b/server/tests/test_profile_runtime.py
+@@ -0,0 +1,384 @@
++"""Lifecycle failures must never release a Home while its worker can survive."""
++
++from __future__ import annotations
++
++import asyncio
++import json
++from pathlib import Path
++from types import SimpleNamespace
++from unittest.mock import AsyncMock
++
++import pytest
++import yaml
++from docker.errors import APIError, DockerException, NotFound
++from fastapi import HTTPException
++
++from app import config_store, docker_utils, network_runtime
++from app import profile_runtime as runtime
++from app.launch import stop_session
++from app.providers import docker_provider
++from app.settings import settings
++from app.state import state
++
++SID = "a76270f6-2f9a-4a8a-a9b4-69581d659e15"
++INSTANCE = "a" * 64
++OPERATION = "b" * 32
++MARKER = "https://adapter.example/bootstrap/personal/" + OPERATION
++
++
++class Container:
++    def __init__(self, collection, instance=INSTANCE, status="running", labels=None):
++        self.collection, self.id = collection, instance
++        self.short_id, self.status = instance[:12], status
++        self.labels = labels or {}
++        self.source = runtime.home_source("qa", "test-home")
++        self.stop_error = self.remove_error = None
++        self.false_stop = False
++        self.stop_calls = self.remove_calls = self.unpause_calls = 0
++
++    @property
++    def attrs(self):
++        return {"State": {"Status": self.status},
++                "Config": {"Labels": self.labels, "Env": ["PASSWORD=not-for-inventory"]},
++                "Mounts": [{"Source": self.source, "Destination": settings.container_config_path}]}
++
++    def stop(self, timeout):
++        self.stop_calls += 1
++        if self.collection.before_stop:
++            self.collection.before_stop()
++        if self.stop_error:
++            raise self.stop_error
++        if not self.false_stop:
++            self.status = "exited"
++
++    def unpause(self):
++        self.unpause_calls += 1
++        self.status = "running"
++
++    def remove(self):
++        self.remove_calls += 1
++        if self.remove_error:
++            raise self.remove_error
++        self.collection.values.pop(self.id, None)
++
++
++class Containers:
++    def __init__(self):
++        self.values = {}
++        self.error = None
++        self.before_stop = None
++        self.run_kwargs = None
++
++    def get(self, instance):
++        if self.error:
++            raise self.error
++        if instance not in self.values:
++            raise NotFound("missing")
++        return self.values[instance]
++
++    def list(self, **kwargs):
++        if self.error:
++            raise self.error
++        return list(self.values.values())
++
++    def run(self, **kwargs):
++        self.run_kwargs = kwargs
++        container = Container(self, labels=kwargs.get("labels"))
++        self.values[container.id] = container
++        return container
++
++
++@pytest.fixture
++def containers(monkeypatch):
++    collection = Containers()
++    client = SimpleNamespace(containers=collection, images=SimpleNamespace(get=lambda _: object()),
++                             networks=SimpleNamespace(list=lambda: []))
++    for module in [docker_utils, runtime, network_runtime, docker_provider]:
++        monkeypatch.setattr(module, "get_docker_client", lambda: client)
++    from app import collaboration
++    monkeypatch.setattr(collaboration, "notify_session_ended", AsyncMock())
++    Path(runtime.home_path("qa", "test-home")).mkdir(parents=True)
++    (Path(runtime.home_path("qa", "test-home")) / "keep.txt").write_text("persistent Home")
++    return collection
++
++
++def labels(operation=OPERATION, profile="personal"):
++    identity = runtime.runtime_identity("qa", "test-home", "firefox", profile, operation)
++    result = {runtime.PREFIX + key: value for key, value in identity.items() if key != "home_source"}
++    result.update({runtime.PREFIX + "version": "1", runtime.PREFIX + "session": SID})
++    return result
++
++
++async def session(containers, *, managed=True):
++    worker = Container(containers, labels=labels() if managed else {})
++    containers.values[worker.id] = worker
++    state.sessions[SID] = {
++        "instance_id": INSTANCE, "username": "qa", "provider_app_id": "firefox",
++        "host_mount_path": runtime.home_path("qa", "test-home"),
++        "launch_context": {"type": "url", "value": MARKER},
++        "profile_id": "personal" if managed else "", "operation_id": OPERATION if managed else "",
++        "container_registry": {"firefox": {"instance_id": INSTANCE}},
++    }
++    await config_store.save_sessions()
++    return worker
++
++
++def request(**overrides):
++    result = {"profile_id": "personal", "operation_id": OPERATION, "application_id": "firefox",
++              "session_id": SID, "bootstrap_url": MARKER}
++    result.update(overrides)
++    return result
++
++
++async def stop_home(**overrides):
++    return await runtime.stop_profile_runtime("test-home", request(**overrides), {"username": "qa"})
++
++
++def saved_sessions():
++    return yaml.safe_load(Path(settings.sessions_db_path).read_text()) or {}
++
++
++@pytest.mark.parametrize("primary,expected", [("qa_default", "qa_default"), ("", "aaa-sidecar")])
++async def test_self_discovery_keeps_primary_network_when_sidecar_sorts_first(monkeypatch, primary, expected):
++    server = SimpleNamespace(name="sealskin-lifecycle-qa", attrs={
++        "Mounts": [{"Source": "/host/qa/config", "Destination": "/config"}],
++        "HostConfig": {"NetworkMode": primary},
++        "NetworkSettings": {"Networks": {"aaa-sidecar": {}, "qa_default": {}}, "Ports": {}},
++    })
++    requested = []
++
++    def get(name):
++        requested.append(name)
++        assert name == "qa-hostname"
++        return server
++
++    exists = docker_utils.os.path.exists
++    monkeypatch.setattr(docker_utils.os.path, "exists", lambda path: path == "/var/run/docker.sock" or exists(path))
++    monkeypatch.setattr(docker_utils.os, "uname", lambda: ("Linux", "qa-hostname", "", "", ""))
++    monkeypatch.setattr(docker_utils, "get_docker_client", lambda: SimpleNamespace(containers=SimpleNamespace(get=get)))
++    monkeypatch.setattr(state, "discovered_network", None)
++    await docker_utils.inspect_self_container()
++    assert requested == ["qa-hostname"]
++    assert state.discovered_network == expected
++    assert state.path_prefix_map == {"/config": "/host/qa/config"}
++
++
++async def test_stop_failure_keeps_durable_intent_and_allows_retry(containers):
++    worker = await session(containers)
++    worker.stop_error = APIError("daemon refused stop")
++    containers.before_stop = lambda: saved_sessions()[SID]["lifecycle_phase"] == "stopping" or pytest.fail("intent was not durable")
++    with pytest.raises(HTTPException) as error:
++        await stop_home()
++    assert error.value.status_code == 503
++    assert state.sessions[SID]["lifecycle_phase"] == saved_sessions()[SID]["lifecycle_phase"] == "stopping"
++    assert worker.id in containers.values
++    worker.stop_error = None
++    assert (await stop_home()).status_code == 204
++    assert not containers.values and not state.sessions and not saved_sessions()
++    assert (Path(runtime.home_path("qa", "test-home")) / "keep.txt").read_text() == "persistent Home"
++    assert (await stop_home()).status_code == 204
++
++
++async def test_docker_false_stop_ack_is_not_success(containers):
++    worker = await session(containers)
++    worker.false_stop = True
++    with pytest.raises(HTTPException, match="Container removal"):
++        await stop_session(SID)
++    assert worker.stop_calls == 1
++    assert SID in state.sessions and INSTANCE in containers.values
++
++
++@pytest.mark.parametrize("status", ["created", "exited", "paused", "restarting", "dead"])
++async def test_non_running_states_still_require_removal(containers, status):
++    worker = await session(containers)
++    worker.status = status
++    await stop_session(SID)
++    assert not containers.values and not state.sessions
++    if status == "paused":
++        assert worker.unpause_calls == 1
++
++
++async def test_remove_error_preserves_ownership(containers):
++    worker = await session(containers)
++    worker.remove_error = APIError("remove failed")
++    with pytest.raises(HTTPException):
++        await stop_session(SID)
++    assert worker.status == "exited"
++    assert SID in saved_sessions() and INSTANCE in containers.values
++
++
++async def test_cannot_save_intent_means_no_docker_mutation(containers, monkeypatch):
++    worker = await session(containers)
++    monkeypatch.setattr(config_store, "save_sessions", AsyncMock(side_effect=OSError("read-only disk")))
++    with pytest.raises(HTTPException, match="intent"):
++        await stop_session(SID)
++    assert worker.stop_calls == worker.remove_calls == 0
++    assert SID in state.sessions
++
++
++async def test_commit_failure_restores_record_and_restart_retry_finishes(containers, monkeypatch):
++    await session(containers)
++    real_save = config_store.save_sessions
++    calls = 0
++
++    async def fail_commit():
++        nonlocal calls
++        calls += 1
++        if calls == 2:
++            raise OSError("disk full after stop")
++        await real_save()
++
++    monkeypatch.setattr(config_store, "save_sessions", fail_commit)
++    with pytest.raises(HTTPException, match="commit"):
++        await stop_session(SID)
++    assert not containers.values
++    assert SID in state.sessions and SID in saved_sessions()
++    state.sessions.clear()
++    await config_store.load_sessions()
++    assert state.sessions[SID]["lifecycle_phase"] == "stopping"
++    monkeypatch.setattr(config_store, "save_sessions", real_save)
++    await stop_session(SID)
++    assert not state.sessions and not saved_sessions()
++
++
++async def test_partial_room_stop_retains_every_instance_for_retry(containers):
++    await session(containers)
++    other = Container(containers, instance="c" * 64)
++    other.stop_error = APIError("second container failed")
++    containers.values[other.id] = other
++    state.sessions[SID]["container_registry"]["second"] = {"instance_id": other.id}
++    with pytest.raises(HTTPException):
++        await stop_session(SID)
++    assert INSTANCE not in containers.values and other.id in containers.values
++    assert len(runtime.instance_ids(saved_sessions()[SID])) == 2
++    other.stop_error = None
++    await stop_session(SID)
++    assert not containers.values and not state.sessions
++
++
++async def test_removed_app_definition_does_not_skip_container(containers):
++    await session(containers)
++    state.installed_apps.clear()
++    await stop_session(SID)
++    assert not containers.values
++
++
++async def test_inventory_and_stop_labeled_orphan(containers):
++    worker = await session(containers)
++    state.sessions.clear()
++    await config_store.save_sessions()
++    snapshot = await runtime.inspect_home("qa", "test-home")
++    assert snapshot["workers"][0]["owned"] is True
++    assert snapshot["workers"][0]["recorded"] is False
++    assert "PASSWORD" not in json.dumps(snapshot)
++    assert (await stop_home(session_id="")).status_code == 204
++    assert worker.id not in containers.values
++    assert (await stop_home()).status_code == 204
++
++
++@pytest.mark.parametrize("field,value", [("operation", "d" * 32), ("profile", "work"), ("owner", "another-user"), ("scope", "different-deployment"), ("home_hash", "wrong-home")])
++async def test_foreign_or_newer_generation_is_never_stopped(containers, field, value):
++    worker = await session(containers)
++    worker.labels[runtime.PREFIX + field] = value
++    with pytest.raises(HTTPException) as error:
++        await stop_home()
++    assert error.value.status_code == 409
++    assert worker.stop_calls == 0 and SID in state.sessions
++
++
++async def test_unlabeled_orphan_requires_operator_recovery(containers):
++    worker = await session(containers, managed=False)
++    state.sessions.clear()
++    with pytest.raises(HTTPException):
++        await stop_home()
++    assert worker.stop_calls == 0
++
++
++async def test_legacy_session_requires_exact_marker(containers):
++    worker = await session(containers, managed=False)
++    with pytest.raises(HTTPException):
++        await stop_home(bootstrap_url="https://adapter.example/another-operation")
++    assert worker.stop_calls == 0
++    await stop_home()
++    assert not containers.values
++
++
++async def test_inventory_error_is_not_empty(containers):
++    await session(containers)
++    containers.error = DockerException("daemon disconnected")
++    with pytest.raises(HTTPException) as error:
++        await runtime.inspect_home("qa", "test-home")
++    assert error.value.status_code == 503
++    with pytest.raises(HTTPException):
++        await stop_home()
++    assert SID in state.sessions
++
++
++async def test_same_home_concurrent_launch_is_exclusive(containers):
++    state.installed_apps["firefox"] = SimpleNamespace(is_meta_app=False, home_directories=True)
++    calls = 0
++
++    @runtime.guard_launch
++    async def launch(application_id, username, effective_settings, home_name, profile_id, operation_id):
++        nonlocal calls
++        calls += 1
++        await asyncio.sleep(0)
++        await session(containers)
++        return "launched"
++
++    results = await asyncio.gather(*(launch("firefox", "qa", {"persistent_storage": True}, "test-home", "personal", OPERATION) for _ in range(20)), return_exceptions=True)
++    assert calls == 1 and results.count("launched") == 1
++    assert all(value == "launched" or isinstance(value, HTTPException) and value.status_code == 409 for value in results)
++
++
++async def test_stop_waits_for_inflight_launch(containers):
++    state.installed_apps["firefox"] = SimpleNamespace(is_meta_app=False, home_directories=True)
++    entered, release = asyncio.Event(), asyncio.Event()
++
++    @runtime.guard_launch
++    async def launch(application_id, username, effective_settings, home_name, profile_id, operation_id):
++        entered.set()
++        await release.wait()
++        await session(containers)
++
++    start = asyncio.create_task(launch("firefox", "qa", {"persistent_storage": True}, "test-home", "personal", OPERATION))
++    await entered.wait()
++    stop = asyncio.create_task(stop_home())
++    await asyncio.sleep(0)
++    assert not stop.done()
++    release.set()
++    await start
++    await stop
++    assert not containers.values and not state.sessions
++
++
++async def test_symlink_cannot_cross_user_storage(containers):
++    other = Path(settings.storage_path) / "other-user" / "private"
++    other.mkdir(parents=True)
++    (Path(settings.storage_path) / "qa" / "escape").symlink_to(other)
++    with pytest.raises(HTTPException):
++        runtime.home_path("qa", "escape")
++
++
++async def test_reserved_labels_and_name_override_app_settings(containers, monkeypatch):
++    identity = runtime.runtime_identity("qa", "test-home", "firefox", "personal", OPERATION)
++    provider = docker_provider.DockerProvider({"profile_runtime": identity, "provider_config": {
++        "image": "qa-image", "port": 3000, "docker_overrides": {
++            "name": "untrusted-name", "labels": {runtime.PREFIX + "profile": "wrong"},
++            "mounts": [{"Type": "bind", "Source": "/artifacts", "Target": "/opt/artifacts", "ReadOnly": True}],
++        }}})
++    monkeypatch.setattr(provider, "_wait_for_container_ready", AsyncMock(return_value="127.0.0.1"))
++    await provider.launch(SID, {}, {identity["home_source"]: {"bind": settings.container_config_path, "mode": "rw"}})
++    assert containers.run_kwargs["name"] == "bp-home-" + identity["home_hash"]
++    assert containers.run_kwargs["labels"][runtime.PREFIX + "profile"] == "personal"
++    assert containers.run_kwargs["labels"][runtime.PREFIX + "session"] == SID
++
++
++@pytest.mark.parametrize("override", [{"volumes": {}}, {"mounts": [{"Target": "/config"}]}, {"mounts": [{"Target": "/"}]}])
++async def test_home_override_rejected_before_docker_create(containers, override):
++    identity = runtime.runtime_identity("qa", "test-home", "firefox", "personal", OPERATION)
++    provider = docker_provider.DockerProvider({"profile_runtime": identity, "provider_config": {
++        "image": "qa-image", "port": 3000, "docker_overrides": override}})
++    with pytest.raises(HTTPException):
++        await provider.launch(SID, {}, {identity["home_source"]: {"bind": settings.container_config_path}})
++    assert containers.run_kwargs is None

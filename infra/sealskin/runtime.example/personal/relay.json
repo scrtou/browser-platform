@@ -1,0 +1,10 @@
+{
+  "listen_address": "0.0.0.0:1080",
+  "upstream_host": "proxy.example.net",
+  "upstream_port": 1080,
+  "username_file": "/run/secrets/proxy-username",
+  "password_file": "/run/secrets/proxy-password",
+  "client_cidrs": ["172.30.10.0/24"],
+  "dial_timeout_seconds": 15,
+  "idle_timeout_seconds": 300
+}

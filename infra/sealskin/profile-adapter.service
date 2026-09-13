@@ -1,0 +1,17 @@
+[Unit]
+Description=Browser Platform Profile Adapter
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/browser-platform/adapter-service.env
+ExecStart=%h/.local/lib/browser-platform/profile-adapter -config ${BROWSER_PLATFORM_CONFIG}
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+UMask=0077
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

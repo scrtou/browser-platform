@@ -1,0 +1,36 @@
+{
+  "listen_address": "127.0.0.1:9100",
+  "allow_remote_listen": false,
+  "public_base_url": "https://browser.example.com",
+  "state_file": "./var/profile-adapter-state.json",
+  "control_socket": "./var/profile-adapter.control.sock",
+  "sealskin": {
+    "api_base_url": "https://sealskin-api.example.com",
+    "public_session_base_url": "https://sealskin.example.com",
+    "username": "profile-adapter",
+    "server_public_key_file": "./secrets/sealskin-server-public.pem",
+    "client_private_key_file": "./secrets/sealskin-client-private.pem",
+    "allow_unencrypted_http": false,
+    "lifecycle_enabled": true
+  },
+  "profiles": [
+    {
+      "id": "personal",
+      "application_id": "firefox-personal-proxy",
+      "home_name": "personal",
+      "start_url": "https://example.com/",
+      "language": "en_US.UTF-8",
+      "timezone": "America/New_York",
+      "wayland_mode": true
+    },
+    {
+      "id": "work",
+      "application_id": "firefox-work-proxy",
+      "home_name": "work",
+      "start_url": "https://example.com/",
+      "language": "en_US.UTF-8",
+      "timezone": "America/New_York",
+      "wayland_mode": true
+    }
+  ]
+}

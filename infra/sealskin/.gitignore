@@ -1,0 +1,10 @@
+.env
+config/
+storage/
+secrets/
+runtime/
+adapter-config.json
+adapter-state.json
+adapter-state.json.service.lock
+adapter-state.json.control.sock
+adapter-control.sock

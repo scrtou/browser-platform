@@ -1,0 +1,116 @@
+{
+  "schemaVersion": "browser-platform/v1.1-draft",
+  "proxies": [
+    {
+      "id": "proxy-us-01",
+      "revision": 1,
+      "name": "US upstream proxy",
+      "type": "socks5",
+      "host": "proxy-us.example.com",
+      "port": 1080,
+      "usernameSecretRef": "secret://proxy-us-01/username/1",
+      "passwordSecretRef": "secret://proxy-us-01/password/1",
+      "expectedLocation": {"country": "US", "region": "NY", "city": "New York"},
+      "enabled": true
+    }
+  ],
+  "networkPolicies": [
+    {
+      "id": "net-us-required",
+      "revision": 1,
+      "mode": "proxy_required",
+      "dnsMode": "upstream",
+      "webrtcPolicy": "disabled",
+      "ipv6Policy": "blocked",
+      "allowedLanCidrs": [],
+      "approvedResolverIds": [],
+      "probeEndpointId": "controlled-whoami",
+      "probeTimeoutSeconds": 10,
+      "probeTtlSeconds": 60,
+      "coherence": {
+        "mode": "strict",
+        "allowedCountries": ["US"],
+        "allowedTimezones": ["America/New_York"],
+        "onExitChange": "recheck"
+      }
+    },
+    {
+      "id": "net-direct",
+      "revision": 1,
+      "mode": "direct",
+      "dnsMode": "approved_resolver",
+      "webrtcPolicy": "disabled",
+      "ipv6Policy": "blocked",
+      "allowedLanCidrs": [],
+      "approvedResolverIds": ["operator-dns"],
+      "probeEndpointId": "controlled-whoami",
+      "probeTimeoutSeconds": 10,
+      "probeTtlSeconds": 60,
+      "coherence": {
+        "mode": "advisory",
+        "allowedCountries": [],
+        "allowedTimezones": [],
+        "onExitChange": "recheck"
+      }
+    }
+  ],
+  "environments": [
+    {
+      "id": "env-us-desktop-01",
+      "revision": 1,
+      "name": "Stable US Linux Firefox environment",
+      "engine": "camoufox",
+      "osFamily": "linux",
+      "locale": "en-US",
+      "languages": ["en-US", "en"],
+      "timezone": "America/New_York",
+      "screen": {"width": 1920, "height": 1080, "deviceScaleFactor": 1},
+      "hardware": {"cpuCores": 8},
+      "geolocation": {"mode": "disabled"},
+      "requiredCapabilities": ["stable-device-config", "locale", "timezone", "fixed-display", "cpu-cores"]
+    },
+    {
+      "id": "env-chromium-linux-01",
+      "revision": 1,
+      "name": "Native Chromium environment",
+      "engine": "chromium",
+      "osFamily": "linux",
+      "locale": "en-US",
+      "languages": ["en-US", "en"],
+      "timezone": "Etc/UTC",
+      "screen": {"width": 1920, "height": 1080, "deviceScaleFactor": 1},
+      "hardware": {},
+      "geolocation": {"mode": "disabled"},
+      "requiredCapabilities": ["locale", "timezone", "fixed-display"]
+    }
+  ],
+  "profiles": [
+    {
+      "id": "personal-us",
+      "name": "Personal US",
+      "engine": "camoufox",
+      "persistentHome": "personal-us",
+      "proxy": {"id": "proxy-us-01", "revision": 1},
+      "networkPolicy": {"id": "net-us-required", "revision": 1},
+      "environment": {"id": "env-us-desktop-01", "revision": 1},
+      "startUrl": "https://example.com/",
+      "idlePolicy": {"mode": "disconnected", "timeoutSeconds": 900},
+      "resourceLimits": {"cpuMillis": 2000, "memoryBytes": 2147483648, "shmBytes": 1073741824, "pidsLimit": 512},
+      "enabled": false,
+      "configRevision": 1
+    },
+    {
+      "id": "work-direct",
+      "name": "Work Direct",
+      "engine": "chromium",
+      "persistentHome": "work-direct",
+      "networkPolicy": {"id": "net-direct", "revision": 1},
+      "environment": {"id": "env-chromium-linux-01", "revision": 1},
+      "startUrl": "https://example.com/",
+      "idlePolicy": {"mode": "disconnected", "timeoutSeconds": 900},
+      "resourceLimits": {"cpuMillis": 2000, "memoryBytes": 2147483648, "shmBytes": 1073741824, "pidsLimit": 512},
+      "enabled": false,
+      "configRevision": 1
+    }
+  ]
+}

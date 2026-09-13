@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+python3 - <<'PY'
+import hashlib
+import json
+import os
+import sys
+from pathlib import Path
+
+path = Path('/usr/share/browser-platform/environment.json')
+raw = path.read_bytes()
+actual_hash = hashlib.sha256(raw).hexdigest()
+
+try:
+    artifact = json.loads(raw)
+except (UnicodeDecodeError, json.JSONDecodeError):
+    print('ENVIRONMENT_ARTIFACT_INVALID', file=sys.stderr)
+    raise SystemExit(1)
+
+expected = {
+    'BROWSER_PLATFORM_ENVIRONMENT_ID': artifact['id'],
+    'BROWSER_PLATFORM_ARTIFACT_SHA256': actual_hash,
+    'BROWSER_PLATFORM_LOCALE': artifact['locale'],
+    'BROWSER_PLATFORM_LANGUAGES': ','.join(artifact['languages']),
+    'TZ': artifact['timezone'],
+    'SELKIES_MANUAL_WIDTH': str(artifact['screen']['width']),
+    'SELKIES_MANUAL_HEIGHT': str(artifact['screen']['height']),
+    'SELKIES_MANUAL_RESOLUTION': 'true',
+}
+if any(os.environ.get(name) != value for name, value in expected.items()):
+    print('ENVIRONMENT_ARTIFACT_MISMATCH', file=sys.stderr)
+    raise SystemExit(1)
+if os.environ.get('PIXELFLUX_WAYLAND', 'false').lower() == 'true':
+    print('ENVIRONMENT_WAYLAND_UNSUPPORTED', file=sys.stderr)
+    raise SystemExit(1)
+print('ENVIRONMENT_ARTIFACT_OK')
+PY
+
+exec /init "$@"

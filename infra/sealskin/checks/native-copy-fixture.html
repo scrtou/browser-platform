@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Native text copy acceptance fixture</title>
+<style>body{padding:32px;font:24px sans-serif}textarea{display:block;width:90%;height:220px;font:24px sans-serif}</style>
+<p>F8 prepares the next sample and a distinct remote clipboard baseline.</p>
+<textarea id="target" autofocus></textarea>
+<textarea id="seed" readonly></textarea>
+<script>
+const target=document.querySelector('#target'),seed=document.querySelector('#seed');
+let index=-1;
+window.addEventListener('keydown',event=>{
+  if(event.code!=='F8')return;
+  event.preventDefault();index++;
+  target.value=index===1?'遠端中文'.repeat(100000)+'\nlarge-end-😀':'遠端原生複製 '+index+'\n中文、emoji 📋\nsecond line';
+  seed.value='BP_COPY_BASELINE_'+index;
+  seed.focus();seed.select();document.execCommand('copy');
+  target.focus();target.select();
+});
+</script>

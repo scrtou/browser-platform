@@ -1,0 +1,139 @@
+# Trilium 客户端验收与剪贴板
+
+## 当前用户验收
+
+2026-09-13，用户使用 Trilium 0.105.0、macOS Sequoia 15.1，反馈如下。两个固定入口仍对应原 Firefox Profile。
+
+| 项目 | 用户反馈 |
+| --- | --- |
+| Personal / Work 入口和画面 | 均可正常查看 |
+| 中文输入 | 正常 |
+| 缩放、滚动 | 正常 |
+| 恢复会话 | 正常 |
+| Clipboard 面板双向文本传递 | 用户在 Mac 上复测通过 |
+| 自动剪贴板同步 | 受 Trilium WebView 权限限制，尚未启用 |
+| 截图直接粘贴 | X11 / Wayland 隔离测试通过；用户在 Mac / Trilium 上复测确认正常 |
+| 本机文字原生粘贴到远程 | 用户复测确认正常 |
+| 远程文字原生复制到本机 | 已部署；X11 / Wayland 隔离回归通过，用户在 Mac / Trilium 上确认反向文字复制可用 |
+| Files 栏与图片上传 | 两个入口已开启，隔离测试通过；Mac / Trilium 文件选择待用户复测 |
+
+显示缩放比例、输入法名称与 screen/DPR 实测尚未提供。恢复会话的反馈不能替代主机重启、网络中断等故障验收。入口修复与回归见 [入口验收](../infra/sealskin/entry-acceptance-2026-09-13.md)。
+
+## 关闭远程 Firefox 后出现黑框
+
+2026-09-13，用户关闭 Work 的 Firefox 后刷新页面，看到黑框。检查确认 Firefox 主进程已退出，而原 Worker、labwc、Xwayland 和 Selkies 仍正常运行。固定入口复用存活的 Session；当前桌面 autostart 只在桌面启动时执行一次，重新加载 Trilium 页面不会重新启动已经退出的 Firefox。
+
+已在原 Work Worker 内，以原用户 `abc`、`HOME=/config` 和现存 Xwayland 的桌面环境重新执行 `/usr/bin/firefox`。确认 Firefox 窗口可见、已最大化且获得焦点，持有原 Profile 的锁；Work 桌面与串流、Personal 全部进程、容器及 Home 挂载、Adapter 配置与绑定均保持不变。过程没有检查网页内容，也不代表所有标签页已恢复；需要时可在 Firefox 的 History → Restore Previous Session 中恢复上次浏览状态。证据见 [恢复记录](../infra/sealskin/runtime/work-browser-recovery-2026-09-13/after.json)。
+
+再次误关时可以自行重开。已核对当前 Work / Personal 的实际 labwc 配置：桌面空白处右键会打开 `root-menu`，其中保留 **FireFox** 启动项，命令为 `/usr/bin/firefox`。
+
+1. 在黑框内的远程桌面空白处点右键；Mac 触控板可双指点按。
+2. 选择 **FireFox**，浏览器会在当前会话和原 Profile 中重新打开。
+3. 若需要找回旧标签页，使用 Firefox 的 **History → Restore Previous Session**。
+
+此方法适用于浏览器窗口已关闭、桌面连接仍正常的情况，无需重启 Worker。菜单配置核对后，用户按上述方法复测并确认“测试正常了”，自行重开路径已通过用户验收。日常离开时切换或关闭 Trilium 中的笔记即可保留远程浏览器窗口；Firefox 退出后的自动重开尚未实现。
+
+## Trilium 0.105.0 的剪贴板限制
+
+官方 [WebView 实现](https://github.com/TriliumNext/Trilium/blob/v0.105.0/apps/client/src/widgets/type_widgets/WebView.tsx) 使用独立的 `persist:webview` Electron Session。[权限策略](https://github.com/TriliumNext/Trilium/blob/v0.105.0/apps/desktop/src/services/web_contents_security.ts#L126) 对 guest 仅允许 `fullscreen`；`clipboard-read` 和 `clipboard-sanitized-write` 均被拒绝，请求和权限查询都应用这一策略。增加服务端 HTTP 响应头不能授予被 Electron 主进程拒绝的权限。
+
+当前 Selkies 在窗口获焦时使用 `navigator.clipboard.read/readText` 读取本机剪贴板，在收到远程内容后使用 `write/writeText` 写入本机剪贴板，所以自动同步会受此限制。其 WebSocket 模式仍将远程文本显示在 Clipboard 面板中；面板文字框使用原生编辑操作，失去焦点时将内容发送至远程剪贴板。
+
+这一限制针对 Async Clipboard API。用户主动触发的原生 `paste` / `copy` 事件仍可传递数据；项目已在 Selkies 网页中补充这两条路径，没有修改 Trilium。
+
+## 能否开启自动同步权限
+
+2026-09-13 核对官方 releases，最新稳定版仍为 [v0.105.0](https://github.com/TriliumNext/Trilium/releases/tag/v0.105.0)。该版本的 [安全设置](https://github.com/TriliumNext/Trilium/blob/v0.105.0/apps/desktop/src/services/security_settings.ts) 只提供后端脚本、SQL 控制台和局域网访问开关，没有 WebView 剪贴板开关；当日检查的 main 分支也仍对 guest 仅允许 `fullscreen`。
+
+启用权限需要修改本机 Trilium 的 Electron 主进程策略。建议只给 `persist:webview` 中 **origin 精确等于 `https://mysession.azhen.de`** 的请求开放 `clipboard-read` 与 `clipboard-sanitized-write`；该域名承载 Selkies，固定入口域名 `mybrowser.azhen.de` 不需要剪贴板权限。权限请求和权限查询应共用同一条按 origin 授权的规则，并验证请求所属 WebView；其他来源及其他权限继续沿用原策略。
+
+不能仅在 `guest` 的集合中添加权限名称：现有 `isPermissionAllowedForOrigin` 还会把非全屏权限限制为 Trilium 自身的 app origin，需要一起调整。网站响应头、Note 属性和 macOS 系统设置无法覆盖 Electron 主进程的拒绝决定。
+
+这一路径需要构建并按 macOS 的应用签名要求分发定制客户端，后续官方升级时需重新检查补丁兼容性。完成授权后仍需在用户 Mac 上回归自动同步和快捷键。目前只完成方案核对，**尚未修改或安装 Trilium 客户端补丁**。主动复制与粘贴使用本页记录的原生事件路径，手动面板继续保留。
+
+## macOS 的手动文本传递
+
+点击远程画面最左侧中央的蓝色竖条，打开 Selkies 侧栏，再展开 **Clipboard / 剪贴板**。这里的面板属于本机显示客户端。
+
+本机 → 远程：
+
+1. 在 Mac 应用中用 **⌘C** 复制文字。
+2. 在 Clipboard 面板文字框中用 **⌘V** 粘贴；如需替换旧内容，先用 **⌘A** 全选。
+3. 点击远程浏览器的目标输入框，让面板失去焦点并发送内容，再按 **Control+V** 粘贴。
+
+远程 → 本机：
+
+1. 在远程浏览器中选中文字，按 **Control+C**。
+2. 在 Clipboard 面板中确认收到文字，再选中它并按 **⌘C**。
+3. 回到 Mac 应用，用 **⌘V** 粘贴。
+
+这里的 Control 是 Mac 键盘上的 **⌃ Control**。远程 Linux 浏览器使用 Control 快捷键，面板文字框使用 macOS 原生 Command 快捷键。上述面板路径保留；远程画面的 **⌘V** 原生粘贴入口见下文“截图直接粘贴”。
+
+## 远程文字原生复制到本机
+
+2026-09-13 已为 Work / Personal 增加原生反向文字复制。先重新加载 **Trilium 的 WebView**，然后：
+
+1. 在远程 Firefox 网页中选中文字，按 **Command+C**。
+2. 等待右下角显示“文字已复制到本机”。若提示“再按一次 ⌘C”，保持远程画面获焦并再按一次。
+3. 回到本机应用，按 **Command+V** 粘贴。
+
+无需打开侧栏或使用在线便签中转。**Control+C** 继续只复制到远程 Linux 剪贴板；使用旧面板流程时仍按上一节操作。
+
+**远程 Firefox 右键菜单的“复制”和网页里的复制按钮也只更新远程剪贴板**。这些远程操作不会产生本机的原生 `copy` 事件，因此不会触发上述反向复制流程。本机编辑菜单送达当前远程输入层的原生 Copy 与远程右键菜单不同。要把文字带回 Mac，可使用上述 Command+C 流程，或在 Clipboard 面板中选中已收到的文字后按 Command+C。
+
+客户端先发送远程 Control+C，再等待服务端传回文字。收到与已知缓存不同的文字后，仅在本次操作的 4 秒期限及浏览器用户操作授权内尝试原生复制。超过期限，或远程剪贴板内容未变化时，需要再次主动复制；不会只等待固定时间就自动写入缓存文字。焦点、选区操作或连接改变会取消等待。复制未成功时请保留当前选区并按提示重试。
+
+当前反向路径支持 **25 MiB 以内的纯文本**，需要当前客户端有控制权且 Clipboard 的远程传出已开启。文字只保存在当前客户端的会话内存中；不调用 Async Clipboard 写入 API。原生菜单 Copy 也可处理已就绪的文字，不要求收到 DOM 的按键事件。
+
+独立 X11 / Wayland 会话通过了中文、多行、emoji、1,200,015 字节分块文本、原生菜单复制、已知旧值拒绝、延迟确认、焦点取消、断线及只读限制的检查；现有截图与文字粘贴也通过回归。另在 Electron 43.4.0 中验证了与 Trilium 相同的 guest 权限拒绝策略下，原生 Copy 事件可写入文字。用户随后在 macOS Sequoia 15.1 / Trilium 0.105.0 上反馈“反向文字可以了”，确认原生反向文字复制主流程可用；上述大文本、异常及菜单场景仍以隔离测试为证据，未逐项完成用户实测。部署摘要、测试方法和回滚见 [反向复制记录](../infra/sealskin/native-copy-acceptance-2026-09-13.md)。
+
+## 截图直接粘贴，不用先保存文件
+
+2026-09-13 已为 Personal / Work 补充用户主动粘贴入口。先重新加载 Trilium 中的远程页面，让 Selkies 客户端加载更新，然后：
+
+1. 在 Mac 上按 **Control + Shift + Command + 4**，框选截图，图片直接进入系统剪贴板。
+2. 点击远程网页中支持图片粘贴的输入框，例如聊天输入框。
+3. 按 **Command + V**，等待右下角粘贴提示并确认网页中的图片或附件预览。
+
+此路径无需打开 Files，也无需手动开启 Image Support。没有本机保存图片、文件选择或远程 Desktop 中转步骤；图片经远程剪贴板交给 Firefox 的原生 `paste` 事件。目标网站需要支持粘贴图片，后续发送由用户确认。**Control + V** 继续粘贴远程 Linux 剪贴板，原有手动文本面板仍可用；新增的 **Command + V** 也支持本机文字。
+
+实现读取用户主动触发的 `paste` 事件中的 `clipboardData`，不调用 Async Clipboard API，不更改 Trilium 权限策略。单次上限 **25 MiB**，支持 PNG、JPEG、WebP、BMP。为确认传递完成，仅在图片粘贴期间临时启用 Selkies 的二进制剪贴板回传，逐字节匹配收到的内容后触发远程 Control+V，随后恢复用户当前的 Image Support 设置。需要当前客户端具有控制权且 Clipboard 双向传递开启。连接断开、焦点或操作位置改变、确认超时均不触发自动粘贴。
+
+独立的原 Firefox Wayland 和 Personal 代理 X11 会话均通过：客户端 Clipboard API `denied`，可信原生图片粘贴事件，2,470,507 字节 PNG 分块传输，远程 Firefox 接收图片的尺寸与完整 RGBA 像素 SHA-256 一致；中文文字、原有面板及普通键盘输入回归通过。另已模拟 Mac 键位，修正上游 Command 转 Alt 导致 X11 菜单抢走焦点的问题，并验证 Command+A/C 和持续按住 Command 跨粘贴操作。新建会话和一次性 QA Worker 重启后也加载相同前端摘要。此次截图功能部署仅更新两个 Worker 的静态文件，Firefox、桌面和 Selkies 进程均保留。
+
+QA 客户端是 Chromium 151 / Linux，使用原生浏览器粘贴命令在该平台执行带 Meta 修饰键的粘贴动作。用户随后在 **Trilium 0.105.0 / macOS Sequoia 15.1** 上复测并确认“测试正常”，截图直接粘贴已通过目标客户端验收。该反馈不覆盖 Files 的原生文件选择与拖放。部署、证据与回滚见 [截图粘贴记录](../infra/sealskin/screenshot-paste-acceptance-2026-09-13.md)。
+
+## 图片上传与 Files 栏
+
+2026-09-13 已按用户要求为 Personal / Work 开启 **Files → Upload Files**。刷新 Trilium 中的远程页面后：
+
+1. 打开左侧蓝色拉条，展开 **Files**，点击 **Upload Files**。
+2. 选择 Mac 上已有的 PNG/JPG 文件，等待上传完成。剪贴板截图可使用上一节的直接粘贴入口。
+3. 在远程 Firefox 的目标网站点击“上传图片”。
+4. 在远程文件选择框中按 **Control+L**，输入 `/config/Desktop/` 并回车，选择刚上传的图片。
+
+侧栏上传只将文件传入远程电脑，需要继续在目标网站选择该文件。也可将 Finder 中的文件拖到远程画面中央上传。这两个路径不调用系统 Clipboard API，也不需要开启 Clipboard 面板的 Image Support。当前 Files 栏提供上传按钮。
+
+此前 Files 被桌面加固初始化脚本注入的 `SELKIES_UI_SIDEBAR_SHOW_FILES=false` 隐藏；该值不出现在 Docker 的初始 Env 中，需要核对 Selkies 进程环境。现在两个应用定义显式设置 `SELKIES_UI_SIDEBAR_SHOW_FILES=true`、`SELKIES_FILE_TRANSFERS=upload`，保留 `HARDEN_DESKTOP=true`。现有两个 Worker 仍是旧 Wayland 会话，使用静态页面更新立即显示 Files；额外的 custom-init hook 为其后续启动设置相同环境。配置、验证与回滚见 [Files 开启记录](../infra/sealskin/files-sidebar-acceptance-2026-09-13.md)。
+
+初次采用串流重载时，旧 Work 的 Wayland 桌面连带重启了 Firefox；该次设置已回滚，Home 和 Session 绑定保留。最终静态更新没有再重启两个 Worker 的浏览器、桌面或串流进程。不能把 X11 下的串流重载验收用于证明旧 Wayland 浏览器进程不受影响。
+
+隔离 Wayland 会话已验证：Clipboard 读写权限均为 denied 时，Files 栏可见，点击 Upload Files 触发文件选择，PNG 上传后的大小和 SHA-256 完全匹配。见 [按钮上传验证](../infra/sealskin/runtime/files-sidebar-wayland-acceptance-2026-09-13/image-upload.json)。此前独立测试也通过了 [图片拖放验证](../infra/sealskin/runtime/image-drop-acceptance-2026-09-13/image-upload.json)。**用户 Mac / Trilium 的原生文件选择与拖放尚待实测**。
+
+## 文字长度与大文本
+
+2026-09-13 检查正在运行的固定 Firefox 基础镜像：侧栏 `dashboardClipboardTextarea` 没有设置 `maxlength`，当前 WebSocket 纯文本接收路径也没有配置总字数或总字节数上限。客户端与服务端都按 UTF-8 编码处理文字；达到 **750 KiB（768,000 字节）** 后自动分块，接收完整后再合并并核对总字节数。
+
+使用同一 Selkies 基线的独立 QA 会话，已完成 **400,000 个汉字、1,200,000 字节 UTF-8 文本** 的往返：本机文字框 → Clipboard 面板 → 远程浏览器，追加 7 个 ASCII 字符后再经面板复制回本机，完整内容匹配。测试客户端为 Chromium 151.0.7922.34 / Linux，Async Clipboard 读写权限仍为 denied。报告见 [大文本验证](../infra/sealskin/runtime/clipboard-large-text-2026-09-13/clipboard.json)；该量级尚未在用户的 macOS / Trilium 上单独复测。
+
+未设置总量上限不代表任意大小均可传递。当前 X11 文本读取等待为 1 秒，写入后等待 xclip 退出为 2 秒；更大内容还受浏览器渲染、内存和传输状态影响。若大文本超时或卡顿，可改用文件传递。代码中另一个 10 MiB 上限用于从文件管理器剪贴板读取图片文件，不适用于此处的纯文本路径。
+
+## 隔离验证及边界
+
+2026-09-13 创建独立 `camoufox-personal-r4` cleanroom 会话，其 Selkies 来自与现有 Personal/Work 相同的固定 Firefox 基础镜像。使用 Chromium 151.0.7922.34 的 Linux 客户端，通过 HTTPS 访问 Session，将该 origin 的 Async Clipboard 读写权限都设为 `denied`，并确认实际 `readText`、`writeText` 均返回 `NotAllowedError`。
+
+测试通过原生文字框快捷键复制中文、粘贴至 Clipboard 面板、在远程浏览器粘贴并追加文本，再复制回面板和本机文字框。双向完整文本均匹配。该测试没有调用授权的 Clipboard API 来代替被测路径。
+
+结果见主机上的 [验证报告](../infra/sealskin/runtime/clipboard-acceptance-2026-09-13/clipboard.json)，界面截图保存在同目录。此目录被 Git 忽略，部署备份需单独保留。测试没有修改原 Worker、应用定义或 Trilium 权限；原容器和 Adapter 绑定保持一致，临时 Worker 与带授权参数的 Session 文件均已清理。
+
+隔离测试证明了权限被拒绝时 Selkies 手动面板的文本路径可行。用户随后按上述操作在 **Trilium 0.105.0 / macOS Sequoia 15.1** 上复测并确认通过，手动面板文本路径已完成目标客户端验收；自动同步仍受客户端权限策略限制。

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "policies": {
+    "personal-socks5-r1": {
+      "username": "profile-adapter",
+      "profile_id": "personal",
+      "home_name": "personal",
+      "application_id": "firefox-personal",
+      "relay_image": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "probe_image": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "upstream_host": "proxy.example.invalid",
+      "upstream_port": 1080,
+      "username_file": "/config/.config/sealskin/network-secrets/personal-socks5-r1-username",
+      "username_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "password_file": "/config/.config/sealskin/network-secrets/personal-socks5-r1-password",
+      "password_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "probe_url": "https://example.com/",
+      "probe_ca_file": "",
+      "probe_ca_sha256": "",
+      "probe_timeout_seconds": 10
+    }
+  }
+}

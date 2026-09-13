@@ -1,0 +1,41 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Screenshot paste acceptance fixture</title>
+<style>body{font:24px sans-serif;padding:32px}textarea{display:block;width:90%;height:160px;font:24px sans-serif}img{max-width:300px}</style>
+<p>Native image paste target. F8 copies only the test report.</p>
+<textarea id="target" autofocus></textarea>
+<img id="preview">
+<textarea id="report" readonly></textarea>
+<script>
+const target = document.querySelector('#target');
+const report = document.querySelector('#report');
+const results = [];
+target.addEventListener('paste', async event => {
+  event.preventDefault();
+  const file = [...event.clipboardData.items].find(item => item.type.startsWith('image/'))?.getAsFile();
+  const result = {trusted:event.isTrusted, type:file ? file.type : 'text/plain'};
+  if (file) {
+    const bytes = await file.arrayBuffer();
+    result.bytes = bytes.byteLength;
+    result.sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2, '0')).join('');
+    const bitmap = await createImageBitmap(file);
+    result.width = bitmap.width; result.height = bitmap.height;
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width; canvas.height = bitmap.height;
+    const context = canvas.getContext('2d'); context.drawImage(bitmap, 0, 0);
+    result.pixel = [...context.getImageData(bitmap.width - 5, bitmap.height - 5, 1, 1).data];
+    result.pixelSHA256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', context.getImageData(0, 0, bitmap.width, bitmap.height).data))].map(b => b.toString(16).padStart(2, '0')).join('');
+    bitmap.close();
+    if (document.querySelector('#preview').src) URL.revokeObjectURL(document.querySelector('#preview').src);
+    document.querySelector('#preview').src = URL.createObjectURL(file);
+  } else result.text = event.clipboardData.getData('text/plain');
+  results.push(result);
+  report.value = 'BP_PASTE_REPORT:' + JSON.stringify({results, typedText:target.value});
+});
+window.addEventListener('keydown', event => {
+  if (event.code !== 'F8') return;
+  event.preventDefault();
+  report.value = 'BP_PASTE_REPORT:' + JSON.stringify({results, typedText:target.value});
+  report.focus(); report.select(); document.execCommand('copy'); target.focus();
+});
+</script>

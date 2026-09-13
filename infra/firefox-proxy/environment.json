@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "browser-platform/firefox-environment/v1",
+  "id": "env-tw-firefox-baseline-r1",
+  "revision": 1,
+  "engine": "firefox",
+  "baseImageDigest": "sha256:7e3dbebd9e730952648b8c902ce90fa72c0e2be3e786ab17026c38e0909b47f7",
+  "locale": "zh-TW",
+  "languages": ["zh-TW", "zh", "en-US", "en"],
+  "timezone": "Asia/Taipei",
+  "screen": {
+    "width": 1920,
+    "height": 1080,
+    "deviceScaleFactor": 1
+  },
+  "webrtcPolicy": "disabled",
+  "network": {
+    "proxyMode": "socks5",
+    "proxyHost": "profile-relay",
+    "proxyPort": 1080,
+    "dnsMode": "upstream"
+  }
+}

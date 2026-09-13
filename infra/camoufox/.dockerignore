@@ -1,0 +1,6 @@
+artifacts
+evidence
+__pycache__
+.build/*
+!.build/browser.zip
+

@@ -1,0 +1,54 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Private browser network check</title>
+<p>Network QA is running in this temporary browser.</p>
+<script>
+const nonce = crypto.randomUUID().replaceAll('-', '');
+const zone = 'leak.qa.test';
+const host = label => `${label}-${nonce}.${zone}`;
+const url = (label, path = '/ping') => `https://${host(label)}${path}?nonce=${nonce}`;
+const qa = window.qa = {nonce, initial: {}, background: [], download: {bytes: 0}, timers: []};
+async function fetchCheck(label) {
+  const response = await fetch(url(label), {cache: 'no-store', signal: AbortSignal.timeout(6000)});
+  const value = await response.json();
+  return response.ok && value.nonce === nonce;
+}
+qa.run = async () => {
+  qa.initial.fetch = await fetchCheck('fetch');
+  qa.initial.aaaa = await fetchCheck('aaaa');
+  qa.initial.webrtc = typeof RTCPeerConnection;
+  qa.initial.webTransport = typeof WebTransport;
+  qa.initial.websocket = await new Promise(resolve => {
+    const ws = new WebSocket(`wss://${host('ws')}/ws?nonce=${nonce}`);
+    const timer = setTimeout(() => { ws.close(); resolve(false); }, 6000);
+    ws.onopen = () => ws.send(nonce);
+    ws.onmessage = event => {clearTimeout(timer); resolve(event.data === nonce); ws.close();};
+    ws.onerror = () => {clearTimeout(timer); resolve(false);};
+  });
+  for (const relation of ['dns-prefetch', 'preconnect']) {
+    const link = document.createElement('link'); link.rel = relation;
+    link.href = `https://${host(relation)}`; document.head.append(link);
+  }
+  for (let index = 0; index < 5; index++) await fetchCheck('h3');
+  return JSON.stringify(qa.initial);
+};
+qa.startTraffic = () => {
+  qa.background = [];
+  qa.download = {bytes: 0, complete: false, failed: false};
+  qa.timers.push(setInterval(async () => {
+    const started = Date.now();
+    try {qa.background.push({time: started, ok: await fetchCheck('background')});}
+    catch (_) {qa.background.push({time: started, ok: false});}
+  }, 350));
+  (async () => {
+    try {
+      const response = await fetch(url('download', '/download'), {signal: AbortSignal.timeout(20000)});
+      const reader = response.body.getReader();
+      while (true) {const value = await reader.read(); if (value.done) break; qa.download.bytes += value.value.byteLength;}
+      qa.download.complete = true;
+    } catch (_) {qa.download.failed = true;}
+  })();
+  return nonce;
+};
+qa.stopTraffic = () => {qa.timers.forEach(clearInterval); qa.timers = []; return JSON.stringify({background: qa.background, download: qa.download});};
+</script>

@@ -1,0 +1,40 @@
+{
+  "id": "health-example-01",
+  "profileId": "personal-us",
+  "operationId": "launch-example-01",
+  "externalSessionId": "sealskin-session-example",
+  "checkedAt": "2026-09-12T10:00:00Z",
+  "expiresAt": "2026-09-12T10:01:00Z",
+  "overall": "degraded",
+  "engine": "camoufox",
+  "environment": {"id": "env-us-desktop-01", "revision": 1},
+  "networkPolicy": {"id": "net-us-required", "revision": 1},
+  "observation": {
+    "id": "observation-example-01",
+    "profileId": "personal-us",
+    "operationId": "launch-example-01",
+    "proxy": {"id": "proxy-us-01", "revision": 1},
+    "networkPolicy": {"id": "net-us-required", "revision": 1},
+    "probeEndpointId": "controlled-whoami",
+    "measuredAt": "2026-09-12T10:00:00Z",
+    "expiresAt": "2026-09-12T10:01:00Z",
+    "status": "pass",
+    "publicIpv4": "203.0.113.10",
+    "latencyMs": 120,
+    "country": "US",
+    "geoSource": "fixture-only",
+    "geoConfidence": "high"
+  },
+  "checks": [
+    {"name": "worker", "status": "pass", "required": true, "code": "WORKER_READY", "message": "浏览器和显示服务就绪"},
+    {"name": "proxy", "status": "pass", "required": true, "code": "PROXY_OK", "message": "已从当前受限网络完成出口探测"},
+    {"name": "egress", "status": "pass", "required": true, "code": "POLICY_ACTIVE", "message": "策略版本匹配，规则和隔离检查通过"},
+    {"name": "dns", "status": "pass", "required": true, "code": "DNS_UPSTREAM", "message": "测试域名由上游解析，绕过探测被阻止"},
+    {"name": "webrtc", "status": "pass", "required": true, "code": "WEBRTC_DISABLED", "message": "远程浏览器 WebRTC 已禁用"},
+    {"name": "country", "status": "pass", "required": true, "code": "COUNTRY_ALLOWED", "message": "出口符合 US 策略"},
+    {"name": "timezone", "status": "pass", "required": true, "code": "TIMEZONE_MATCH", "message": "页面观测值符合 America/New_York"},
+    {"name": "environment", "status": "pass", "required": true, "code": "ARTIFACT_MATCH", "message": "配置摘要和必需观测项符合已验证版本"},
+    {"name": "deviceMemory", "status": "not_applicable", "required": false, "code": "ENGINE_NOT_EXPOSED", "message": "此引擎不暴露该网页属性"},
+    {"name": "city", "status": "unknown", "required": false, "code": "GEO_CITY_UNKNOWN", "message": "没有足够数据确认城市"}
+  ]
+}

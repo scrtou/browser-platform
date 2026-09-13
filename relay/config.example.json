@@ -1,0 +1,10 @@
+{
+  "listen_address": "127.0.0.1:19080",
+  "upstream_host": "proxy.example.invalid",
+  "upstream_port": 60011,
+  "username_file": "secrets/username",
+  "password_file": "secrets/password",
+  "client_cidrs": ["127.0.0.1/32"],
+  "dial_timeout_seconds": 15,
+  "idle_timeout_seconds": 300
+}

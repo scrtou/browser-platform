@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -euo pipefail
+exec /opt/camoufox-python/bin/python /usr/local/lib/browser-platform/environment.py launch "$@"

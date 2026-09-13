@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -n "${SEALSKIN_URL:-}" ]]; then
+    exec /usr/local/bin/browser-platform-camoufox "$SEALSKIN_URL"
+fi
+exec /usr/local/bin/browser-platform-camoufox

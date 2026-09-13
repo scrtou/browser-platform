@@ -1,0 +1,39 @@
+services:
+  sealskin:
+    networks:
+      default: {}
+      browser_personal: {}
+
+  profile-relay-personal:
+    image: browser-platform/profile-relay:relay-v1
+    container_name: profile-relay-personal
+    command: ["-config", "/run/config/relay.json"]
+    read_only: true
+    user: "1000:1000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./runtime/personal/relay.json:/run/config/relay.json:ro
+      - ./secrets/proxy-personal-username:/run/secrets/proxy-username:ro
+      - ./secrets/proxy-personal-password:/run/secrets/proxy-password:ro
+    networks:
+      browser_personal:
+        aliases:
+          - profile-relay
+      proxy_egress: {}
+    restart: unless-stopped
+
+networks:
+  browser_personal:
+    name: browser-platform-personal
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.10.0/24
+  proxy_egress:
+    name: browser-platform-proxy-egress
+    ipam:
+      config:
+        - subnet: 172.30.20.0/24
