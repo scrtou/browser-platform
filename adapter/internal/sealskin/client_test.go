@@ -34,6 +34,12 @@ type fakeSealSkinServer struct {
 	installedApps     []map[string]any
 	installKey        string
 	runtime           any
+	health            any
+	healthQueries     []string
+	coherence         any
+	coherenceBodies   []StopProfileRequest
+	coherenceKeys     []string
+	coherencePaths    []string
 	stopBody          StopProfileRequest
 	stopIdempotency   string
 	handshakes        int
@@ -113,6 +119,20 @@ func (f *fakeSealSkinServer) ServeHTTP(writer http.ResponseWriter, request *http
 	}
 
 	switch {
+	case request.Method == http.MethodPost && (request.URL.Path == "/api/profile-runtime/personal/coherence/access" || request.URL.Path == "/api/profile-runtime/personal/coherence/probe"):
+		var body StopProfileRequest
+		key := request.Header.Get("X-Idempotency-Key")
+		if json.Unmarshal(plain, &body) != nil || key == "" {
+			f.writeEncrypted(writer, http.StatusBadRequest, map[string]string{"detail": "invalid coherence request"})
+			return
+		}
+		f.coherenceBodies = append(f.coherenceBodies, body)
+		f.coherenceKeys = append(f.coherenceKeys, key)
+		f.coherencePaths = append(f.coherencePaths, request.URL.Path)
+		f.writeEncrypted(writer, http.StatusOK, f.coherence)
+	case request.Method == http.MethodGet && request.URL.Path == "/api/profile-runtime/personal/health":
+		f.healthQueries = append(f.healthQueries, request.URL.RawQuery)
+		f.writeEncrypted(writer, http.StatusOK, f.health)
 	case request.Method == http.MethodGet && request.URL.Path == "/api/profile-runtime/personal":
 		f.writeEncrypted(writer, http.StatusOK, f.runtime)
 	case request.Method == http.MethodPost && request.URL.Path == "/api/profile-runtime/personal/stop":
@@ -404,4 +424,44 @@ func writeJSON(writer http.ResponseWriter, status int, value any) {
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(status)
 	_ = json.NewEncoder(writer).Encode(value)
+}
+
+func TestObserveHomeIsReadOnlyAndValidated(t *testing.T) {
+	serverPrivate, clientPrivate := testKeys(t)
+	server := &fakeSealSkinServer{serverPrivate: serverPrivate, clientPublic: &clientPrivate.PublicKey}
+	httpServer := httptest.NewServer(server)
+	defer httpServer.Close()
+	client := newTestClient(t, httpServer.URL, serverPrivate, clientPrivate, httpServer.Client())
+	server.mu.Lock()
+	server.health = map[string]any{"version": 1, "home_name": "personal", "observed_at": 1.0,
+		"runtime": map[string]any{"version": 1, "home_name": "personal", "records": []any{}, "workers": []any{},
+			"network_runtime_version": 1, "network_enforcement_version": 1, "resources": []any{}},
+		"workers": []any{}, "network": nil}
+	server.mu.Unlock()
+	health, err := client.ObserveHome(context.Background(), "personal", false)
+	if err != nil || health.HomeName != "personal" || health.Network != nil || len(health.Workers) != 0 {
+		t.Fatalf("health=%+v err=%v", health, err)
+	}
+	if _, err := client.ObserveHome(context.Background(), "personal", true); err != nil {
+		t.Fatal(err)
+	}
+	server.mu.Lock()
+	queries := append([]string(nil), server.healthQueries...)
+	server.health = map[string]any{"version": 2, "home_name": "personal", "runtime": map[string]any{"version": 1, "home_name": "personal", "records": []any{}, "workers": []any{}}, "workers": []any{}}
+	server.mu.Unlock()
+	if len(queries) != 2 || queries[0] != "" || queries[1] != "upstream=true" {
+		t.Fatalf("queries=%v", queries)
+	}
+	if _, err := client.ObserveHome(context.Background(), "personal", false); err == nil {
+		t.Fatal("unsupported health version accepted")
+	}
+	if _, err := client.ObserveHome(context.Background(), "../personal", false); err == nil {
+		t.Fatal("invalid Home name accepted")
+	}
+	server.mu.Lock()
+	server.health = map[string]any{"version": 1, "home_name": "other", "runtime": map[string]any{"version": 1, "home_name": "other", "records": []any{}, "workers": []any{}}, "workers": []any{}}
+	server.mu.Unlock()
+	if _, err := client.ObserveHome(context.Background(), "personal", false); err == nil {
+		t.Fatal("home mismatch accepted")
+	}
 }

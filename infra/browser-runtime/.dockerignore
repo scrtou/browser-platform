@@ -1,0 +1,5 @@
+*
+!Dockerfile
+!browser-shutdown.py
+!before-desktop-stop
+!install.py

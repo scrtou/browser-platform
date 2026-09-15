@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "policies": {
+    "work-direct-r1": {
+      "username": "example-user",
+      "profile_id": "work",
+      "home_name": "work",
+      "application_id": "camoufox-work",
+      "mode": "direct",
+      "approved_resolver_id": "ops-public-dns-1",
+      "approved_resolver_ip": "1.1.1.1",
+      "relay_image": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "probe_image": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "upstream_host": "",
+      "upstream_port": 0,
+      "username_file": "",
+      "username_sha256": "",
+      "password_file": "",
+      "password_sha256": "",
+      "probe_url": "https://example.com/",
+      "probe_ca_file": "",
+      "probe_ca_sha256": "",
+      "probe_timeout_seconds": 10
+    }
+  }
+}

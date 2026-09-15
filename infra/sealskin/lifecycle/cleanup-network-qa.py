@@ -68,6 +68,7 @@ def main():
         "{{.Names}}",
     ).stdout.splitlines()
     assert set(known) == set(expected), "Unrecognized QA containers require inspection"
+    container_evidence = {}
     for name, source in expected.items():
         value = json.loads(checks.docker("inspect", name).stdout)[0]
         assert (
@@ -77,14 +78,38 @@ def main():
         assert any(m.get("Source") == str(source) for m in value.get("Mounts", [])), (
             "QA mount ownership mismatch"
         )
-    pid = json.loads((root / "adapter-pid.json").read_text())["pid"]
-    assert (
-        Path(os.readlink(f"/proc/{pid}/exe")).resolve()
-        == (root / "bin/profile-adapter").resolve()
-    )
-    os.kill(pid, signal.SIGTERM)
+        container_evidence[name] = value
+    checks.write_json(root.parent / "qa-cleanup-container-inspects.json", container_evidence)
+    adapter_pid = root / "adapter-pid.json"
+    if adapter_pid.exists():
+        pid = json.loads(adapter_pid.read_text())["pid"]
+        assert (
+            Path(os.readlink(f"/proc/{pid}/exe")).resolve()
+            == (root / "bin/profile-adapter").resolve()
+        )
+        os.kill(pid, signal.SIGTERM)
+    else:
+        # Browser-only QA uses SealSkin directly and may never start Adapter.
+        # A missing PID record is safe only if its exact executable is absent.
+        expected_adapter = (root / "bin/profile-adapter").resolve()
+        for process in Path("/proc").glob("[0-9]*"):
+            try:
+                executable = Path(os.readlink(process / "exe")).resolve()
+            except (FileNotFoundError, ProcessLookupError):
+                continue
+            except PermissionError:
+                # setgid helpers and container processes can share the UID but
+                # hide /exe. QA starts with absolute binary/config arguments.
+                try:
+                    command = process.joinpath("cmdline").read_bytes().split(b"\0")
+                except (FileNotFoundError, ProcessLookupError):
+                    continue
+                assert str(expected_adapter).encode() not in command
+                assert str(root / "adapter-config.json").encode() not in command
+                continue
+            assert executable != expected_adapter, "QA Adapter exists without an owned PID record"
     for name in expected:
-        checks.docker("rm", "-f", name)
+        checks.docker("rm", "-f", "-v", container_evidence[name]["Id"])
     network = json.loads(
         checks.docker("network", "inspect", "browser-platform-network-qa").stdout
     )[0]

@@ -38,6 +38,21 @@ def install(root=Path('/usr/share/selkies/web'), state=Path('/var/lib/browser-pl
     for before, after in [
         (b'g.files=O.ui_sidebar_show_files?.value??!0', b'g.files=!0'),
         (b'g.fileDownload=Ye?Ye.value.includes("download"):!0', b'g.fileDownload=!1'),
+        # UTF-16 surrogate halves are not Unicode characters or valid X11
+        # keysyms. Preserve supplementary CJK/emoji in both committed text and
+        # composition updates; Latin modifier handling remains upstream's.
+        (b'for(let f=0;f<c.length;f++){const p=c[f];if(p>="A"&&p<="Z")',
+         b'for(const p of c){if(p>="A"&&p<="Z")'),
+        (b'const y=ds.lookup(p.charCodeAt(0));y&&(this.send("kd,"+y),this.send("ku,"+y))',
+         b'const y=ds.lookup(p.codePointAt(0));y&&(this.send("kd,"+y),this.send("ku,"+y))'),
+        (b'const c=s.data;for(let f=0;f<c.length;f++){const p=c.charCodeAt(f),y=ds.lookup(p);',
+         b'const c=s.data;for(const f of c){const p=f.codePointAt(0),y=ds.lookup(p);'),
+        (b'_updateCompositionText(s){const c=this.compositionString,f=s||"";let p=0;',
+         b'_updateCompositionText(s){const c=Array.from(this.compositionString),f=Array.from(s||"");let p=0;'),
+        (b'const m=f.substring(p);for(let z=0;z<m.length;z++){const T=ds.lookup(m.charCodeAt(z));',
+         b'const m=f.slice(p);for(const z of m){const T=ds.lookup(z.codePointAt(0));'),
+        (b'this.compositionString=f}_compositionStart(s)',
+         b'this.compositionString=s||""}_compositionStart(s)'),
         (b'async function gn(_,x="text/plain"){', BRIDGE + b'async function gn(_,x="text/plain"){'),
         # Use the last actual client settings, not a freshly derived snapshot:
         # initial X11 server-enforced resolution is normalized after its send.

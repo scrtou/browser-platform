@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,10 +13,12 @@ import (
 	"syscall"
 	"time"
 
+	"browser-platform/adapter/internal/access"
 	"browser-platform/adapter/internal/config"
 	"browser-platform/adapter/internal/control"
 	"browser-platform/adapter/internal/httpapi"
 	"browser-platform/adapter/internal/profile"
+	"browser-platform/adapter/internal/safelog"
 	"browser-platform/adapter/internal/sealskin"
 	"browser-platform/adapter/internal/state"
 )
@@ -25,12 +28,17 @@ func main() {
 	resetProfile := flag.String("reset-profile", "", "mark one launching/unknown/failed Profile as stopped after operator inspection")
 	stopProfile := flag.String("stop-profile", "", "ask the running adapter to stop a Profile and verify removal")
 	reconcileProfile := flag.String("reconcile-profile", "", "ask the running adapter to reconcile a Profile or resume its pending stop")
+	resumeProfile := flag.String("resume-profile", "", "ask the running adapter to resume a dormant generation in order (Relay, Guard, probe, Worker); never creates")
 	inspectProfile := flag.String("inspect-profile", "", "inspect a Profile through the running adapter's private control socket")
+	healthProfile := flag.String("health-profile", "", "read a Profile's runtime health report through the private control socket")
+	probeProfile := flag.String("probe-profile", "", "force a fresh runtime health probe (at most once per 10 seconds) through the private control socket")
+	coherenceProfile := flag.String("coherence-profile", "", "sample browser environment and network coherence for an existing generation through the private control socket")
 	flag.Parse()
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logger := safelog.Logger(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	action, target := "", ""
-	for name, value := range map[string]string{"reset": *resetProfile, "stop": *stopProfile, "reconcile": *reconcileProfile, "inspect": *inspectProfile} {
+	for name, value := range map[string]string{"reset": *resetProfile, "stop": *stopProfile, "reconcile": *reconcileProfile, "inspect": *inspectProfile,
+		"resume": *resumeProfile, "health": *healthProfile, "probe": *probeProfile, "coherence": *coherenceProfile} {
 		if value == "" {
 			continue
 		}
@@ -54,6 +62,24 @@ func run(configPath, action, target string, logger *slog.Logger) error {
 	if action != "" && action != "reset" {
 		if !cfg.SealSkin.LifecycleEnabled {
 			return profile.ErrLifecycleDisabled
+		}
+		if action == "coherence" {
+			report, err := control.CoherenceCommand(context.Background(), cfg.ControlSocket, target)
+			if err != nil {
+				return err
+			}
+			encoder := json.NewEncoder(os.Stdout)
+			encoder.SetIndent("", "  ")
+			return encoder.Encode(report)
+		}
+		if action == "health" || action == "probe" {
+			report, err := control.HealthCommand(context.Background(), cfg.ControlSocket, action, target)
+			if err != nil {
+				return err
+			}
+			encoder := json.NewEncoder(os.Stdout)
+			encoder.SetIndent("", "  ")
+			return encoder.Encode(report)
 		}
 		result, err := control.Command(context.Background(), cfg.ControlSocket, action, target)
 		if err != nil {
@@ -81,10 +107,18 @@ func run(configPath, action, target string, logger *slog.Logger) error {
 	if err != nil {
 		return errors.New("read SealSkin client private key")
 	}
+	var transport http.RoundTripper
+	if cfg.Access != nil {
+		transport, err = access.SessionTransport(*cfg.Access)
+		if err != nil {
+			return err
+		}
+	}
 	client, err := sealskin.NewClient(sealskin.Config{
 		BaseURL: cfg.SealSkin.APIBaseURL, Username: cfg.SealSkin.Username,
 		ServerPublicKeyPEM: serverPublicKey, ClientPrivateKeyPEM: clientPrivateKey,
 		AllowUnencryptedHTTP: cfg.SealSkin.AllowUnencryptedHTTP,
+		Transport:            transport,
 	})
 	clear(clientPrivateKey)
 	if err != nil {
@@ -94,7 +128,7 @@ func run(configPath, action, target string, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	var options []profile.Option
+	options := []profile.Option{profile.WithLimits(cfg.Limits)}
 	if cfg.SealSkin.LifecycleEnabled {
 		options = append(options, profile.WithLifecycle(client))
 	}
@@ -110,18 +144,41 @@ func run(configPath, action, target string, logger *slog.Logger) error {
 		return nil
 	}
 
-	handler := httpapi.New(profiles, client.ListSessions, cfg.PublicBaseURL, cfg.SealSkin.PublicSessionBaseURL, logger)
-	httpServer := &http.Server{
-		Addr: cfg.ListenAddress, Handler: handler,
-		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
-		WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second,
-	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	var httpOptions []httpapi.Option
+	if cfg.Access != nil {
+		var ids []string
+		for _, definition := range cfg.Profiles {
+			ids = append(ids, definition.ID)
+		}
+		gateway, err := access.New(ctx, *cfg.Access, cfg.PublicBaseURL, cfg.SealSkin.PublicSessionBaseURL, ids, profiles.CheckDisplaySession, logger)
+		if err != nil {
+			return err
+		}
+		httpOptions = append(httpOptions, httpapi.WithAccess(gateway))
+	}
+	healthUI := httpapi.HealthUI{EntryHint: cfg.SealSkin.LifecycleEnabled && cfg.Health.EntryHintEnabled(), EntryWait: cfg.Health.EntryWait()}
+	handler := httpapi.New(profiles, client.ListSessions, cfg.PublicBaseURL, cfg.SealSkin.PublicSessionBaseURL, logger, healthUI, httpOptions...)
+	httpServer := &http.Server{
+		Addr: cfg.ListenAddress, Handler: handler,
+		ErrorLog: log.New(safelog.ServerErrors{Logger: logger}, "", 0), MaxHeaderBytes: 64 << 10,
+		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
+		// An entry POST may resume a dormant generation in order before redirecting.
+		WriteTimeout: sealskin.LongOperationTimeout + 15*time.Second, IdleTimeout: 120 * time.Second,
+	}
 	var controlServer *http.Server
 	if cfg.SealSkin.LifecycleEnabled {
+		// After a host boot the control service may still be starting; wait a
+		// bounded time so startup reconciliation (including dormant-generation
+		// resume) runs once SealSkin answers instead of failing immediately.
+		waitCtx, cancelWait := context.WithTimeout(ctx, cfg.Startup.ControlWait())
+		if err := waitForControlPlane(waitCtx, client.ListSessions, logger); err != nil {
+			logger.Warn("SealSkin control plane not ready before startup reconciliation", "error", err)
+		}
+		cancelWait()
 		for _, definition := range cfg.Profiles {
-			recoverCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+			recoverCtx, cancel := context.WithTimeout(ctx, sealskin.LongOperationTimeout+15*time.Second)
 			result, recoverErr := profiles.Reconcile(recoverCtx, definition.ID)
 			cancel()
 			if recoverErr != nil {
@@ -135,14 +192,35 @@ func run(configPath, action, target string, logger *slog.Logger) error {
 			return err
 		}
 		defer listener.Close()
-		controlServer = &http.Server{Handler: control.Handler(profiles), ReadHeaderTimeout: 5 * time.Second,
-			ReadTimeout: 10 * time.Second, WriteTimeout: 90 * time.Second, IdleTimeout: 30 * time.Second}
+		controlServer = &http.Server{Handler: control.Handler(profiles), ErrorLog: log.New(safelog.ServerErrors{Logger: logger}, "", 0), ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout: 10 * time.Second, WriteTimeout: control.CommandTimeout + 15*time.Second, IdleTimeout: 30 * time.Second}
 		go func() {
 			if err := controlServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				logger.Error("adapter control listener failed", "error", err)
 				stop()
 			}
 		}()
+		if interval := cfg.Health.SampleInterval(); interval > 0 {
+			last := make(map[string]profile.Overall)
+			lastIdle := make(map[string]string)
+			go profiles.SampleHealth(ctx, interval, func(report profile.HealthReport) {
+				if last[report.ProfileID] != report.Overall {
+					code := ""
+					if report.Recovery != nil {
+						code = report.Recovery.Code
+					}
+					logger.Info("profile health changed", "profile", report.ProfileID, "overall", report.Overall, "code", code)
+					last[report.ProfileID] = report.Overall
+				}
+				idleCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+				decision := profiles.ApplyIdle(idleCtx, report, logger)
+				cancel()
+				if decision.Action != "off" && lastIdle[report.ProfileID] != decision.Action {
+					logger.Info("idle policy", "profile", report.ProfileID, "action", decision.Action, "remaining", decision.Remaining.Round(time.Second).String())
+					lastIdle[report.ProfileID] = decision.Action
+				}
+			})
+		}
 	}
 	shutdownDone := make(chan struct{})
 	go func() {
@@ -169,4 +247,27 @@ func run(configPath, action, target string, logger *slog.Logger) error {
 		return serveErr
 	}
 	return nil
+}
+
+// waitForControlPlane polls the read-only session list until it answers or
+// the bounded wait ends. It never launches anything.
+func waitForControlPlane(ctx context.Context, list func(context.Context) ([]sealskin.Session, error), logger *slog.Logger) error {
+	attempt := 0
+	for {
+		attemptCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		_, err := list(attemptCtx)
+		cancel()
+		if err == nil {
+			if attempt > 0 {
+				logger.Info("SealSkin control plane became ready", "attempts", attempt+1)
+			}
+			return nil
+		}
+		attempt++
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(2 * time.Second):
+		}
+	}
 }

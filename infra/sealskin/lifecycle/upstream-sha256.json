@@ -7,5 +7,9 @@
   "config_store.py": "4aab1a67bb0417317c9b98e1b9e7db67889a168dfaae0e8d61b693080487c02c",
   "api.py": "92e444e0e8c2edea42d3d93f13b4bac56e4f49611b6a949550d11436d8948a64",
   "docker_utils.py": "04d4987eeb97f7bf1cc1e052236d62605cde6ff076dc2f70fffba11dc936b821",
-  "persistence.py": "a68ab388f32dbd237a663dc813be45b904ea2f5816153469e3d0b8b2b6bc75ce"
+  "persistence.py": "a68ab388f32dbd237a663dc813be45b904ea2f5816153469e3d0b8b2b6bc75ce",
+  "routers/homedirs.py": "138a2a0d0163bb3e2f5a1173cf7e39edad4d989d481eb9c6b617bc5390ad011c",
+  "logging_config.py": "85e9eab06235ba9901336dc1ad7048070388a453a1f48c9f39bd4b25909a6dc8",
+  "Caddyfile.tpl": "68d2e9c0363fbe720af15829a297b24f3dd46906d121fed05da9669891b7cce1",
+  "routers/internal.py": "da59bd9a5b60a7b39ecbb312cfb3fbefcc191aaea6e8593e959963d28a37a6da"
 }

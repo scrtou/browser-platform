@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "policies": {
+    "personal-approved-dns-r1": {
+      "username": "profile-adapter",
+      "profile_id": "personal",
+      "home_name": "personal",
+      "application_id": "camoufox-personal",
+      "mode": "proxy_required",
+      "relay_image": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "probe_image": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "upstream_host": "proxy.example.invalid",
+      "upstream_port": 443,
+      "upstream_protocol": "https",
+      "upstream_auth": "none",
+      "bootstrap_resolver_id": "operator-approved-recursive",
+      "bootstrap_resolver_ip": "192.0.2.53",
+      "probe_url": "https://example.com/",
+      "probe_timeout_seconds": 10
+    }
+  }
+}

@@ -1,0 +1,29 @@
+[Unit]
+Description=Browser Platform Profile Adapter (system service)
+Documentation=https://github.com/browser-platform
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# Replace with the deploying account; it must own the config, state and key files.
+User=sshUser
+Group=sshUser
+SupplementaryGroups=docker
+EnvironmentFile=/home/sshUser/.config/browser-platform/adapter-service.env
+ExecStart=/home/sshUser/.local/lib/browser-platform/profile-adapter -config ${BROWSER_PLATFORM_CONFIG}
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/sshUser/code/browser-platform/infra/sealskin
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

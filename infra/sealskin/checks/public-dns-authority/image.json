@@ -1,0 +1,5 @@
+{
+  "version": "1.13.2",
+  "image": "coredns/coredns@sha256:94caebb89dcfb9d2c4be45bfda34410a3e1092458fbbbc0284365c9e4c9a7818",
+  "platform": "linux/amd64"
+}

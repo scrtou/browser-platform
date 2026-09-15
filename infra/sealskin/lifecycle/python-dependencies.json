@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "build": [
+    {
+      "name": "pip",
+      "module": "pip",
+      "version": "25.3",
+      "wheel": "pip-25.3-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/44/3c/d717024885424591d5376220b5e836c2d5293ce2011523c9de23ff7bf068/pip-25.3-py3-none-any.whl",
+      "sha256": "9655943313a94722b7774661c21049070f6bbb0a1516bf02f7c8d5d9201514cd"
+    }
+  ],
+  "runtime": [
+    {
+      "name": "dnspython",
+      "module": "dns",
+      "version": "2.8.0",
+      "wheel": "dnspython-2.8.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/ba/5a/18ad964b0086c6e62e2e7500f7edc89e3faa45033c71c1893d34eed2b2de/dnspython-2.8.0-py3-none-any.whl",
+      "sha256": "01d9bbc4a2d76bf0db7c1f729812ded6d912bd318d3b1cf81d30c0f845dbf3af"
+    },
+    {
+      "name": "Babel",
+      "module": "babel",
+      "version": "2.17.0",
+      "wheel": "babel-2.17.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/b7/b8/3fe70c75fe32afc4bb507f75563d39bc5642255d1d94f1f23604725780bf/babel-2.17.0-py3-none-any.whl",
+      "sha256": "4d0b53093fdfb4b21c92b5213dba5a1b23885afa8383709427046b21c366e5f2"
+    }
+  ]
+}

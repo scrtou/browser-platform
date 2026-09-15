@@ -28,7 +28,8 @@ def main():
     )
     inputs = {
         name: hashlib.sha256((root / name).read_bytes()).hexdigest()
-        for name in ("Dockerfile.guarded", "network-guard.py", "build/profile-relay", ".dockerignore")
+        for name in ("Dockerfile.guarded", "network-guard.py", "internal/proxy/direct-denied-ipv4.json",
+                     "build/profile-relay", ".dockerignore")
     }
     revision = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
     image = "browser-platform/profile-relay:guard-v1-" + revision[:16]

@@ -28,6 +28,16 @@ type lifecycleFake struct {
 	beforeStop          func(sealskin.StopProfileRequest, string)
 	stopEntered         chan struct{}
 	stopRelease         chan struct{}
+	observeErr          error
+	observeCalls        int
+	observeUpstream     []bool
+	observeHook         func(*sealskin.HomeHealth)
+	observeBlock        chan struct{}
+	resumeErr           error
+	resumeCalls         int
+	resumeKeys          []string
+	resumeRequests      []sealskin.StopProfileRequest
+	resumeKeepDormant   bool
 }
 
 func emptyRuntime() sealskin.HomeRuntime {
@@ -48,6 +58,7 @@ func (f *lifecycleFake) LaunchURL(ctx context.Context, request sealskin.LaunchUR
 	instance := strings.Repeat("a", 64)
 	f.snapshot = sealskin.HomeRuntime{Version: 1, HomeName: request.HomeName,
 		NetworkRuntimeVersion: 1, NetworkEnforcementVersion: 1, Resources: []sealskin.RuntimeResource{},
+		ProfileInitialURLVersion: f.snapshot.ProfileInitialURLVersion,
 		Records: []sealskin.RuntimeRecord{{SessionID: response.SessionID, AppID: request.ApplicationID,
 			NetworkPolicyID: request.NetworkPolicyID, NetworkPolicySHA256: request.NetworkPolicySHA256,
 			ProfileID: request.ProfileID, OperationID: request.OperationID, Phase: "running", InstanceIDs: []string{instance},
@@ -66,11 +77,17 @@ func (f *lifecycleFake) LaunchURL(ctx context.Context, request sealskin.LaunchUR
 	return response, nil
 }
 
-func (f *lifecycleFake) InspectHome(context.Context, string) (sealskin.HomeRuntime, error) {
+func (f *lifecycleFake) InspectHome(_ context.Context, home string) (sealskin.HomeRuntime, error) {
 	f.runtimeMu.Lock()
 	defer f.runtimeMu.Unlock()
 	if f.inspectErr != nil {
 		return sealskin.HomeRuntime{}, f.inspectErr
+	}
+	if f.snapshot.HomeName != "" && home != "" && f.snapshot.HomeName != home {
+		// Inventories are per Home; another Home is empty in this fake.
+		other := emptyRuntime()
+		other.HomeName = home
+		return other, nil
 	}
 	snapshot := f.snapshot
 	snapshot.Records = append([]sealskin.RuntimeRecord{}, f.snapshot.Records...)
@@ -79,6 +96,76 @@ func (f *lifecycleFake) InspectHome(context.Context, string) (sealskin.HomeRunti
 		snapshot.Resources = append([]sealskin.RuntimeResource{}, f.snapshot.Resources...)
 	}
 	return snapshot, nil
+}
+
+// ObserveHome derives a healthy observation from the current snapshot; tests
+// mutate it through observeHook to simulate exited browsers or failed relays.
+func (f *lifecycleFake) ObserveHome(ctx context.Context, home string, upstream bool) (sealskin.HomeHealth, error) {
+	if f.observeBlock != nil {
+		select {
+		case <-f.observeBlock:
+		case <-ctx.Done():
+			return sealskin.HomeHealth{}, ctx.Err()
+		}
+	}
+	snapshot, err := f.InspectHome(ctx, home)
+	f.runtimeMu.Lock()
+	defer f.runtimeMu.Unlock()
+	f.observeCalls++
+	f.observeUpstream = append(f.observeUpstream, upstream)
+	if f.observeErr != nil {
+		return sealskin.HomeHealth{}, f.observeErr
+	}
+	if err != nil {
+		return sealskin.HomeHealth{}, err
+	}
+	health := sealskin.HomeHealth{Version: 1, HomeName: home, ObservedAt: 1_700_000_000, Runtime: snapshot, Workers: []sealskin.WorkerHealth{}}
+	for _, worker := range snapshot.Workers {
+		health.Workers = append(health.Workers, sealskin.WorkerHealth{InstanceID: worker.InstanceID, SessionID: worker.SessionID,
+			Owned: worker.Owned, Recorded: worker.Recorded, Status: worker.Status, StartedAt: "2026-09-13T00:00:00Z",
+			Environment: sealskin.EnvironmentIdentity{ID: "env-test-r1", ArtifactSHA256: strings.Repeat("1", 64)},
+			Processes:   sealskin.ProcessSummary{Total: 5, BrowserMain: 1, BrowserChild: 2, DisplayServer: []string{"Xvfb"}, Streamer: 1},
+			Display:     sealskin.ObservedCheck{Status: "pass", Code: "DISPLAY_ENDPOINT_OK", LatencyMS: 2}})
+	}
+	for _, resource := range snapshot.Resources {
+		if resource.Kind == "reservation" {
+			namespace := true
+			health.Network = &sealskin.NetworkHealth{Phase: resource.Status, PolicyID: resource.PolicyID, PolicySHA256: resource.PolicySHA256,
+				EnforcementVersion: 1, Relay: sealskin.RelayHealth{Container: "running", Status: "pass", Code: "PROXY_RELAY_OK", LatencyMS: 1},
+				Guard: sealskin.GuardHealth{Container: "running"}, WorkerNamespace: &namespace}
+			if upstream {
+				health.Network.Upstream = &sealskin.ObservedCheck{Status: "pass", Code: "PROXY_OK", LatencyMS: 40, MeasuredAt: 1_700_000_000}
+			}
+		}
+	}
+	if f.observeHook != nil {
+		f.observeHook(&health)
+	}
+	return health, nil
+}
+
+// ResumeHome marks the dormant generation running again unless a failure is
+// injected; a failed resume leaves every container exactly as it was.
+func (f *lifecycleFake) ResumeHome(_ context.Context, _ string, request sealskin.StopProfileRequest, key string) (sealskin.ResumeResult, error) {
+	f.runtimeMu.Lock()
+	defer f.runtimeMu.Unlock()
+	f.resumeCalls++
+	f.resumeKeys = append(f.resumeKeys, key)
+	f.resumeRequests = append(f.resumeRequests, request)
+	if f.resumeErr != nil {
+		return sealskin.ResumeResult{}, f.resumeErr
+	}
+	if len(f.snapshot.Records) != 1 || len(f.snapshot.Workers) != 1 {
+		return sealskin.ResumeResult{}, &sealskin.APIError{StatusCode: 409, Detail: "RESUME_NOT_DORMANT"}
+	}
+	if !f.resumeKeepDormant {
+		f.snapshot.Workers[0].Status = "running"
+		for i := range f.snapshot.Resources {
+			f.snapshot.Resources[i].Status = "running"
+		}
+	}
+	return sealskin.ResumeResult{Resumed: true, State: "live", SessionID: f.snapshot.Records[0].SessionID,
+		InstanceID: f.snapshot.Workers[0].InstanceID, Steps: []string{"relay", "guard", "controller", "probe", "worker", "display", "committed"}}, nil
 }
 
 func (f *lifecycleFake) StopHome(ctx context.Context, _ string, request sealskin.StopProfileRequest, key string) error {
@@ -326,6 +413,41 @@ func TestUnacknowledgedEmptyLaunchRemainsUnknown(t *testing.T) {
 	}
 	if _, err := service.Stop(context.Background(), "personal"); !errors.Is(err, ErrOwnershipUnknown) {
 		t.Fatal("stop assumed an ambiguous create did not run")
+	}
+}
+
+func TestLaunchJournalSettlesAmbiguousCreateOnlyWhenInventoryIsEmpty(t *testing.T) {
+	service, store, fake := newLifecycleService(t)
+	if err := store.Update("personal", func(current *state.Binding) (*state.Binding, error) {
+		current.Status, current.SessionID = state.StatusUnknown, ""
+		return current, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	binding, _, _ := store.Get("personal")
+	fake.snapshot = emptyRuntime()
+	fake.snapshot.LaunchJournalVersion = 1
+	fake.sessions = nil
+	// A pending or failed journal still reserves the Home.
+	fake.snapshot.Resources = []sealskin.RuntimeResource{{ID: binding.OperationID, Kind: "launch", Owned: true, Recorded: true, Status: "pending",
+		ProfileID: "personal", OperationID: binding.OperationID, AppID: "firefox"}}
+	result, err := service.Reconcile(context.Background(), "personal")
+	if !errors.Is(err, ErrOwnershipUnknown) || result.LaunchPhase != "pending" {
+		t.Fatalf("pending journal must keep the Home reserved: %+v %v", result, err)
+	}
+	if _, err := service.Ensure(context.Background(), "personal"); !errors.Is(err, ErrOwnershipUnknown) || fake.launches != 1 {
+		t.Fatal("a journaled launch allowed a second launch")
+	}
+	fake.snapshot.Resources = []sealskin.RuntimeResource{}
+	result, err = service.Reconcile(context.Background(), "personal")
+	if err != nil || result.Status != state.StatusStopped {
+		t.Fatalf("empty journaled inventory should settle as stopped: %+v %v", result, err)
+	}
+	if fake.stopCalls != 0 {
+		t.Fatal("settling an ambiguous create must not call stop")
+	}
+	if _, err := service.Ensure(context.Background(), "personal"); err != nil || fake.launches != 2 {
+		t.Fatalf("settled Profile must launch again: err=%v launches=%d", err, fake.launches)
 	}
 }
 

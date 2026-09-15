@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the guarded Firefox path using private DNS and packet observations."""
+"""Verify a guarded browser path using private DNS and packet observations."""
 
 import argparse
 import base64
@@ -15,8 +15,12 @@ from pathlib import Path
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True, type=Path)
+    parser.add_argument("--output", type=Path, help="new evidence directory; default retains the legacy ROOT.parent paths")
     args = parser.parse_args()
     qa = args.root.resolve()
+    output = args.output.resolve() if args.output else qa.parent
+    if args.output:
+        output.mkdir(mode=0o700, parents=True, exist_ok=False)
     project = Path(__file__).resolve().parents[3]
     spec = importlib.util.spec_from_file_location(
         "checks", project / "infra/sealskin/lifecycle/check-network-live.py"
@@ -25,6 +29,10 @@ def main():
     spec.loader.exec_module(mod)
     checks = mod.Checks(qa)
     info = json.loads((qa / "browser-worker.json").read_text())
+    engine = info.get("engine", "firefox")
+    upstream_protocol = info.get("upstream_protocol", "socks5")
+    upstream_auth = info.get("upstream_auth", "username_password")
+    upstream_event = {"socks5": "socks", "http": "http_connect", "https": "https_connect"}[upstream_protocol]
     worker = info["instance_id"]
     status, snapshot = checks.client.call("GET", "/api/profile-runtime/" + info["home"])
     assert status == 200 and snapshot["workers"][0]["instance_id"] == worker
@@ -42,11 +50,18 @@ def main():
     controller_ip = controller["NetworkSettings"]["Networks"][network_name]["IPAddress"]
     observer = qa.parent / "observer"
     results = []
+    desktop = None
+    if engine == "camoufox":
+        desktop_spec = importlib.util.spec_from_file_location("qa_desktop", Path(__file__).with_name("qa-desktop.py"))
+        desktop_module = importlib.util.module_from_spec(desktop_spec)
+        desktop_spec.loader.exec_module(desktop_module)
+        desktop = desktop_module.Desktop(worker)
 
     def passed(name, **details):
-        value = dict(check=name, result="PASS", **details)
+        value = dict(check=name, result="PASS", engine=engine, upstream_protocol=upstream_protocol,
+                     upstream_auth=upstream_auth, **details)
         results.append(value)
-        mod.write_json(qa.parent / "browser-network-results.json", results)
+        mod.write_json(output / "browser-network-results.json", results)
         print(json.dumps(value), flush=True)
 
     def events():
@@ -55,14 +70,15 @@ def main():
             for line in (observer / "events.jsonl").read_text().splitlines()
         ]
 
-    def firefox_identity():
+    def browser_identity():
         source = """import json
 from pathlib import Path
 out=[]
 for p in Path('/proc').glob('[0-9]*'):
  try:
   args=p.joinpath('cmdline').read_bytes().split(b'\\0')
-  if b'--remote-debugging-port' in args and b'9228' in args:
+  if ((b'--remote-debugging-port' in args and b'9228' in args) or
+      (args[0].endswith(b'/camoufox') and b'--profile' in args)):
    out.append([int(p.name),p.joinpath('stat').read_text().split()[21]])
  except (OSError,IndexError):pass
 assert len(out)==1
@@ -71,6 +87,10 @@ print(json.dumps(out))
         return json.loads(mod.docker("exec", worker, "python3", "-c", source).stdout)
 
     def evaluate(expression, navigate=False):
+        if desktop:
+            if navigate:
+                desktop.navigate("https://entry.leak.qa.test/test")
+            return desktop.evaluate(expression)
         source = (
             (project / "infra/firefox-proxy/check-bidi.py")
             .read_text()
@@ -154,7 +174,7 @@ print(json.dumps(out))
         **positive_result,
     )
 
-    capture_path = qa.parent / "browser-wire.jsonl"
+    capture_path = output / "browser-wire.jsonl"
     capture_log = capture_path.open("w")
     os.fchmod(capture_log.fileno(), 0o600)
     capture_args = [
@@ -199,7 +219,7 @@ print(json.dumps(out))
         "outbound metadata observer",
     )
     original = checks.identity(worker)
-    original_firefox = firefox_identity()
+    original_browser = browser_identity()
     try:
         start = len(events())
         initial = json.loads(evaluate("qa.run()", navigate=True))
@@ -226,7 +246,8 @@ print(json.dumps(out))
         for label in ("fetch", "aaaa", "ws", "h3"):
             domain = label + "-" + nonce + ".leak.qa.test"
             assert any(
-                e["event"] == "socks" and e["target"] == domain and e["atyp"] == 3
+                e["event"] == upstream_event and e["target"] == domain and e["atyp"] == 3
+                and e.get("auth") == upstream_auth
                 for e in selected
             )
             assert any(
@@ -242,7 +263,7 @@ print(json.dumps(out))
             for e in selected
         )
         passed(
-            "Firefox HTTPS/WebSocket and AAAA-only hostname use SOCKS5 domain requests and authoritative upstream DNS",
+            "browser HTTPS/WebSocket and AAAA-only hostname use the selected upstream protocol and authoritative DNS",
             environment=environment,
         )
 
@@ -399,7 +420,7 @@ print(json.dumps(out))
             )
             assert not state["download"]["complete"] and state["download"]["failed"]
             assert original == checks.identity(worker)
-            assert original_firefox == firefox_identity()
+            assert original_browser == browser_identity()
             if fault == "relay-stop":
                 mod.docker("start", relay)
             mod.write_json(observer / "mode.json", {})
@@ -414,15 +435,39 @@ print(json.dumps(out))
                 worker_preserved=True,
             )
 
+        if upstream_protocol == "https":
+            for fault in ("wrong-name", "untrusted"):
+                # Close existing tunnels so each attempt must validate TLS again.
+                mod.write_json(observer / "mode.json", {"mode": "offline"})
+                time.sleep(0.5)
+                mod.write_json(observer / "proxy-tls-mode.json", {"mode": fault})
+                mod.write_json(observer / "mode.json", {})
+                start = len(events())
+                assert not evaluate("fetchCheck(" + json.dumps("tls-" + fault) + ").catch(()=>false)")
+                observed = events()[start:]
+                assert any(e["event"] == "proxy_tls_attempt" and e["tls_mode"] == fault and e["expected_name"]
+                           for e in observed)
+                assert not any(e["event"] in {"http", "https"} and e.get("host", "").startswith("tls-" + fault + "-")
+                               for e in observed)
+                logs = mod.docker("logs", "--since", "20s", relay).stdout
+                assert '"error_code":"UPSTREAM_TLS_INVALID"' in logs
+                assert original == checks.identity(worker) and original_browser == browser_identity()
+                mod.write_json(observer / "proxy-tls-mode.json", {})
+                mod.wait(lambda: evaluate("fetchCheck(" + json.dumps("tls-recovery-" + fault) + ").catch(()=>false)"),
+                         "browser TLS proxy recovery", seconds=25)
+                passed("browser rejects HTTPS upstream " + fault + " certificate without direct fallback",
+                       worker_preserved=True)
+
         checks.restart_controller()
         assert original == checks.identity(worker)
-        assert original_firefox == firefox_identity()
+        assert original_browser == browser_identity()
         assert evaluate("fetchCheck('controller-restart')")
         passed(
-            "SealSkin API restart preserves the real Firefox process and its guarded proxy path"
+            "SealSkin API restart preserves the real browser process and its guarded proxy path"
         )
     finally:
         mod.write_json(observer / "mode.json", {})
+        mod.write_json(observer / "proxy-tls-mode.json", {})
         mod.docker("start", relay, check=False)
         mod.docker("stop", "-t", "2", "network-qa-wire", check=False)
         capture.wait(timeout=10)
@@ -453,7 +498,7 @@ print(json.dumps(out))
         flows=len(outgoing),
     )
     assert original == checks.identity(worker)
-    assert original_firefox == firefox_identity()
+    assert original_browser == browser_identity()
 
 
 if __name__ == "__main__":

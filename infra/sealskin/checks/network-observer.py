@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Private authoritative DNS, HTTPS, SOCKS5 and UDP fixtures for network QA.
+"""Private DNS, website and HTTP/HTTPS/SOCKS5 proxy fixtures for network QA.
 
 This is not a general proxy or DNS resolver. It only serves its fixed QA zone
 and local test listeners. Logs contain test names, nonces and transport metadata.
@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import hmac
 import http.server
 import ipaddress
 import json
@@ -37,6 +38,40 @@ def log(event, **values):
 
 def mode():
     return json.loads((ROOT / "mode.json").read_text()).get("mode", "online")
+
+
+def authentication(protocol):
+    path = ROOT / "proxy-auth.json"
+    value = json.loads(path.read_text()) if path.exists() else {}
+    return value.get(protocol, "username_password" if protocol == "socks5" else "basic")
+
+
+def credentials():
+    path = ROOT / "proxy-credentials.json"
+    value = json.loads(path.read_text()) if path.exists() else {
+        "username": "network-observer-user", "password": "network-observer-password"}
+    return value["username"].encode(), value["password"].encode()
+
+
+def tunnel(left, right):
+    while mode() != "offline":
+        readable = [value for value in (left, right) if isinstance(value, ssl.SSLSocket) and value.pending()]
+        if not readable:
+            readable, _, _ = select.select([left, right], [], [], 0.2)
+        for connection in readable:
+            data = connection.recv(65536)
+            if not data:
+                return
+            (right if connection is left else left).sendall(data)
+
+
+def approved_target(target):
+    if re.fullmatch(r"[a-z0-9-]{1,63}\.leak\.qa\.test", target):
+        return resolve(target), 3
+    address = ipaddress.ip_address(target)
+    if str(address) not in {IPV4, "::1"}:
+        raise ValueError("outside private QA targets")
+    return str(address), 1 if address.version == 4 else 4
 
 
 def read_exact(connection, size):
@@ -143,22 +178,26 @@ class SOCKS(socketserver.BaseRequestHandler):
         try:
             self.request.settimeout(15)
             version, count = read_exact(self.request, 2)
-            if version != 5 or 2 not in read_exact(self.request, count):
+            auth = authentication("socks5")
+            selected = 0 if auth == "none" else 2
+            if version != 5 or selected not in read_exact(self.request, count):
                 return
-            self.request.sendall(b"\x05\x02")
-            version, size = read_exact(self.request, 2)
-            username = read_exact(self.request, size)
-            password = read_exact(self.request, read_exact(self.request, 1)[0])
-            if (
-                version != 1
-                or username != b"network-observer-user"
-                or password != b"network-observer-password"
-                or mode() == "bad-auth"
-            ):
-                self.request.sendall(b"\x01\x01")
-                log("auth_rejected", source=self.client_address[0])
+            if selected == 0 and mode() == "bad-auth":
+                self.request.sendall(b"\x05\xff")
+                log("auth_rejected", protocol="socks5", auth=auth, source=self.client_address[0])
                 return
-            self.request.sendall(b"\x01\x00")
+            self.request.sendall(bytes([5, selected]))
+            if selected == 2:
+                version, size = read_exact(self.request, 2)
+                username = read_exact(self.request, size)
+                password = read_exact(self.request, read_exact(self.request, 1)[0])
+                expected_user, expected_password = credentials()
+                if (version != 1 or not hmac.compare_digest(username, expected_user) or
+                        not hmac.compare_digest(password, expected_password) or mode() == "bad-auth"):
+                    self.request.sendall(b"\x01\x01")
+                    log("auth_rejected", protocol="socks5", auth=auth, source=self.client_address[0])
+                    return
+                self.request.sendall(b"\x01\x00")
             version, command, reserved, atyp = read_exact(self.request, 4)
             if (version, command, reserved) != (5, 1, 0):
                 return
@@ -189,24 +228,50 @@ class SOCKS(socketserver.BaseRequestHandler):
                 port=port,
                 source=self.client_address[0],
                 mode=mode(),
+                auth=auth,
             )
-            if port != 443 or mode() == "offline":
+            if port not in {80, 443} or mode() == "offline":
                 self.request.sendall(b"\x05\x05\x00\x01" + b"\0" * 6)
                 return
             with socket.create_connection((address, port), timeout=5) as upstream:
                 self.request.sendall(b"\x05\x00\x00\x01" + b"\0" * 6)
-                while mode() != "offline":
-                    readable, _, _ = select.select(
-                        [upstream, self.request], [], [], 0.2
-                    )
-                    for connection in readable:
-                        data = connection.recv(65536)
-                        if not data:
-                            return
-                        (
-                            upstream if connection is self.request else self.request
-                        ).sendall(data)
+                tunnel(self.request, upstream)
         except (OSError, ValueError, UnicodeError):
+            pass
+
+
+class HTTPProxy(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *_):
+        pass
+
+    def do_CONNECT(self):
+        self.close_connection = True
+        protocol = "https" if isinstance(self.connection, ssl.SSLSocket) else "http"
+        auth = authentication(protocol)
+        expected = "" if auth == "none" else "Basic " + base64.b64encode(b":".join(credentials())).decode()
+        if (mode() == "bad-auth" or not hmac.compare_digest(self.headers.get("Proxy-Authorization", ""), expected)):
+            self.send_error(407)
+            log("auth_rejected", protocol=protocol, auth=auth, source=self.client_address[0])
+            return
+        try:
+            target = urlsplit("//" + self.path)
+            if target.username or target.password or target.path or target.query or target.fragment:
+                raise ValueError("invalid CONNECT authority")
+            address, atyp = approved_target(target.hostname)
+            port = target.port
+            log(protocol + "_connect", target=target.hostname, atyp=atyp, port=port,
+                source=self.client_address[0], mode=mode(), auth=auth)
+            if port not in {80, 443} or mode() == "offline":
+                self.send_error(502)
+                return
+            with socket.create_connection((address, port), timeout=5) as upstream:
+                self.send_response(200, "Connection established")
+                self.end_headers()
+                self.wfile.flush()
+                tunnel(self.connection, upstream)
+        except (OSError, ValueError, UnicodeError, TypeError):
             pass
 
 
@@ -235,7 +300,7 @@ class HTTPS(http.server.BaseHTTPRequestHandler):
             self.send_error(403)
             return
         log(
-            "https",
+            "https" if isinstance(self.connection, ssl.SSLSocket) else "http",
             host=host,
             path=parsed.path,
             nonce=nonce if re.fullmatch(r"[a-f0-9]{32}", nonce) else "",
@@ -247,6 +312,8 @@ class HTTPS(http.server.BaseHTTPRequestHandler):
                     (ROOT / "network-fixture.html").read_bytes(),
                     "text/html; charset=utf-8",
                 )
+            elif parsed.path == "/client":
+                self.response((ROOT / "client-fixture.html").read_bytes(), "text/html; charset=utf-8")
             elif parsed.path == "/dns-query":
                 encoded = params.get("dns", [""])[0]
                 raw = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
@@ -364,6 +431,47 @@ class HTTPS6(http.server.ThreadingHTTPServer):
         super().server_bind()
 
 
+class ThreadedTLS:
+    """Never let a silent TLS client hold the server's accept loop."""
+
+    handshake_timeout = 5
+    request_timeout = 30
+
+    def __init__(self, *args, tls_context, **kwargs):
+        self.tls_context = tls_context
+        super().__init__(*args, **kwargs)
+
+    def get_request(self):
+        connection, address = super().get_request()
+        try:
+            return self.tls_context.wrap_socket(connection, server_side=True, do_handshake_on_connect=False), address
+        except Exception:
+            connection.close()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            request.settimeout(self.handshake_timeout)
+            request.do_handshake()
+            request.settimeout(self.request_timeout)
+        except (OSError, ssl.SSLError):
+            self.shutdown_request(request)
+            return
+        super().process_request_thread(request, client_address)
+
+
+class TLSHTTPServer(ThreadedTLS, http.server.ThreadingHTTPServer):
+    daemon_threads = True
+
+
+class TLSHTTP6(ThreadedTLS, HTTPS6):
+    daemon_threads = True
+
+
+class TLSTCPServer(ThreadedTLS, TCPServer):
+    pass
+
+
 def main():
     global ROOT, IPV4
     parser = argparse.ArgumentParser(description=__doc__)
@@ -375,20 +483,44 @@ def main():
     ROOT, IPV4 = args.root, str(ipaddress.IPv4Address(args.ipv4))
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(ROOT / "server.pem", ROOT / "server-key.pem")
+    proxy_contexts = {}
+    for key, certificate in (("valid", "server.pem"), ("wrong-name", "server-wrong-name.pem"),
+                             ("untrusted", "server-untrusted.pem")):
+        if (ROOT / certificate).exists():
+            value = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            value.minimum_version = ssl.TLSVersion.TLSv1_2
+            value.load_cert_chain(ROOT / certificate, ROOT / "server-key.pem")
+            proxy_contexts[key] = value
+
+    def proxy_sni(connection, server_name, _):
+        path = ROOT / "proxy-tls-mode.json"
+        selected = json.loads(path.read_text()).get("mode", "valid") if path.exists() else "valid"
+        log("proxy_tls_attempt", tls_mode=selected, expected_name=server_name == "proxy.leak.qa.test",
+            source=connection.getpeername()[0])
+        if selected not in proxy_contexts:
+            return ssl.ALERT_DESCRIPTION_ACCESS_DENIED
+        connection.context = proxy_contexts[selected]
+
+    proxy_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    proxy_context.minimum_version = ssl.TLSVersion.TLSv1_2
+    proxy_context.load_cert_chain(ROOT / "server.pem", ROOT / "server-key.pem")
+    proxy_context.set_servername_callback(proxy_sni)
     servers = [
         UDPServer(("0.0.0.0", 53), DNSUDP),
         TCPServer(("0.0.0.0", 53), DNSTCP),
-        TCPServer(("0.0.0.0", 853), DNSTCP),
-        http.server.ThreadingHTTPServer(("0.0.0.0", 443), HTTPS),
-        HTTPS6(("::1", 443), HTTPS),
+        TLSTCPServer(("0.0.0.0", 853), DNSTCP, tls_context=context),
+        TLSHTTPServer(("0.0.0.0", 443), HTTPS, tls_context=context),
+        TLSHTTP6(("::1", 443), HTTPS, tls_context=context),
         TCPServer(("0.0.0.0", 28191), SOCKS),
         UDPServer(("0.0.0.0", 3478), UDPObserver),
         UDPServer(("0.0.0.0", 443), UDPObserver),
+        http.server.ThreadingHTTPServer(("0.0.0.0", 80), HTTPS),
+        HTTPS6(("::1", 80), HTTPS),
+        http.server.ThreadingHTTPServer(("0.0.0.0", 28192), HTTPProxy),
+        TLSHTTPServer(("0.0.0.0", 28193), HTTPProxy, tls_context=proxy_context),
     ]
     servers[1].transport = "tcp"
     servers[2].transport = "dot"
-    for server in (servers[2], servers[3], servers[4]):
-        server.socket = context.wrap_socket(server.socket, server_side=True)
     for server in servers:
         threading.Thread(target=server.serve_forever, daemon=True).start()
     print("private network observer ready", flush=True)

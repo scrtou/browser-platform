@@ -5,13 +5,27 @@
   "state_file": "./adapter-state.json",
   "control_socket": "./adapter-control.sock",
   "sealskin": {
-    "api_base_url": "https://sealskin.example.com",
+    "api_base_url": "https://127.0.0.1:8443",
     "public_session_base_url": "https://sealskin.example.com",
     "username": "profile-adapter",
     "server_public_key_file": "./secrets/sealskin-server-public.pem",
     "client_private_key_file": "./secrets/sealskin-client-private.pem",
     "allow_unencrypted_http": false,
     "lifecycle_enabled": true
+  },
+  "health": {
+    "sample_interval_seconds": 60,
+    "entry_hint": true,
+    "entry_wait_seconds": 3
+  },
+  "startup": {
+    "control_wait_seconds": 120
+  },
+  "limits": {
+    "max_active_profiles": 4,
+    "max_concurrent_launches": 2,
+    "min_free_disk_mib": 5120,
+    "storage_path": "./storage"
   },
   "profiles": [
     {
@@ -21,7 +35,11 @@
       "start_url": "https://example.com/",
       "language": "en_US.UTF-8",
       "timezone": "America/New_York",
-      "wayland_mode": true
+      "wayland_mode": true,
+      "idle_policy": {
+        "mode": "disconnected",
+        "timeout_seconds": 900
+      }
     },
     {
       "id": "work",
@@ -32,5 +50,13 @@
       "timezone": "America/New_York",
       "wayland_mode": true
     }
-  ]
+  ],
+  "access": {
+    "users_file": "./secrets/entry-users.json",
+    "session_upstream_url": "https://127.0.0.1:8443",
+    "session_ca_file": "./secrets/sealskin-proxy-ca.pem",
+    "session_tls_name": "sealskin.example.com",
+    "session_seconds": 1800,
+    "ticket_seconds": 30
+  }
 }

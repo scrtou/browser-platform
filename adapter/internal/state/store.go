@@ -20,6 +20,8 @@ const fileVersion = 1
 
 type Status string
 
+func (s Status) String() string { return string(s) }
+
 const (
 	StatusLaunching Status = "launching"
 	StatusRunning   Status = "running"
@@ -30,20 +32,22 @@ const (
 )
 
 type Binding struct {
-	ProfileID           string    `json:"profile_id"`
-	Status              Status    `json:"status"`
-	SessionID           string    `json:"session_id,omitempty"`
-	OperationID         string    `json:"operation_id"`
-	IdempotencyKey      string    `json:"idempotency_key"`
-	BootstrapURL        string    `json:"bootstrap_url"`
-	HomeName            string    `json:"home_name,omitempty"`
-	ApplicationID       string    `json:"application_id,omitempty"`
-	NetworkPolicyID     string    `json:"network_policy_id,omitempty"`
-	NetworkPolicySHA256 string    `json:"network_policy_sha256,omitempty"`
-	StopOperationID     string    `json:"stop_operation_id,omitempty"`
-	StopIdempotencyKey  string    `json:"stop_idempotency_key,omitempty"`
-	LastError           string    `json:"last_error,omitempty"`
-	UpdatedAt           time.Time `json:"updated_at"`
+	ProfileID            string     `json:"profile_id"`
+	Status               Status     `json:"status"`
+	SessionID            string     `json:"session_id,omitempty"`
+	OperationID          string     `json:"operation_id"`
+	IdempotencyKey       string     `json:"idempotency_key"`
+	BootstrapURL         string     `json:"bootstrap_url"`
+	HomeName             string     `json:"home_name,omitempty"`
+	ApplicationID        string     `json:"application_id,omitempty"`
+	NetworkPolicyID      string     `json:"network_policy_id,omitempty"`
+	NetworkPolicySHA256  string     `json:"network_policy_sha256,omitempty"`
+	StopOperationID      string     `json:"stop_operation_id,omitempty"`
+	StopIdempotencyKey   string     `json:"stop_idempotency_key,omitempty"`
+	ResumeIdempotencyKey string     `json:"resume_idempotency_key,omitempty"`
+	IdleSince            *time.Time `json:"idle_since,omitempty"`
+	LastError            string     `json:"last_error,omitempty"`
+	UpdatedAt            time.Time  `json:"updated_at"`
 }
 
 type fileData struct {

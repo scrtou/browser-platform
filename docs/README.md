@@ -15,6 +15,7 @@
 | [开发计划](roadmap.md) | 下一步顺序、依赖、交付与验收条件 | 优先级或工作范围变化 |
 | [运维、开机与恢复](operations.md) | 如何检查、启动、停止、恢复、回滚 | 运维流程变化 |
 | [Trilium 客户端](trilium-client.md) | 接入 URL、键盘、剪贴板、文件、黑框恢复 | 用户操作或客户端验收变化 |
+| [客户端验收矩阵](client-matrix.md) | Linux QA 与目标 Mac/Trilium 分项结果、实机记录方法 | 客户端验收后 |
 | [代理与环境规格](specs/proxy-environment/README.md) | 目标契约、数据示例、P/E/C/N/H/S 验收要求 | 契约或能力边界变化 |
 | [验收索引](acceptance/README.md) | 每项结论对应哪份证据、覆盖哪个环境 | 新增验收记录后 |
 | [SealSkin 上游审计](sealskin-0.3.2-audit.md) | 固定上游版本的问题与本地处理 | 上游升级或补丁范围变化 |
@@ -27,11 +28,20 @@
 | 组件 | 说明 |
 | --- | --- |
 | [Adapter](../adapter/README.md) | 固定入口、配置、构建、运维 socket |
+| [入口登录与 Session 访问](../infra/sealskin/entry-auth/README.md) | 短期 Cookie、主体/Profile/Session 授权、私有 HTTPS、账号管理、状态与日志边界 |
 | [SealSkin 部署](../infra/sealskin/README.md) | Compose、Caddy、证书、用户服务 |
 | [生命周期补丁](../infra/sealskin/lifecycle/README.md) | Home 对账、Guard/Relay/网络、安装与回滚 |
-| [Relay](../relay/README.md) | SOCKS5 转接、凭据边界、镜像构建 |
+| [受管理 DIRECT](../infra/sealskin/lifecycle/direct-network.md) | 无外部上游的专属网关、批准解析器、宿主机地址证据、初始页与隔离 QA |
+| [运行时一致性与会话放行](../infra/sealskin/lifecycle/runtime-coherence.md) | 真实浏览器/出口/网络报告、代次门槛、历史比较、探测与恢复 |
+| [代理引导 DNS 与 TTL](../infra/sealskin/lifecycle/bootstrap-dns.md) | 固定批准解析器、代次回答/TTL、恢复绑定与公开 DNS 采样材料 |
+| [专用公开权威 DNS](../infra/sealskin/checks/public-dns-authority/README.md) | QA zone、Cloudflare 委派清单、端口维护提案、区域轮换与资源条件 |
+| [公开测试端点](../infra/sealskin/checks/public-dns-endpoint/README.md) | 外部机器的轻量网站/受限代理、固定离线包、隔离验证与清理 |
+| [Secret Store 与加密恢复](../infra/sealskin/lifecycle/secret-store.md) | 加密版本、精确授权、tmpfs 租约、撤销、age 备份与旧部署只读快照/离线恢复 |
+| [Relay](../relay/README.md) | 内部 SOCKS5、上游协议/认证矩阵、凭据边界、镜像构建 |
 | [Firefox Worker](../infra/firefox-proxy/README.md) | 代理锁定、X11 与环境启动校验 |
 | [Camoufox](../infra/camoufox/README.md) | 固定依赖、完整环境产物、独立应用验收 |
+| [浏览器正常退出层](../infra/browser-runtime/README.md) | X11 关闭、服务停止顺序、失败保留与新镜像绑定 |
+| [Worker 显示认证层](../infra/browser-access/README.md) | Session 专属 tmpfs、nginx/Selkies 认证材料、恢复校验与日志边界 |
 
 ## 维护规则
 

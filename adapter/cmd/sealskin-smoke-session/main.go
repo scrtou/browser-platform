@@ -8,12 +8,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
 
+	"browser-platform/adapter/internal/access"
 	"browser-platform/adapter/internal/config"
 	"browser-platform/adapter/internal/sealskin"
 )
@@ -84,10 +86,18 @@ func run(configPath, appID, profileID, pageURL string, hold time.Duration, deskt
 	if err != nil {
 		return errors.New("read SealSkin client private key")
 	}
+	var transport http.RoundTripper
+	if cfg.Access != nil {
+		transport, err = access.SessionTransport(*cfg.Access)
+		if err != nil {
+			return err
+		}
+	}
 	client, err := sealskin.NewClient(sealskin.Config{
 		BaseURL: cfg.SealSkin.APIBaseURL, Username: cfg.SealSkin.Username,
 		ServerPublicKeyPEM: serverPublic, ClientPrivateKeyPEM: clientPrivate,
 		AllowUnencryptedHTTP: cfg.SealSkin.AllowUnencryptedHTTP,
+		Transport:            transport,
 	})
 	clear(clientPrivate)
 	if err != nil {

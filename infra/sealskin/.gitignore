@@ -3,6 +3,7 @@ config/
 storage/
 secrets/
 runtime/
+__pycache__/
 adapter-config.json
 adapter-state.json
 adapter-state.json.service.lock

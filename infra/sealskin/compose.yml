@@ -1,6 +1,6 @@
 services:
   sealskin:
-    image: browser-platform/sealskin:0.3.2-network-v2-e13c19eedc38245d
+    image: browser-platform/sealskin:0.3.2-lifecycle-v2-a8c7be8a22ededd3
     container_name: sealskin
     environment:
       PUID: "${PUID:-1000}"

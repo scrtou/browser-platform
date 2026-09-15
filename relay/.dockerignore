@@ -4,3 +4,6 @@
 !Dockerfile
 !Dockerfile.guarded
 !network-guard.py
+!internal/
+!internal/proxy/
+!internal/proxy/direct-denied-ipv4.json

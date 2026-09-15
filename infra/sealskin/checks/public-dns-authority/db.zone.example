@@ -1,0 +1,11 @@
+$ORIGIN qa.example.invalid.
+$TTL 60
+@ 60 IN SOA ns1.example.invalid. hostmaster.qa.example.invalid. (
+    2026091401 ; serial: increment for each atomic replacement
+    60         ; refresh
+    30         ; retry
+    86400      ; expire
+    60         ; negative cache TTL
+)
+@ 300 IN NS ns1.example.invalid.
+ready 60 IN TXT "r5c2-authority-ready"

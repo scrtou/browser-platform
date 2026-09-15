@@ -25,7 +25,36 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--root", type=Path, required=True)
 parser.add_argument("--build", type=Path, required=True)
 parser.add_argument("--relay-image", required=True, help="Retained version tag from relay/build-guarded-image.py")
+parser.add_argument("--secret-runtime-root", type=Path, help="Existing private directory immediately below /dev/shm")
+parser.add_argument("--secret-key-directory", type=Path, help="Existing private directory mounted read-only into the controller")
+parser.add_argument("--direct-host-evidence", action="store_true", help="Bind the host IPv4 procfs table read-only for DIRECT QA")
+parser.add_argument("--session-port", type=int, help="Also publish the QA Session TLS listener on this loopback port")
+parser.add_argument("--display-runtime-root", type=Path, help="Private tmpfs directory immediately below /dev/shm for Worker display secrets")
 args = parser.parse_args()
+if args.session_port is not None and not 1024 <= args.session_port <= 65535:
+    parser.error("Session TLS port must be between 1024 and 65535")
+secret_mounts = []
+display_mounts = []
+if args.display_runtime_root:
+    import os
+    import stat
+    path = args.display_runtime_root
+    info = path.lstat()
+    assert path.parent == Path("/dev/shm") and path.resolve() == path and stat.S_ISDIR(info.st_mode)
+    assert info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) == 0o700
+    display_mounts = ["-v", str(path) + ":/run/browser-platform-session-secrets"]
+if bool(args.secret_runtime_root) != bool(args.secret_key_directory):
+    parser.error("Secret runtime and key directory must be supplied together")
+if args.secret_runtime_root:
+    import os
+    import stat
+    for path in (args.secret_runtime_root, args.secret_key_directory):
+        info = path.lstat()
+        assert path.is_absolute() and path.resolve() == path and stat.S_ISDIR(info.st_mode)
+        assert info.st_uid == os.geteuid() and not info.st_mode & 0o077
+    assert args.secret_runtime_root.parent == Path("/dev/shm")
+    secret_mounts = ["-v", str(args.secret_runtime_root) + ":/run/browser-platform-secrets",
+                     "-v", str(args.secret_key_directory) + ":/run/browser-platform-key:ro"]
 PROJECT = Path(__file__).resolve().parents[3]
 QA = args.root.resolve()
 BUILD = args.build.resolve()
@@ -110,7 +139,10 @@ relay_id = docker(
 bridge = json.loads(docker("network", "inspect", "bridge"))[0]["IPAM"]["Config"][0][
     "Gateway"
 ]
-write(QA / "allow.json", {"images": [probe_id, relay_id], "guard_images": [relay_id], "readonly_sources": []})
+write(QA / "allow.json", {"images": [probe_id, relay_id], "guard_images": [relay_id], "readonly_sources": [],
+                         **({"display_runtime_root": str(args.display_runtime_root)} if args.display_runtime_root else {}),
+                         **({"direct_images": [relay_id]} if args.direct_host_evidence else {}),
+                         **({"credential_runtime_root": str(args.secret_runtime_root)} if args.secret_runtime_root else {})})
 write(QA / "policy.json", {})
 write(QA / "upstream-mode.json", {})
 write(
@@ -311,6 +343,8 @@ docker(
     "TZ=Etc/UTC",
     "-e",
     "HOST_URL=network.invalid",
+    "--add-host",
+    "proxy.leak.qa.test:" + bridge,
     "-v",
     str(QA / "config") + ":/config",
     "-v",
@@ -319,6 +353,10 @@ docker(
     str(SOCKET) + ":/var/run/docker.sock",
     "-p",
     "127.0.0.1:28110:8000",
+    *(["-p", "127.0.0.1:" + str(args.session_port) + ":8443"] if args.session_port else []),
+    *secret_mounts, *display_mounts,
+    *(["--mount", "type=bind,src=/proc/1/net/fib_trie,dst=/run/browser-platform-host/ipv4-fib-trie,readonly"]
+      if args.direct_host_evidence else []),
     release["image"],
 )
 wait(ready)

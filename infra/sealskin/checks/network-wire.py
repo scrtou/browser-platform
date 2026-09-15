@@ -17,6 +17,7 @@ import time
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--worker-ip", required=True)
+    parser.add_argument("--interface", choices=("eth0", "eth1"), default="eth0")
     parser.add_argument("--seconds", type=int, default=300)
     args = parser.parse_args()
     worker = str(ipaddress.IPv4Address(args.worker_ip))
@@ -30,19 +31,32 @@ def main():
     signal.signal(signal.SIGTERM, finish)
     signal.signal(signal.SIGINT, finish)
     packets = {}
+    inbound_ipv6 = {}
     with socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(3)) as capture:
-        capture.bind(("eth0", 0))
+        capture.bind((args.interface, 0))
         capture.settimeout(0.25)
         print(json.dumps({"wire_capture_ready": True}), flush=True)
         deadline = time.monotonic() + args.seconds
         while not stop and time.monotonic() < deadline:
             try:
-                raw, _ = capture.recvfrom(65535)
+                raw, link = capture.recvfrom(65535)
             except TimeoutError:
                 continue
             if len(raw) < 34:
                 continue
             kind = struct.unpack("!H", raw[12:14])[0]
+            # AF_PACKET also receives LAN multicast. Its address tuple carries
+            # the kernel's direction; IPv6 source addresses alone cannot tell
+            # whether this namespace emitted a frame. Retain received IPv6 as
+            # diagnostic evidence, but never call it Worker outbound traffic.
+            if link[2] != socket.PACKET_OUTGOING:
+                if kind == 0x86DD and len(raw) >= 54:
+                    key = (socket.inet_ntop(socket.AF_INET6, raw[22:38]),
+                           socket.inet_ntop(socket.AF_INET6, raw[38:54]), link[2])
+                    if key not in inbound_ipv6 and len(inbound_ipv6) >= 10000:
+                        raise RuntimeError("QA received-packet metadata limit exceeded")
+                    inbound_ipv6[key] = inbound_ipv6.get(key, 0) + 1
+                continue
             if kind == 0x800:
                 header = (raw[14] & 15) * 4
                 protocol = raw[23]
@@ -68,6 +82,9 @@ def main():
     print(
         json.dumps(
             {
+                "directionSource": "AF_PACKET.sll_pkttype == PACKET_OUTGOING",
+                "receivedIPv6": [dict(source=k[0], destination=k[1], packetType=k[2], packets=count)
+                                 for k, count in inbound_ipv6.items()],
                 "outbound": [
                     dict(
                         family=k[0],

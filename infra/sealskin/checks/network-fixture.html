@@ -2,8 +2,28 @@
 <meta charset="utf-8">
 <title>Private browser network check</title>
 <p>Network QA is running in this temporary browser.</p>
+<label>Isolated QA command <textarea id="qa-command" rows="4" cols="85"></textarea></label>
+<textarea id="qa-result" rows="4" cols="85" readonly></textarea>
 <script>
-const nonce = crypto.randomUUID().replaceAll('-', '');
+// A local desktop test can use the normal, unmodified browser launch path.
+// This input exists only on the private QA fixture, never in a product page.
+window.addEventListener('keydown', async event => {
+  if (event.key === 'F7') {
+    event.preventDefault(); document.querySelector('#qa-command').focus();
+    document.querySelector('#qa-command').select();
+  }
+  if (event.key === 'F8') {
+    event.preventDefault(); document.title = 'BP-QA-EVALUATING';
+    const output = document.querySelector('#qa-result');
+    let command = {};
+    try {
+      command = JSON.parse(document.querySelector('#qa-command').value);
+      output.value = JSON.stringify({nonce:command.nonce, value: await (0, eval)(command.expression)});
+    } catch (error) { output.value = JSON.stringify({nonce:command.nonce, error: error.name, message:error.message}); }
+    output.focus(); output.select(); document.title = 'BP-QA-EVALUATED:' + command.nonce;
+  }
+});
+const nonce = Array.from(crypto.getRandomValues(new Uint8Array(16)), value => value.toString(16).padStart(2, '0')).join('');
 const zone = 'leak.qa.test';
 const host = label => `${label}-${nonce}.${zone}`;
 const url = (label, path = '/ping') => `https://${host(label)}${path}?nonce=${nonce}`;
@@ -51,4 +71,18 @@ qa.startTraffic = () => {
   return nonce;
 };
 qa.stopTraffic = () => {qa.timers.forEach(clearInterval); qa.timers = []; return JSON.stringify({background: qa.background, download: qa.download});};
+qa.transport = async () => {
+  const plain = location.protocol === 'http:';
+  const target = `${plain ? 'http' : 'https'}://${host('transport')}/ping?nonce=${nonce}`;
+  const response = await fetch(target, {cache:'no-store', signal:AbortSignal.timeout(6000)});
+  const value = await response.json();
+  const websocket = await new Promise(resolve => {
+    const ws = new WebSocket(`${plain ? 'ws' : 'wss'}://${host('transport-ws')}/ws?nonce=${nonce}`);
+    const timer = setTimeout(() => {ws.close(); resolve(false);}, 6000);
+    ws.onopen = () => ws.send(nonce);
+    ws.onmessage = event => {clearTimeout(timer); resolve(event.data === nonce); ws.close();};
+    ws.onerror = () => {clearTimeout(timer); resolve(false);};
+  });
+  return {pageProtocol:location.protocol, fetch:response.ok && value.nonce === nonce, websocket, nonce};
+};
 </script>

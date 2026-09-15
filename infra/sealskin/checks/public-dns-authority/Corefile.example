@@ -1,0 +1,9 @@
+qa.example.invalid:53 {
+    bind 192.0.2.53
+    errors
+    log . "{remote}:{port} {local} {proto} {>id} {type} {class} {name} {rcode} {>rflags} {rsize} {duration}"
+    bufsize 1232
+    file /qa/db.zone qa.example.invalid {
+        reload 1s
+    }
+}

@@ -59,6 +59,44 @@ func TestNetworkLaunchPersistsPolicyAndStopCarriesSameRevision(t *testing.T) {
 	}
 }
 
+func TestManagedLaunchSeparatesInitialURLOnlyWithExplicitControllerCapability(t *testing.T) {
+	for _, version := range []int{0, 1, 2} {
+		service, store, fake := newNetworkService(t, false)
+		fake.snapshot.ProfileInitialURLVersion = version
+		fake.launchHook = func(request sealskin.LaunchURLRequest) {
+			if (version == 1 && request.InitialURL != "https://example.com") || (version != 1 && request.InitialURL != "") {
+				t.Fatalf("version %d sent unexpected initial URL %q", version, request.InitialURL)
+			}
+			if !strings.HasPrefix(request.URL, "https://adapter.example/bootstrap/personal/") || request.URL == request.InitialURL {
+				t.Fatal("launch lost the unique reconciliation marker")
+			}
+		}
+		if _, err := service.Ensure(context.Background(), "personal"); err != nil {
+			t.Fatal(err)
+		}
+		binding, _, _ := store.Get("personal")
+		if fake.sessions[0].LaunchContext.Value != binding.BootstrapURL || binding.Status != state.StatusRunning {
+			t.Fatal("initial URL changed the durable launch ownership")
+		}
+		if _, err := service.Ensure(context.Background(), "personal"); err != nil || fake.launches != 1 {
+			t.Fatal("existing generation was not reused")
+		}
+	}
+}
+
+func TestInitialURLCapabilityLossDuringLaunchKeepsUnknownReservation(t *testing.T) {
+	service, store, fake := newNetworkService(t, false)
+	fake.snapshot.ProfileInitialURLVersion = 1
+	fake.launchHook = func(sealskin.LaunchURLRequest) { fake.snapshot.ProfileInitialURLVersion = 0 }
+	if _, err := service.Ensure(context.Background(), "personal"); err == nil {
+		t.Fatal("controller capability loss was accepted")
+	}
+	binding, found, err := store.Get("personal")
+	if err != nil || !found || binding.Status != state.StatusUnknown || fake.launches != 1 {
+		t.Fatal("uncertain initial URL launch lost its reservation")
+	}
+}
+
 func TestNetworkResourcesPreventReleaseAfterWorkerDisappears(t *testing.T) {
 	service, store, fake := newNetworkService(t, true)
 	fake.keepResourcesOnStop = true

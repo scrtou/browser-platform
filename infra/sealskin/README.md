@@ -2,7 +2,13 @@
 
 [文档导航](../../docs/README.md) · [开发进度](../../docs/progress.md) · [运维总览](../../docs/operations.md) · [验收索引](../../docs/acceptance/README.md)
 
-这是当前主机的 SealSkin 验证栈。当前采用 [Profile、Relay 与网络生命周期补丁](lifecycle/README.md) `0.3.2-network-v2-e13c19eedc38245d`，基于固定摘要的官方 `0.3.2-ls58`；运行容器已安装同版 payload，Compose 引用版本化镜像供重建使用。升级必须重新执行源码审计和验收。端口只绑定到 `127.0.0.1`，公网由已配置的 Caddy HTTPS 入口转发。
+这是当前主机的 SealSkin 验证栈。当前采用 [Profile、Relay 与网络生命周期补丁](lifecycle/README.md) `0.3.2-lifecycle-v2-a8c7be8a22ededd3`，基于固定摘要的官方 `0.3.2-ls58`；运行容器已安装同版 payload，Compose 引用版本化镜像供重建使用。精确范围见 [生命周期保护发布记录](lifecycle-protection-acceptance-2026-09-13.md)。升级必须重新执行源码审计和验收。端口只绑定到 `127.0.0.1`，公网由已配置的 Caddy HTTPS 入口转发。
+
+R5C3 候选加入 [运行时一致性与会话放行](lifecycle/runtime-coherence.md)：正常 Camoufox 页面、受控出口/GeoIP、网络拒绝证据、strict/advisory 和代次门槛由控制器统一管理。候选 6 的最终隔离回归和临时资源清理通过，见 [验收报告](runtime-coherence-acceptance-2026-09-14.md)。生产控制器与四个现存容器保持原版本，本候选未部署。
+
+R5D 候选 3 加入 [入口登录与 Session 授权](entry-auth/README.md)、密封状态、[r7 显示材料](../browser-access/README.md) 和各层脱敏。534 项控制、真实客户端 13 项、错误材料 5 项及恢复后 407 面扫描通过，QA 已清理，见 [验收报告](entry-authentication-acceptance-2026-09-15.md)。发布配置已准备，仍需 R2/R4B 的生产备份、r7 迁移与目标客户端条件；以下现有部署命令不构成候选已上线。
+
+当前旧生产没有 Store，维护备份使用 [旧部署加密路径](lifecycle/secret-store.md#旧部署的加密备份)：先只读记录实际运行镜像/绑定，经停止确认后才能归档，恢复只到新私有目录。R2A 已完成工具与 [准备验收](legacy-backup-acceptance-2026-09-15.md)，真实 Home 停机恢复和整机维护尚未执行，具体前置条件见 [管理员说明](ADMIN-linger-and-boot.md)。
 
 ## 启动
 
@@ -50,7 +56,15 @@ docker compose exec sealskin sh -c 'getent hosts host.docker.internal || true'
 
 仓库内的 [Go Profile Relay](../../relay/README.md) 和 [Firefox Proxy Worker](../firefox-proxy/README.md) 已完成静态代理基线；Firefox 在镜像层锁定 `profile-relay:1080`、远端 DNS 和 WebRTC ICE 策略。当前 Personal 应用配置 `personal-socks5-r2`：下次新建会话时，SealSkin 创建专属 internal／egress 网络、Relay 和 Guard，先安装网络 ACL 并探测，再让 Worker 加入 Guard 的命名空间，确认 Worker 消失后才回收网络。管理端口隔离、浏览器网络故障、真实 Personal 上游和控制容器重建已通过，见 [网络隔离验收](network-isolation-acceptance-2026-09-13.md)。现有 Personal/Work 原 Worker 保持原样，正式 Docker/VPS 重启仍需维护窗口。
 
-静态 `browser-platform-personal` 内网、`browser-platform-proxy-egress` 出站网络和 `profile-relay-personal` 继续供独立 Camoufox 应用使用。静态凭据仍是主机 `0600` bind mount；动态策略使用私有 `network-secrets/` 中按 SHA-256 固定的版本文件，只读挂载给 Relay。它们尚未接入外部 Secret Store。
+静态 `browser-platform-personal` 内网、`browser-platform-proxy-egress` 出站网络和 `profile-relay-personal` 继续供独立 Camoufox 应用使用。静态凭据仍是主机 `0600` bind mount；动态策略使用私有 `network-secrets/` 中按 SHA-256 固定的版本文件，只读挂载给 Relay。这些生产绑定仍使用旧文件模式。R5B 的受控 FileSecretStore、Relay 专属 tmpfs、撤销和加密恢复已完成 [隔离验收](secret-store-acceptance-2026-09-14.md)，未部署；配置与迁入步骤见 [Secret Store](lifecycle/secret-store.md)。
+
+R5A 已完成上游 HTTP/HTTPS/SOCKS5 六种认证组合、正常退出修复与隔离验收，候选为 `0.3.2-proxy-v1-f921ceefcf1e0250`，保留旧策略 SHA 和内部 SOCKS5 路径；生产未更新。最终版本与 181 项 Python/70 项浏览器网络检查见 [验收报告](proxy-protocols-acceptance-2026-09-14.md)。新策略/CA 字段、镜像能力标记和回退顺序见 [生命周期说明](lifecycle/README.md#按-generation-分配代理与网络) 与 [Relay](../../relay/README.md)。HTTP(S) 上游须支持 CONNECT 到目标端口，HTTPS 会在冻结 IP 上验证原始代理主机名。
+
+R5C1 的受管理 DIRECT 候选保留内部 SOCKS5 与 Guard，使用批准解析器和公开 IPv4 TCP 网关，不需要外部上游或凭据。控制器/网关需要固定的只读宿主机地址证据，见 [DIRECT 配置与 QA](lifecycle/direct-network.md)、[可选 Compose overlay](compose.direct.yml) 和 [验收报告](direct-network-acceptance-2026-09-14.md)。生产基础 Compose 未启用此挂载，候选未部署。
+
+R5C2 候选增加代理端点的批准引导解析器、绑定回答/TTL 和恢复校验，使用固定 dnspython 与临时 pip wheel；旧空字段保留兼容路径。配置和依赖见 [引导 DNS 与 TTL](lifecycle/bootstrap-dns.md)。最终候选的私有回归、标准 Unbound/受控公网端点的三路径真实 TTL、浏览器故障/恢复、清理和文档已通过 [验收](approved-dns-ttl-acceptance-2026-09-14.md)，工作项已收尾，未部署生产。
+
+[专用公开权威 DNS](checks/public-dns-authority/README.md) 提供 CoreDNS、精确递归入口、Cloudflare 清单与轮换方法。五轮端点服务和临时递归设施已清理，原基础权威恢复、外部复测通过；基础 QA 委派、SSH 访问和用户端口规则暂留后续验证，不能把早先准备阶段的 SSH/端口失败继续视为当前阻塞。
 
 以下命令用于构建和启动保留的静态 Relay；受管理 Personal 的策略配置见 [生命周期说明](lifecycle/README.md#按-generation-分配代理与网络)：
 
@@ -84,79 +98,26 @@ systemctl --user status profile-adapter.service
 
 [Camoufox Worker](../camoufox/README.md) 的 r4 已通过完整冻结/重放、存储、Canvas/字体/音频稳定性和正常 X11 入口验收，安装为独立 `camoufox-personal-r4` 应用。该应用使用额外只读 mounts 保留 SealSkin 的 Home volumes，固定实际镜像摘要和成功报告，限制 1536 MiB / 1.5 CPU。现有 Personal/Work 应用、会话和 Home 保持原绑定；当前 Camoufox 只使用独立 cleanroom 验收。
 
+[R4A](client-migration-acceptance-2026-09-14.md) 补齐了 Camoufox 受管理 Guard 网络、Linux 客户端矩阵和新前端的 Unicode/剪贴板回归。客户端包可由 [build-client-addon.py](build-client-addon.py) 固定到新的内容命名目录；迁移准备器只生成可审阅候选，不更新真实入口。生产仍保持旧客户端包，目标 Mac/Trilium 和实际迁移归 R4B。
+
 ## 域名与 Caddy 路由
 
-当前 PoC 使用同一个 DNS 域下的两个 HTTPS 主机名，不需要为每个 Profile 单独申请域名。其他部署可将下面两个主机名整体替换为自己的域名：
+当前使用两个 HTTPS 主机名，不需要为每个 Profile 单独申请域名。R5D 的 `access` 明确要求两个不同 origin；其他部署应同步替换域名、HOST_URL、私有证书 SAN 与 Adapter 配置。
 
 | 主机名 | 用途 | 适配层配置 |
 | --- | --- | --- |
-| `mybrowser.azhen.de` | `/browser/*` 固定入口、`/bootstrap/*` 能力跳转 | `public_base_url` |
-| `mysession.azhen.de` | SealSkin Session、WebSocket、`/api`、`/room` | `public_session_base_url`、SealSkin `HOST_URL` |
+| `mybrowser.azhen.de` | 登录、授权 Profile、`/browser/*` 固定入口与兼容 GET `/bootstrap/*` | `public_base_url` |
+| `mysession.azhen.de` | 网关的一次性交接和当前 Session HTTP/WebSocket | `public_session_base_url`、SealSkin `HOST_URL` |
 
-适配层调用 SealSkin 的 `api_base_url` 只走本机或内网（例如 `http://127.0.0.1:8000`），不创建公网 DNS 记录。Trilium 自己的域名保持不变。两条记录都指向同一台 VPS，前置 Caddy 按 Host 和路径分流：
+两条 A 记录继续指向同一 VPS，Trilium 自己的域名保持不变。采用 R5D 时，前置 Caddy 将两个域名的所有请求转发至本机 Adapter；完整模板（含错误日志过滤）见 [entry-auth/Caddyfile.example](entry-auth/Caddyfile.example)。网关只允许已授权的入口与当前 Session 路径，不能再将公网 `/api`、`/room` 或 UUID 路径直接反代到 SealSkin。通用 `/healthz`、`/readyz` 和兼容 GET bootstrap 由网关豁免，运维 socket 仍只在本机。
 
-```caddyfile
-mybrowser.azhen.de {
-    # 这里接入现有登录认证；未接入认证前不要公开此路径。
-    @browser_entry path /browser/*
-    handle @browser_entry {
-        # forward_auth / auth portal 应放在 reverse_proxy 之前
-        reverse_proxy 127.0.0.1:9100
-    }
+Adapter 的控制 API 和 Session 代理使用同一个 `https://127.0.0.1:8443` 私有上游，显式校验 CA 和服务名；`allow_unencrypted_http=false`。公开 Caddy 不直接持有后端能力，网关也不会向客户端转发后端认证 Cookie。Host 必须保留完整主机名及非默认端口，验证交接链时检查兑换后的 Location，不能仅检查首个 303。
 
-    # Worker 访问此能力 URL 时不带用户登录 Cookie；适配层会核对随机
-    # operation ID 和当前状态，并返回 no-store 的 303。
-    @bootstrap path /bootstrap/*
-    handle @bootstrap {
-        reverse_proxy 127.0.0.1:9100
-    }
+生产当前仍采用旧的入口与 SealSkin 直达路由，其历史修正及证书验证见 [入口回归](entry-acceptance-2026-09-13.md)。现有 CA 私钥在被忽略的 `secrets/sealskin-ca.key`，权限 0600，前置 Caddy 信任的 CA 文件在 `/etc/caddy/sealskin-ca/ca.pem`；这些生产文件本项未变更。R5D 使用 [发布准备器](entry-auth/prepare-release.py) 生成含精确 SAN 的新私有 TLS 配对文件，安装位置为 `config/ssl/proxy_cert.pem`、`proxy_key.pem`，Adapter 只需对应信任证书。独立的 SealSkin `server_key.pem` 和 API 用户身份必须保留。
 
-    # 适配层健康端点只供内网监控，不通过此站点公开。
-    @adapter_private path /healthz /readyz
-    handle @adapter_private {
-        respond "Not Found" 404
-    }
+发布候选包含两个域名的授权路由、维护时 503 路由和原配置参考，保留其他站点。生产切换须按 [维护与回退顺序](entry-auth/README.md#发布候选与维护顺序) 结合真实 Home 备份、r7 迁移和目标客户端验收执行；本项没有加载这些配置。
 
-    handle {
-        respond "Not Found" 404
-    }
-}
-
-mysession.azhen.de {
-    # SealSkin 自带 Caddy 负责 UUID Session、/api、/room 和 WebSocket。
-    # reverse_proxy 会保留 WebSocket 升级；不要使用 handle_path 去掉前缀。
-    reverse_proxy https://127.0.0.1:8443 {
-        # Keep token-to-cookie redirects on the public Session origin.
-        header_up Host {host}
-        transport http {
-            tls_server_name mysession.azhen.de
-            # 本地自签名 PoC 才可临时使用：
-            # tls_insecure_skip_verify
-        }
-    }
-}
-```
-
-实际串流验收发现，HTTPS 上游默认 Host 重写会让 SealSkin 的 token 交换返回 `https://127.0.0.1:8443/...`。上面的 `header_up Host {host}` 必须保留，才能让授权跳转保持公网 Session origin。当前主机已经备份 Caddyfile、验证配置并热加载此修正；验证授权链时应检查每次跳转的 origin，不能仅检查 `/` 返回 200，也不能关闭 TLS 校验来绕过此错误。
-
-前置 Caddy 终止公网 TLS，适配层仍只监听 `127.0.0.1:9100`（示例配置默认值仍可按部署需要调整）。生产环境必须让前置 Caddy 信任 SealSkin 8443 的上游证书（或使用受控内部 CA）；`tls_insecure_skip_verify` 不能保留在线上。当前 SealSkin 的 `config/ssl/proxy_cert.pem` 和 `proxy_key.pem` 使用包含 `mysession.azhen.de` 的证书，且 `HOST_URL=mysession.azhen.de`；换域名部署时必须同步替换 SAN、HOST_URL 和 Caddy 的 `tls_server_name`。
-
-推荐的证书流转是“内部 CA → SealSkin 叶子证书”：CA 私钥只放在管理员 Secret Store，CA 证书以只读方式提供给前置 Caddy；叶子证书和私钥分别放入 SealSkin 的 `config/ssl/proxy_cert.pem`、`config/ssl/proxy_key.pem`。叶子证书必须包含实际 Session 主机名的 SAN（例如 `DNS:mysession.azhen.de`），不要替换 SealSkin 的 `server_key.pem`。前置 Caddy 对应配置为：
-
-本机 PoC 的 CA 私钥已移到 `infra/sealskin/secrets/sealskin-ca.key`，权限为 `0600`，该目录已被 `.gitignore` 忽略；它不参与 SealSkin 在线请求，只用于受控的证书续签。CA 公钥证书由前置 Caddy 只读使用（当前路径为 `/etc/caddy/sealskin-ca/ca.pem`）。请把私钥另行备份到离线 Secret Store，不能提交仓库或放进容器环境变量。
-
-```caddyfile
-transport http {
-    tls_server_name mysession.azhen.de
-    tls_trust_pool file /etc/caddy/sealskin-ca/ca.pem
-}
-```
-
-替换证书后重启 SealSkin 使内置 Caddy 重新读取文件，再校验并 reload 前置 Caddy。`tls_insecure_skip_verify` 只用于本地临时排错；即使连接目标是 `127.0.0.1`，线上也应保留证书校验。
-
-`public_base_url` 还必须能从 Worker 容器访问。若 VPS 不支持访问自身公网地址的 hairpin，给 Worker 使用的 DNS 配置 `mybrowser.azhen.de` 的内网解析（指向宿主机网关/Caddy），同时保证 Trilium 侧仍解析到公网入口；不要把 bootstrap 地址写成宿主机的 `127.0.0.1`。
-
-如果希望只用一个主机名，也可以让 `mybrowser.azhen.de` 的最后一个 `handle` 反代到 SealSkin 8443，并把两个 URL 配置都设为 `https://mybrowser.azhen.de`。这会减少 DNS 记录，但必须严格保持 `/browser/*`、`/bootstrap/*` 在 SealSkin fallback 之前匹配。
+旧控制器或无受管理策略的启动要求 Worker 能访问 `public_base_url` 的 bootstrap 路径。旧路径若受 VPS hairpin 限制，需要按其网络策略配置可达的入口解析；不要写成宿主机的 `127.0.0.1`。R5C1 通过 `profile_initial_url_version: 1` 另传受管理浏览器的 `initial_url`，保留 bootstrap 会话标记而无需访问该中转页。DIRECT 继续拒绝宿主机公网及私网地址，不为 bootstrap 增加本机例外。
 
 本地没有 DNS 时，先把 `public_base_url` 和 `public_session_base_url` 设为实际可访问的 HTTPS 名称；不要把 `localhost` 写入将由远程 Worker 访问的 bootstrap URL。自签名证书只用于初始检查，Trilium WebView 和生产浏览器必须验证可信证书。
 
@@ -166,6 +127,7 @@ transport http {
 
 ```bash
 ~/.local/lib/browser-platform/profile-adapter -config adapter-config.json -inspect-profile personal
+~/.local/lib/browser-platform/profile-adapter -config adapter-config.json -health-profile personal
 ~/.local/lib/browser-platform/profile-adapter -config adapter-config.json -stop-profile personal
 ~/.local/lib/browser-platform/profile-adapter -config adapter-config.json -reconcile-profile personal
 ```

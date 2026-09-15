@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -9,16 +10,35 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"browser-platform/adapter/internal/profile"
 	"browser-platform/adapter/internal/sealskin"
 )
 
 type fakeProfiles struct {
-	ensureCalls int
-	session     sealskin.Session
-	err         error
-	target      string
+	ensureCalls   int
+	session       sealskin.Session
+	err           error
+	target        string
+	health        profile.HealthReport
+	healthErr     error
+	healthCalls   int
+	healthOptions []profile.HealthOptions
+	healthDelay   time.Duration
+}
+
+func (f *fakeProfiles) Health(ctx context.Context, _ string, opts profile.HealthOptions) (profile.HealthReport, error) {
+	f.healthCalls++
+	f.healthOptions = append(f.healthOptions, opts)
+	if f.healthDelay > 0 {
+		select {
+		case <-time.After(f.healthDelay):
+		case <-ctx.Done():
+			return profile.HealthReport{}, ctx.Err()
+		}
+	}
+	return f.health, f.healthErr
 }
 
 func (f *fakeProfiles) Ensure(context.Context, string) (sealskin.Session, error) {
@@ -37,7 +57,7 @@ func TestEntryGETDoesNotLaunchAndPOSTRedirects(t *testing.T) {
 	profiles := &fakeProfiles{session: sealskin.Session{
 		SessionID: "session-1", SessionURL: "/session-1/?access_token=secret",
 	}}
-	server := New(profiles, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := New(profiles, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})
 
 	get := httptest.NewRequest(http.MethodGet, "https://adapter.example/browser/personal/", nil)
 	getResponse := httptest.NewRecorder()
@@ -90,7 +110,7 @@ func TestEntryGETDoesNotLaunchAndPOSTRedirects(t *testing.T) {
 
 func TestBootstrapRedirectAndUnknownOwnershipError(t *testing.T) {
 	profiles := &fakeProfiles{target: "https://start.example/", err: profile.ErrOwnershipUnknown}
-	server := New(profiles, func(context.Context) ([]sealskin.Session, error) { return nil, errors.New("offline") }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := New(profiles, func(context.Context) ([]sealskin.Session, error) { return nil, errors.New("offline") }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})
 
 	bootstrap := httptest.NewRequest(http.MethodGet, "https://adapter.example/bootstrap/personal/operation-1", nil)
 	bootstrapResponse := httptest.NewRecorder()
@@ -105,11 +125,130 @@ func TestBootstrapRedirectAndUnknownOwnershipError(t *testing.T) {
 	if startResponse.Code != http.StatusConflict || strings.Contains(startResponse.Body.String(), "EOF") {
 		t.Fatalf("start status=%d body=%q", startResponse.Code, startResponse.Body.String())
 	}
+	profiles.err = profile.ErrResumeFailed
+	resumeFailed := httptest.NewRecorder()
+	server.ServeHTTP(resumeFailed, httptest.NewRequest(http.MethodPost, "https://adapter.example/browser/personal/start", nil))
+	if resumeFailed.Code != http.StatusConflict || !strings.Contains(resumeFailed.Body.String(), "resumed") || resumeFailed.Header().Get("Location") != "" {
+		t.Fatalf("resume failure status=%d body=%q", resumeFailed.Code, resumeFailed.Body.String())
+	}
+	profiles.err = profile.ErrCoherenceBlocked
+	coherenceFailed := httptest.NewRecorder()
+	server.ServeHTTP(coherenceFailed, httptest.NewRequest(http.MethodPost, "https://adapter.example/browser/personal/start", nil))
+	if coherenceFailed.Code != http.StatusServiceUnavailable || !strings.Contains(coherenceFailed.Body.String(), "一致性检查") ||
+		coherenceFailed.Header().Get("Retry-After") != "10" || coherenceFailed.Header().Get("Location") != "" {
+		t.Fatalf("coherence failure status=%d body=%q", coherenceFailed.Code, coherenceFailed.Body.String())
+	}
 
 	ready := httptest.NewRequest(http.MethodGet, "https://adapter.example/readyz", nil)
 	readyResponse := httptest.NewRecorder()
 	server.ServeHTTP(readyResponse, ready)
 	if readyResponse.Code != http.StatusServiceUnavailable {
 		t.Fatalf("ready status=%d", readyResponse.Code)
+	}
+}
+
+func newHealthServer(profiles *fakeProfiles, ui HealthUI) *Server {
+	return New(profiles, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), ui)
+}
+
+func blockingReport() profile.HealthReport {
+	return profile.HealthReport{Version: 1, ProfileID: "personal", Overall: profile.OverallUnhealthy, CheckedAt: time.Unix(1_700_000_000, 0),
+		Binding:  profile.HealthBinding{OperationID: "operation-secret", SessionID: "session-secret"},
+		Checks:   []profile.HealthCheck{{Name: "browser", Status: profile.CheckFail, Required: true, Code: "BROWSER_EXITED", Message: "浏览器主进程已退出"}},
+		Recovery: &profile.Recovery{Code: "BROWSER_EXITED", Title: "浏览器已退出", Blocking: true, Steps: []string{"右键 → FireFox"}}}
+}
+
+func TestEntryShowsBlockingRecoveryAndKeepsManualContinue(t *testing.T) {
+	profiles := &fakeProfiles{session: sealskin.Session{SessionID: "s", SessionURL: "/s/?access_token=secret"}, health: blockingReport()}
+	server := newHealthServer(profiles, HealthUI{EntryHint: true, EntryWait: time.Second})
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "https://adapter.example/browser/personal/", nil))
+	body := response.Body.String()
+	if response.Code != http.StatusOK || !strings.Contains(body, "浏览器已退出") || !strings.Contains(body, "右键 → FireFox") {
+		t.Fatalf("recovery hint missing: %d %s", response.Code, body)
+	}
+	if strings.Contains(body, "document.forms[0].submit()") || !strings.Contains(body, `<form method="post" action="start">`) {
+		t.Fatal("blocking recovery must not auto-submit but must keep the manual continue button")
+	}
+	if strings.Contains(body, "operation-secret") || strings.Contains(body, "session-secret") {
+		t.Fatal("recovery page leaked binding identifiers")
+	}
+	if profiles.ensureCalls != 0 || profiles.healthCalls != 1 || profiles.healthOptions[0].Force || !profiles.healthOptions[0].CachedOnly {
+		t.Fatalf("entry pre-check side effects: ensure=%d health=%d opts=%+v", profiles.ensureCalls, profiles.healthCalls, profiles.healthOptions)
+	}
+	recheck := httptest.NewRecorder()
+	server.ServeHTTP(recheck, httptest.NewRequest(http.MethodGet, "https://adapter.example/browser/personal/?recheck=1", nil))
+	if profiles.healthOptions[1].Force || !profiles.healthOptions[1].CachedOnly {
+		t.Fatal("a public query parameter must not trigger a probe")
+	}
+	post := httptest.NewRequest(http.MethodPost, "https://adapter.example/browser/personal/start", nil)
+	post.Header.Set("Origin", "https://adapter.example")
+	postResponse := httptest.NewRecorder()
+	server.ServeHTTP(postResponse, post)
+	if postResponse.Code != http.StatusSeeOther || profiles.ensureCalls != 1 {
+		t.Fatalf("manual continue must still reach the Session: %d", postResponse.Code)
+	}
+}
+
+func TestEntryFallsBackToAutoSubmitWhenHealthIsSlowUnavailableOrHealthy(t *testing.T) {
+	for name, profiles := range map[string]*fakeProfiles{
+		"healthy":      {health: profile.HealthReport{Overall: profile.OverallHealthy}},
+		"non-blocking": {health: profile.HealthReport{Overall: profile.OverallDegraded, Recovery: &profile.Recovery{Code: "PROXY_LEGACY_GENERATION"}}},
+		"error":        {healthErr: errors.New("control unavailable")},
+		"pending":      {healthErr: profile.ErrHealthPending},
+		"slow":         {health: blockingReport(), healthDelay: 2 * time.Second},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := newHealthServer(profiles, HealthUI{EntryHint: true, EntryWait: 50 * time.Millisecond})
+			response := httptest.NewRecorder()
+			server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "https://adapter.example/browser/personal/", nil))
+			if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "document.forms[0].submit()") {
+				t.Fatalf("%s: entry did not fall back to auto-submit: %d %s", name, response.Code, response.Body.String())
+			}
+			if profiles.ensureCalls != 0 {
+				t.Fatal("GET entry launched a session")
+			}
+		})
+	}
+	disabled := &fakeProfiles{health: blockingReport()}
+	server := newHealthServer(disabled, HealthUI{})
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "https://adapter.example/browser/personal/", nil))
+	if disabled.healthCalls != 0 || !strings.Contains(response.Body.String(), "document.forms[0].submit()") {
+		t.Fatal("disabled entry hint must not consult health")
+	}
+}
+
+func TestPublicHealthEndpointIsSanitizedAndReadOnly(t *testing.T) {
+	profiles := &fakeProfiles{health: blockingReport()}
+	server := newHealthServer(profiles, HealthUI{EntryHint: true, EntryWait: time.Second})
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "https://adapter.example/browser/personal/health", nil))
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("health status=%d headers=%v", response.Code, response.Header())
+	}
+	var decoded profile.HealthReport
+	if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Binding.OperationID != "" || decoded.Binding.SessionID != "" || decoded.Recovery == nil || decoded.Recovery.Code != "BROWSER_EXITED" {
+		t.Fatalf("public report not sanitized: %+v", decoded)
+	}
+	if profiles.ensureCalls != 0 || profiles.healthOptions[0].Force || !profiles.healthOptions[0].CachedOnly {
+		t.Fatalf("public health must read (not force) and never launch: %+v", profiles.healthOptions)
+	}
+	cached := httptest.NewRecorder()
+	server.ServeHTTP(cached, httptest.NewRequest(http.MethodGet, "https://adapter.example/browser/personal/health?cached=1", nil))
+	if !profiles.healthOptions[1].CachedOnly {
+		t.Fatal("cached=1 must not trigger collection")
+	}
+	for err, status := range map[error]int{profile.ErrProfileNotFound: http.StatusNotFound, profile.ErrHealthPending: http.StatusServiceUnavailable,
+		profile.ErrHealthUnavailable: http.StatusNotFound, profile.ErrLifecycleDisabled: http.StatusNotImplemented, errors.New("control access_token=x"): http.StatusServiceUnavailable} {
+		profiles.healthErr = err
+		failed := httptest.NewRecorder()
+		server.ServeHTTP(failed, httptest.NewRequest(http.MethodGet, "https://adapter.example/browser/personal/health", nil))
+		if failed.Code != status || strings.Contains(failed.Body.String(), "access_token") {
+			t.Fatalf("%v: status=%d body=%q", err, failed.Code, failed.Body.String())
+		}
 	}
 }

@@ -71,7 +71,7 @@ DNS、DoT、HTTPS、STUN 和 UDP443 端点均先通过独立正向检查。权�
 在无外部网络、独立 cgroup／network namespace、无宿主机 Docker socket 的临时 Docker-in-Docker 环境中，Docker **29.8.0** 完成以下检查：
 
 - 开启 live-restore 后重启独立 daemon，五个测试进程的 PID／启动时间保持，代理继续可用；重启期间管理端口始终不能绕过 Guard。
-- 关闭 live-restore 后正常停止并启动 daemon，`restart=no` 的 Worker、Guard、Relay 等容器保持停止，不会自行恢复网络访问。
+- 关闭 live-restore 后正常停止并启动 daemon，`restart=no` 的合成 Worker、Guard、Relay 等容器保持停止，不会自行恢复网络访问。**范围说明（2026-09-13 补充）**：该合成 Worker 未使用 Docker 自动删除；当时的生产 Worker 由上游以 AutoRemove 创建，重启后会被删除而不是保持停止，见 [DEV-2026-09-13-002](../../docs/deviations/DEV-2026-09-13-002-worker-auto-remove.md)。
 - 显式启动测试上游、Relay 与 Guard，确认 Guard 初始化完成后启动合成 Worker，代理与 ACL 再次通过；共保留 127 次时间点观测。
 
 这部分使用合成 Worker 和 VFS 存储驱动，验证独立 daemon／命名空间行为，**不替代正式 Docker／VPS 重启、真实 Firefox 整机恢复或开机窗口无泄漏验收**。本次没有重启宿主机 Docker 或 VPS。

@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -26,15 +27,26 @@ const (
 )
 
 type Server struct {
-	cfg    RuntimeConfig
-	logger *slog.Logger
+	gate       coherenceGate
+	cfg        RuntimeConfig
+	logger     *slog.Logger
+	directDial func(context.Context, string, string) (net.Conn, error)
 }
 
 func NewServer(cfg RuntimeConfig, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Server{cfg: cfg, logger: logger}
+	if cfg.Mode == "" {
+		cfg.Mode = "proxy_required"
+	}
+	if cfg.Mode == "proxy_required" && cfg.UpstreamProtocol == "" && cfg.UpstreamAuth == "" {
+		cfg.UpstreamProtocol, cfg.UpstreamAuth = protocolSOCKS5, authNone
+		if cfg.Username != "" {
+			cfg.UpstreamAuth = authUserPass
+		}
+	}
+	return &Server{cfg: cfg, logger: logger, directDial: (&net.Dialer{}).DialContext}
 }
 
 func (s *Server) Serve(ctx context.Context) error {
@@ -46,11 +58,36 @@ func (s *Server) Serve(ctx context.Context) error {
 }
 
 func (s *Server) ServeListener(ctx context.Context, listener net.Listener) error {
-	defer listener.Close()
-	go func() {
-		<-ctx.Done()
+	ctx, cancel := context.WithCancel(ctx)
+	var connections sync.WaitGroup
+	defer func() {
+		cancel()
 		_ = listener.Close()
+		connections.Wait()
 	}()
+	if s.cfg.Mode != "proxy_required" && s.cfg.Mode != "direct" {
+		return errors.New("invalid network mode")
+	}
+	if s.cfg.Mode == "direct" {
+		if !s.directHostEvidenceValid() {
+			return errDirectHostEvidence
+		}
+		done := make(chan struct{})
+		go s.watchDirectHostEvidence(ctx, cancel, done)
+		defer func() { cancel(); <-done }()
+	}
+	if s.cfg.CredentialLeaseFile != "" {
+		if !validLease(s.cfg.CredentialLeaseFile, s.cfg.CredentialLeaseID) {
+			return errCredentialLease
+		}
+		done := make(chan struct{})
+		go s.watchCredentialLease(ctx, cancel, done)
+		defer func() { cancel(); <-done }()
+	}
+	stopGate := s.startCoherenceGate(ctx)
+	defer stopGate()
+	stopListener := context.AfterFunc(ctx, func() { _ = listener.Close() })
+	defer stopListener()
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -68,7 +105,11 @@ func (s *Server) ServeListener(ctx context.Context, listener net.Listener) error
 			_ = conn.Close()
 			continue
 		}
-		go s.handle(conn)
+		connections.Add(1)
+		go func() {
+			defer connections.Done()
+			s.handle(ctx, conn)
+		}()
 	}
 }
 
@@ -88,20 +129,33 @@ func (s *Server) allowed(address net.Addr) bool {
 	return false
 }
 
-func (s *Server) handle(client net.Conn) {
+func (s *Server) handle(ctx context.Context, client net.Conn) {
 	defer client.Close()
+	stopClient := context.AfterFunc(ctx, func() { _ = client.Close() })
+	defer stopClient()
 	_ = client.SetDeadline(time.Now().Add(s.cfg.DialTimeout))
 	request, err := readRequest(client)
 	if err != nil {
 		return
 	}
-	upstream, err := s.dialUpstream(request)
+	ctx, release, permitted := s.authorizeCoherence(ctx, request, client)
+	if !permitted {
+		_ = writeReply(client, replyDenied)
+		return
+	}
+	defer release()
+	stopGateClient := context.AfterFunc(ctx, func() { _ = client.Close() })
+	defer stopGateClient()
+	upstream, err := s.dialUpstream(ctx, request)
+	_ = client.SetDeadline(time.Now().Add(s.cfg.DialTimeout))
 	if err != nil {
 		_ = writeReply(client, replyGeneral)
 		s.logger.Warn("upstream connect failed", "error_code", safeErrorCode(err))
 		return
 	}
 	defer upstream.Close()
+	stopUpstream := context.AfterFunc(ctx, func() { _ = upstream.Close() })
+	defer stopUpstream()
 	if err := writeReply(client, replySucceeded); err != nil {
 		return
 	}
@@ -181,41 +235,38 @@ func readRequest(conn net.Conn) (request, error) {
 	if _, err := io.ReadFull(conn, portBytes); err != nil {
 		return request{}, err
 	}
-	return request{atyp: header[3], addr: addr, port: binary.BigEndian.Uint16(portBytes)}, nil
+	req := request{atyp: header[3], addr: addr, port: binary.BigEndian.Uint16(portBytes)}
+	if _, err := req.authority(); err != nil {
+		_ = writeReply(conn, replyAddress)
+		return request{}, err
+	}
+	return req, nil
 }
 
-func (s *Server) dialUpstream(req request) (net.Conn, error) {
-	dialer := net.Dialer{Timeout: s.cfg.DialTimeout}
-	conn, err := dialer.Dial("tcp", s.cfg.UpstreamAddress)
-	if err != nil {
-		return nil, err
-	}
-	ok := false
-	defer func() {
-		if !ok {
-			_ = conn.Close()
-		}
-	}()
+func (s *Server) connectSOCKS5(conn net.Conn, req request) error {
 	methods := []byte{noAuth}
-	if s.cfg.Username != "" {
+	if s.cfg.UpstreamAuth == authUserPass {
 		methods = []byte{userPassAuth}
 	}
 	greeting := append([]byte{version5, byte(len(methods))}, methods...)
 	if err := writeAll(conn, greeting); err != nil {
-		return nil, err
+		return err
 	}
 	selected, err := readFixed(conn, 2)
-	if err != nil || selected[0] != version5 {
-		return nil, errors.New("upstream greeting invalid")
+	if err != nil {
+		return err
 	}
-	if s.cfg.Username != "" && selected[1] == userPassAuth {
+	if selected[0] != version5 {
+		return errUpstreamProtocol
+	}
+	if s.cfg.UpstreamAuth == authUserPass && selected[1] == userPassAuth {
 		if err := writeUserPass(conn, s.cfg.Username, s.cfg.Password); err != nil {
-			return nil, err
+			return err
 		}
-	} else if s.cfg.Username == "" && selected[1] == noAuth {
+	} else if s.cfg.UpstreamAuth == authNone && selected[1] == noAuth {
 		// continue
 	} else {
-		return nil, errors.New("upstream authentication method rejected")
+		return errUpstreamAuth
 	}
 	message := []byte{version5, commandConnect, 0, req.atyp}
 	message = append(message, req.addr...)
@@ -223,21 +274,20 @@ func (s *Server) dialUpstream(req request) (net.Conn, error) {
 	binary.BigEndian.PutUint16(port[:], req.port)
 	message = append(message, port[:]...)
 	if err := writeAll(conn, message); err != nil {
-		return nil, err
+		return err
 	}
 	reply, err := readReply(conn)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if reply[1] != replySucceeded {
-		return nil, fmt.Errorf("upstream SOCKS reply %d", reply[1])
+		return errUpstreamProtocol
 	}
-	ok = true
-	return conn, nil
+	return nil
 }
 
 func writeUserPass(conn net.Conn, username, password string) error {
-	if len(username) > 255 || len(password) > 255 {
+	if len(username) < 1 || len(password) < 1 || len(username) > 255 || len(password) > 255 {
 		return errors.New("upstream credential too long")
 	}
 	message := []byte{1, byte(len(username))}
@@ -248,7 +298,10 @@ func writeUserPass(conn net.Conn, username, password string) error {
 		return err
 	}
 	reply, err := readFixed(conn, 2)
-	if err != nil || reply[1] != 0 {
+	if err != nil {
+		return err
+	}
+	if reply[0] != 1 || reply[1] != 0 {
 		return errUpstreamAuth
 	}
 	return nil
@@ -256,8 +309,11 @@ func writeUserPass(conn net.Conn, username, password string) error {
 
 func readReply(conn net.Conn) ([]byte, error) {
 	head, err := readFixed(conn, 4)
-	if err != nil || head[0] != version5 {
-		return nil, errors.New("upstream reply invalid")
+	if err != nil {
+		return nil, err
+	}
+	if head[0] != version5 || head[2] != 0 {
+		return nil, errUpstreamProtocol
 	}
 	var tail []byte
 	switch head[3] {
@@ -267,6 +323,9 @@ func readReply(conn net.Conn) ([]byte, error) {
 		length, err := readByte(conn)
 		if err != nil {
 			return nil, err
+		}
+		if length == 0 {
+			return nil, errUpstreamProtocol
 		}
 		tail = make([]byte, int(length)+3)
 		tail[0] = length
@@ -325,7 +384,7 @@ func copyBidirectional(left, right net.Conn, idle time.Duration) {
 			n, err := src.Read(buffer)
 			if n > 0 {
 				_ = dst.SetWriteDeadline(time.Now().Add(idle))
-				if _, writeErr := dst.Write(buffer[:n]); writeErr != nil {
+				if writeErr := writeAll(dst, buffer[:n]); writeErr != nil {
 					return
 				}
 			}
@@ -347,11 +406,32 @@ func safeErrorCode(err error) string {
 		return ""
 	}
 	switch {
+	case errors.Is(err, errDirectDenied):
+		return "DIRECT_TARGET_DENIED"
+	case errors.Is(err, errDirectDNS):
+		return "DIRECT_DNS_FAILED"
+	case errors.Is(err, errDirectHostEvidence):
+		return "DIRECT_HOST_EVIDENCE_UNAVAILABLE"
 	case errors.Is(err, errUpstreamAuth):
 		return "UPSTREAM_AUTH_FAILED"
+	case errors.Is(err, errUpstreamTLS):
+		return "UPSTREAM_TLS_INVALID"
+	case errors.Is(err, errUnsupportedAuth):
+		return "UNSUPPORTED_PROXY_AUTH"
+	case errors.Is(err, errUpstreamProtocol), errors.Is(err, errHeadersTooLarge):
+		return "UPSTREAM_PROTOCOL_INVALID"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "UPSTREAM_TIMEOUT"
 	default:
+		var networkError net.Error
+		if errors.As(err, &networkError) && networkError.Timeout() {
+			return "UPSTREAM_TIMEOUT"
+		}
 		return "UPSTREAM_UNREACHABLE"
 	}
 }
 
 var errUpstreamAuth = errors.New("upstream credentials rejected")
+var errUpstreamTLS = errors.New("upstream TLS verification failed")
+var errUpstreamProtocol = errors.New("upstream protocol invalid")
+var errUnsupportedAuth = errors.New("UNSUPPORTED_PROXY_AUTH")

@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-Hant">
+<meta charset="utf-8">
+<title>Browser Platform Client QA</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 20px; color: #172b35; background: #f2f6f7; font: 18px/1.5 sans-serif; }
+  h1 { font-size: 25px; margin: 0 0 8px; }
+  #targets { display: flex; gap: 18px; margin: 20px 0; }
+  #targets button { width: 116px; height: 65px; border: 0; border-radius: 8px; color: white; font: bold 18px sans-serif; }
+  #targets button:nth-child(1) { background: rgb(220,61,72); }
+  #targets button:nth-child(2) { background: rgb(19,142,123); }
+  #targets button:nth-child(3) { background: rgb(68,110,220); }
+  #targets button:nth-child(4) { background: rgb(139,75,199); }
+  #targets button:nth-child(5) { background: rgb(222,142,30); }
+  textarea { display: block; width: min(100%, 850px); height: 110px; padding: 10px; font: 20px/1.5 sans-serif; }
+  #status { min-height: 30px; }
+  #report { height: 180px; font: 13px monospace; }
+  #scroll-target { margin-top: 1000px; padding: 25px; background: #dfebee; }
+</style>
+<h1>客戶端驗收</h1>
+<p>本頁只使用測試資料。調整本機視窗後點擊下方按鈕，輸入中文，再檢查導覽與重新連線。</p>
+<nav><a id="next" href="?step=two">下一頁</a> · <a id="new-tab" href="?step=tab" target="_blank">新分頁</a> · <span id="step"></span></nav>
+<div id="targets"><button id="point-1">一</button><button id="point-2">二</button><button id="point-3">三</button><button id="point-4">四</button><button id="point-5">五</button></div>
+<label for="input">文字與輸入法</label>
+<textarea id="input" placeholder="請輸入：繁體中文 測試 😀"></textarea>
+<p id="status" role="status">等待操作</p>
+<button id="export" type="button">複製驗收資料（F9）</button>
+<textarea id="report" readonly aria-label="驗收資料"></textarea>
+<div id="scroll-target">捲動至此處後，按 Home 返回。</div>
+<script>
+const input = document.querySelector('#input'), report = document.querySelector('#report');
+const step = new URL(location.href).searchParams.get('step') || 'one';
+document.querySelector('#step').textContent = '目前頁面：' + step;
+const observations = {coordinates:[], inputEvents:[], reportSequence:0};
+input.value = sessionStorage.getItem('bp-r4-input') || '';
+for (const name of ['keydown','keyup','compositionstart','compositionupdate','compositionend','beforeinput','input']) {
+  input.addEventListener(name, event => {
+    observations.inputEvents.push({type:name, trusted:event.isTrusted, inputType:event.inputType || '', composing:!!event.isComposing,
+      key:event.key, code:event.code, data:event.data, altKey:event.altKey, ctrlKey:event.ctrlKey, metaKey:event.metaKey, shiftKey:event.shiftKey});
+    observations.inputEvents = observations.inputEvents.slice(-80);
+    if (name === 'input') sessionStorage.setItem('bp-r4-input', input.value);
+  });
+}
+for (const target of document.querySelectorAll('#targets button')) target.addEventListener('click', event => {
+  observations.coordinates.push({target:target.id, trusted:event.isTrusted, clientX:event.clientX, clientY:event.clientY,
+    screenX:event.screenX, screenY:event.screenY, offsetX:event.offsetX, offsetY:event.offsetY});
+  observations.coordinates = observations.coordinates.slice(-30);
+  document.querySelector('#status').textContent = '已點擊：' + target.textContent;
+});
+async function database(value) {
+  const db = await new Promise((resolve,reject) => {
+    const request = indexedDB.open('bp-r4-client',1);
+    request.onupgradeneeded = () => request.result.createObjectStore('values');
+    request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+  });
+  try {
+    return await new Promise((resolve,reject) => {
+      const transaction = db.transaction('values',value === undefined ? 'readonly':'readwrite');
+      const store = transaction.objectStore('values');
+      const request = value === undefined ? store.get('nonce') : store.put(value,'nonce');
+      transaction.oncomplete = () => resolve(request.result);
+      transaction.onerror = () => reject(transaction.error);
+    });
+  } finally { db.close(); }
+}
+const ready = (async () => {
+  if (!localStorage.getItem('bp-r4-nonce')) {
+    const nonce = crypto.randomUUID();
+    await database(nonce); localStorage.setItem('bp-r4-nonce',nonce);
+    document.cookie = 'bp_r4_nonce=' + nonce + '; Path=/; Secure; SameSite=Strict; Max-Age=86400';
+  }
+  document.title = 'Browser Platform Client QA Ready';
+})();
+async function observe() {
+  await ready;
+  const cookie = document.cookie.split('; ').find(value => value.startsWith('bp_r4_nonce='))?.slice(12);
+  return {
+    schemaVersion:'browser-platform/client-observation/v1', checkedAt:new Date().toISOString(), step,
+    qaNonce:new URL(location.href).searchParams.get('nonce'),
+    environment:{language:navigator.language,languages:[...navigator.languages],timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,
+      screen:{width:screen.width,height:screen.height,availWidth:screen.availWidth,availHeight:screen.availHeight},dpr:devicePixelRatio,
+      inner:{width:innerWidth,height:innerHeight},outer:{width:outerWidth,height:outerHeight},position:{x:screenX,y:screenY},
+      userAgent:navigator.userAgent,platform:navigator.platform,webRTC:typeof RTCPeerConnection},
+    storage:{localStorage:localStorage.getItem('bp-r4-nonce'),indexedDB:await database(),cookie:cookie || null},
+    input:input.value, inputRect:input.getBoundingClientRect().toJSON(), scroll:{x:scrollX,y:scrollY}, ...observations,
+    targets:[...document.querySelectorAll('#targets button')].map(element => ({id:element.id,...element.getBoundingClientRect().toJSON()}))
+  };
+}
+async function copyReport() {
+  const active = document.activeElement;
+  const scroll = [scrollX,scrollY];
+  const selection = active === input ? [input.selectionStart,input.selectionEnd] : null;
+  observations.reportSequence++;
+  report.value = 'BP_CLIENT_REPORT:' + JSON.stringify(await observe());
+  report.focus(); report.select();
+  const copied = document.execCommand('copy');
+  document.title = 'Browser Platform Client QA ' + (copied ? 'Report ' + observations.reportSequence : 'Copy failed');
+  active?.focus(); if (selection) input.setSelectionRange(...selection); scrollTo(...scroll);
+}
+document.querySelector('#export').addEventListener('click',copyReport);
+window.addEventListener('keydown',event => {
+  if (event.key === 'F9') { event.preventDefault(); copyReport().catch(error => { report.value = error.name; }); }
+});
+</script>
+</html>

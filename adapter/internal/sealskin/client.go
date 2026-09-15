@@ -25,12 +25,16 @@ import (
 
 const maxResponseBytes = 2 << 20
 
+// LongOperationTimeout bounds one ordered resume request end to end.
+const LongOperationTimeout = 180 * time.Second
+
 type Config struct {
 	BaseURL              string
 	Username             string
 	ServerPublicKeyPEM   []byte
 	ClientPrivateKeyPEM  []byte
 	HTTPClient           *http.Client
+	Transport            http.RoundTripper
 	AllowUnencryptedHTTP bool
 	Now                  func() time.Time
 }
@@ -44,6 +48,7 @@ type Client struct {
 	serverPublic  *rsa.PublicKey
 	clientPrivate *rsa.PrivateKey
 	httpClient    *http.Client
+	longClient    *http.Client
 	now           func() time.Time
 
 	mu         sync.Mutex
@@ -59,7 +64,7 @@ type encryptedPayload struct {
 func NewClient(cfg Config) (*Client, error) {
 	base, err := url.Parse(cfg.BaseURL)
 	if err != nil || base.Scheme == "" || base.Host == "" {
-		return nil, fmt.Errorf("invalid SealSkin base URL %q", cfg.BaseURL)
+		return nil, errors.New("invalid SealSkin base URL")
 	}
 	if base.Scheme != "https" && !(cfg.AllowUnencryptedHTTP && base.Scheme == "http") {
 		return nil, errors.New("SealSkin base URL must use HTTPS (set allow_unencrypted_http only for an isolated PoC)")
@@ -87,16 +92,28 @@ func NewClient(cfg Config) (*Client, error) {
 		return nil, errors.New("SealSkin username is required")
 	}
 	httpClient := cfg.HTTPClient
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 45 * time.Second}
+	longClient := cfg.HTTPClient
+	if cfg.Transport != nil && cfg.HTTPClient != nil {
+		return nil, errors.New("configure either the API transport or an HTTP client")
 	}
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 45 * time.Second, Transport: cfg.Transport}
+		// Ordered resume waits for Relay, Guard, probe, Worker and display.
+		longClient = &http.Client{Timeout: LongOperationTimeout, Transport: cfg.Transport}
+	}
+	// A signed API call never follows an upstream-controlled redirect. Copy
+	// caller clients so the security policy does not mutate shared clients.
+	normalCopy, longCopy := *httpClient, *longClient
+	normalCopy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	longCopy.CheckRedirect = normalCopy.CheckRedirect
+	httpClient, longClient = &normalCopy, &longCopy
 	now := cfg.Now
 	if now == nil {
 		now = time.Now
 	}
 	return &Client{
 		baseURL: base, username: cfg.Username, serverPublic: serverPublic,
-		clientPrivate: clientPrivate, httpClient: httpClient, now: now,
+		clientPrivate: clientPrivate, httpClient: httpClient, longClient: longClient, now: now,
 	}, nil
 }
 
@@ -203,6 +220,10 @@ func (c *Client) PatchInstalledApp(ctx context.Context, appID string, patch map[
 }
 
 func (c *Client) secure(ctx context.Context, method, path string, body any, idempotencyKey string, out any) error {
+	return c.secureWith(ctx, c.httpClient, method, path, body, idempotencyKey, out)
+}
+
+func (c *Client) secureWith(ctx context.Context, httpClient *http.Client, method, path string, body any, idempotencyKey string, out any) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -212,7 +233,7 @@ func (c *Client) secure(ctx context.Context, method, path string, body any, idem
 				return err
 			}
 		}
-		err, sessionInvalid := c.secureAttemptLocked(ctx, method, path, body, idempotencyKey, out)
+		err, sessionInvalid := c.secureAttemptLocked(ctx, httpClient, method, path, body, idempotencyKey, out)
 		if !sessionInvalid || attempt == 1 {
 			return err
 		}
@@ -223,7 +244,7 @@ func (c *Client) secure(ctx context.Context, method, path string, body any, idem
 	return errors.New("unreachable SealSkin retry state")
 }
 
-func (c *Client) secureAttemptLocked(ctx context.Context, method, path string, body any, idempotencyKey string, out any) (error, bool) {
+func (c *Client) secureAttemptLocked(ctx context.Context, httpClient *http.Client, method, path string, body any, idempotencyKey string, out any) (error, bool) {
 	var requestBody io.Reader
 	if body != nil {
 		plain, err := json.Marshal(body)
@@ -262,7 +283,7 @@ func (c *Client) secureAttemptLocked(ctx context.Context, method, path string, b
 		req.Header.Set("X-Idempotency-Key", idempotencyKey)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		if method != http.MethodGet {
 			return &AmbiguousMutationError{Operation: method + " " + path, Cause: err}, false
@@ -538,7 +559,7 @@ func ResolveSessionURL(publicBase, sessionURL string, embedded bool) (string, er
 		return "", errors.New("SealSkin public session base URL must be an HTTPS origin without a path")
 	}
 	rel, err := url.Parse(sessionURL)
-	if err != nil {
+	if err != nil || rel.User != nil || rel.Opaque != "" || rel.Fragment != "" || rel.RawFragment != "" || rel.ForceQuery {
 		return "", errors.New("SealSkin returned an invalid session URL")
 	}
 	resolved := base.ResolveReference(rel)

@@ -44,13 +44,21 @@ out=[]
 for p in Path('/proc').glob('[0-9]*'):
  try:
   args=p.joinpath('cmdline').read_bytes().split(b'\\0')
-  if b'--remote-debugging-port' in args and b'9228' in args:
+  if ((b'--remote-debugging-port' in args and b'9228' in args) or
+      (args[0].endswith(b'/camoufox') and b'--profile' in args)):
    out.append([int(p.name),p.joinpath('stat').read_text().split()[21]])
  except (OSError,IndexError):pass
 assert len(out)==1
 print(json.dumps(out))
 """
         firefox = mod.docker("exec", worker, "python3", "-c", script).stdout
+    direct = any(value.get("policy", {}).get("mode") == "direct" for value in live)
+    direct_mounts = []
+    if direct or any(m.get("Destination") == "/run/browser-platform-host/ipv4-fib-trie" for m in old["Mounts"]):
+        source, destination = "/proc/1/net/fib_trie", "/run/browser-platform-host/ipv4-fib-trie"
+        assert any(m.get("Source") == source and m.get("Destination") == destination and m.get("RW") is False
+                   for m in old["Mounts"]), "DIRECT recovery requires the fixed read-only host evidence mount"
+        direct_mounts = ["--mount", "type=bind,src=" + source + ",dst=" + destination + ",readonly"]
     mod.docker("stop", "-t", "10", mod.SERVER)
     mod.docker("rm", mod.SERVER)
     mod.docker(
@@ -59,7 +67,7 @@ print(json.dumps(out))
         "-e", "PUID=1000", "-e", "PGID=1000", "-e", "TZ=Etc/UTC", "-e", "HOST_URL=network.invalid",
         "-v", str(qa / "config") + ":/config", "-v", str(qa / "storage") + ":/storage",
         "-v", "/tmp/browser-platform-network-qa-docker.sock:/var/run/docker.sock",
-        "-p", "127.0.0.1:28110:8000", release["image"],
+        "-p", "127.0.0.1:28110:8000", *direct_mounts, release["image"],
     )
     mod.wait(lambda: mod.request("POST", "/api/handshake/initiate")[0] == 200, "recreated QA controller")
     current = json.loads(mod.docker("inspect", mod.SERVER).stdout)[0]
@@ -82,7 +90,8 @@ print(json.dumps(out))
     mod.write_json(qa / "images.json", images)
     report = {"result": "PASS", "controller_recreated": True, "live_generations": len(live),
               "workers_and_network_containers_preserved": True, "firefox_process_preserved": bool(firefox),
-              "display_reconnected_at_original_address": True, "release": release["release"]}
+              "display_reconnected_at_original_address": True, "direct_host_evidence_preserved": bool(direct_mounts),
+              "release": release["release"]}
     mod.write_json(qa.parent / "controller-recreation-results.json", report)
     print(json.dumps(report))
 

@@ -5,6 +5,7 @@ import "fmt"
 // LaunchURLRequest mirrors SealSkin's /api/launch/url request.
 type LaunchURLRequest struct {
 	URL                 string  `json:"url"`
+	InitialURL          string  `json:"initial_url,omitempty"`
 	ApplicationID       string  `json:"application_id"`
 	HomeName            string  `json:"home_name"`
 	Language            *string `json:"language,omitempty"`
@@ -54,10 +55,14 @@ type HomeRuntime struct {
 	Workers                   []RuntimeWorker   `json:"workers"`
 	NetworkRuntimeVersion     int               `json:"network_runtime_version,omitempty"`
 	NetworkEnforcementVersion int               `json:"network_enforcement_version,omitempty"`
+	LaunchJournalVersion      int               `json:"launch_journal_version,omitempty"`
+	ProfileInitialURLVersion  int               `json:"profile_initial_url_version,omitempty"`
+	CoherenceRuntimeVersion   int               `json:"coherence_runtime_version,omitempty"`
 	Resources                 []RuntimeResource `json:"resources"`
 }
 
 type RuntimeRecord struct {
+	CoherenceRequired   bool           `json:"coherence_required,omitempty"`
 	SessionID           string         `json:"session_id"`
 	AppID               string         `json:"app_id"`
 	ProfileID           string         `json:"profile_id"`
@@ -166,10 +171,9 @@ type APIError struct {
 }
 
 func (e *APIError) Error() string {
-	if e.Detail == "" {
-		return fmt.Sprintf("SealSkin API returned HTTP %d", e.StatusCode)
-	}
-	return fmt.Sprintf("SealSkin API returned HTTP %d: %s", e.StatusCode, e.Detail)
+	// Detail is available for typed protocol classification, never ordinary
+	// error text: validation/library responses may include supplied secrets.
+	return fmt.Sprintf("SealSkin API returned HTTP %d", e.StatusCode)
 }
 
 // AmbiguousMutationError means the caller cannot prove whether a mutating
@@ -181,7 +185,96 @@ type AmbiguousMutationError struct {
 }
 
 func (e *AmbiguousMutationError) Error() string {
-	return fmt.Sprintf("SealSkin %s result is ambiguous: %v", e.Operation, e.Cause)
+	return "SealSkin request result is ambiguous"
 }
 
 func (e *AmbiguousMutationError) Unwrap() error { return e.Cause }
+
+// HomeHealth is a fresh, token-free runtime observation from the health API.
+// It never contains display credentials, environment values or command lines.
+type HomeHealth struct {
+	Coherence  *CoherenceReport `json:"coherence,omitempty"`
+	Version    int              `json:"version"`
+	HomeName   string           `json:"home_name"`
+	ObservedAt float64          `json:"observed_at"`
+	Runtime    HomeRuntime      `json:"runtime"`
+	Workers    []WorkerHealth   `json:"workers"`
+	Network    *NetworkHealth   `json:"network"`
+}
+
+type WorkerHealth struct {
+	InstanceID  string              `json:"instance_id"`
+	SessionID   string              `json:"session_id"`
+	Owned       bool                `json:"owned"`
+	Recorded    bool                `json:"recorded"`
+	Status      string              `json:"status"`
+	StartedAt   string              `json:"started_at"`
+	NetworkMode string              `json:"network_mode"`
+	Environment EnvironmentIdentity `json:"environment"`
+	Processes   ProcessSummary      `json:"processes"`
+	Display     ObservedCheck       `json:"display"`
+	// DisplayConnections counts Caddy-held authenticated connections to the
+	// Worker's display port; -1 means the observation was not possible.
+	DisplayConnections int `json:"display_connections"`
+}
+
+type EnvironmentIdentity struct {
+	ID             string `json:"id"`
+	ArtifactSHA256 string `json:"artifact_sha256"`
+}
+
+// ProcessSummary counts classified processes; Error replaces the counts when
+// the container's process table could not be read.
+type ProcessSummary struct {
+	Error         string   `json:"error,omitempty"`
+	Total         int      `json:"total"`
+	BrowserMain   int      `json:"browser_main"`
+	BrowserChild  int      `json:"browser_child"`
+	DisplayServer []string `json:"display_server"`
+	Streamer      int      `json:"streamer"`
+}
+
+// ObservedCheck is one bounded probe result with a stable code.
+type ObservedCheck struct {
+	Status     string  `json:"status"`
+	Code       string  `json:"code"`
+	LatencyMS  int     `json:"latency_ms,omitempty"`
+	Detail     string  `json:"detail,omitempty"`
+	MeasuredAt float64 `json:"measured_at,omitempty"`
+	HTTPStatus string  `json:"http_status,omitempty"`
+	Reply      int     `json:"reply,omitempty"`
+}
+
+type NetworkHealth struct {
+	Mode               string         `json:"mode,omitempty"`
+	ApprovedResolverID string         `json:"approved_resolver_id,omitempty"`
+	Phase              string         `json:"phase"`
+	PolicyID           string         `json:"policy_id"`
+	PolicySHA256       string         `json:"policy_sha256"`
+	EnforcementVersion int            `json:"enforcement_version"`
+	Code               string         `json:"code,omitempty"`
+	Relay              RelayHealth    `json:"relay"`
+	Guard              GuardHealth    `json:"guard"`
+	WorkerNamespace    *bool          `json:"worker_namespace"`
+	Upstream           *ObservedCheck `json:"upstream"`
+}
+
+type RelayHealth struct {
+	Container string `json:"container"`
+	Status    string `json:"status"`
+	Code      string `json:"code"`
+	LatencyMS int    `json:"latency_ms,omitempty"`
+}
+
+type GuardHealth struct {
+	Container string `json:"container"`
+}
+
+// ResumeResult reports an ordered resume of one dormant generation.
+type ResumeResult struct {
+	Resumed    bool     `json:"resumed"`
+	State      string   `json:"state"`
+	SessionID  string   `json:"session_id"`
+	InstanceID string   `json:"instance_id"`
+	Steps      []string `json:"steps"`
+}

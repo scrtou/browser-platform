@@ -2,6 +2,8 @@
   "listen_address": "127.0.0.1:19080",
   "upstream_host": "proxy.example.invalid",
   "upstream_port": 60011,
+  "upstream_protocol": "socks5",
+  "upstream_auth": "username_password",
   "username_file": "secrets/username",
   "password_file": "secrets/password",
   "client_cidrs": ["127.0.0.1/32"],

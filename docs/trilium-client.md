@@ -13,6 +13,8 @@
 
 `https://mysession.azhen.de/` 承载 SealSkin 会话与显示通道。入口会自动跳转并授权，不把带 token 的 Session URL 保存到永久笔记。现有两个入口仍使用原 Firefox Profile，更新后的 Personal 环境只在新建 Session 时生效；部署范围见 [开发进度](progress.md#deployment)。
 
+待 [入口登录候选](../infra/sealskin/entry-auth/README.md) 发布后，仍保存上述固定地址；首次进入或登录到期时先登录，再进入获授权的 Profile。入口首页可退出登录，退出会断开该登录的画面，浏览器数据保留。再次登录后打开固定入口可重新连接；打开第二个完整画面会接管前一个画面的控制。此流程已在 Linux Chromium 验证，生产尚未启用，Mac/Trilium 实机仍待 R4B 验收。
+
 ## 常用操作
 
 | 要做什么 | 操作说明 |
@@ -21,7 +23,7 @@
 | 远程文字复制到本机 | [选中文字后 ⌘C，等待成功提示](#远程文字原生复制到本机) |
 | 通过侧栏中转文字 | [Clipboard 面板](#macos-的手动文本传递) |
 | 上传本机已有图片/文件 | [Files → Upload Files](#图片上传与-files-栏) |
-| 浏览器误关后恢复 | [远程桌面右键 → FireFox](#关闭远程-firefox-后出现黑框) |
+| 浏览器误关后恢复 | [入口恢复提示 / 远程桌面右键 → FireFox](#关闭远程-firefox-后出现黑框) |
 | 了解文字大小与客户端权限 | [大文本](#文字长度与大文本)、[权限限制](#trilium-01050-的剪贴板限制) |
 
 ## 当前用户验收
@@ -43,6 +45,8 @@
 
 显示缩放比例、输入法名称与 screen/DPR 实测尚未提供。恢复会话的反馈不能替代主机重启、网络中断等故障验收。入口修复与回归见 [入口验收](../infra/sealskin/entry-acceptance-2026-09-13.md)。
 
+2026-09-14 新增 [客户端分项矩阵](client-matrix.md)：Camoufox 的 Linux 隔离验收已覆盖三组尺寸/DPR、坐标、Unicode、导航/标签页、文件上传与断线后重载，以及完整原生复制/截图回归。Mac 输入法、Finder 与 Trilium 实机分项仍待 R4B；当前固定入口仍是原 Firefox。
+
 ## 关闭远程 Firefox 后出现黑框
 
 2026-09-13，用户关闭 Work 的 Firefox 后刷新页面，看到黑框。检查确认 Firefox 主进程已退出，而原 Worker、labwc、Xwayland 和 Selkies 仍正常运行。固定入口复用存活的 Session；当前桌面 autostart 只在桌面启动时执行一次，重新加载 Trilium 页面不会重新启动已经退出的 Firefox。
@@ -57,6 +61,8 @@
 
 此方法适用于浏览器窗口已关闭、桌面连接仍正常的情况，无需重启 Worker。菜单配置核对后，用户按上述方法复测并确认“测试正常了”，自行重开路径已通过用户验收。日常离开时切换或关闭 Trilium 中的笔记即可保留远程浏览器窗口；Firefox 退出后的自动重开尚未实现。
 
+2026-09-13 起固定入口会先做只读健康预检：检测到浏览器已退出、显示通道不可用或代理链路故障时，入口不再直接跳转，而是显示恢复步骤，并保留「继续进入会话」按钮；点「重新检查」可强制重新采集。预检超时、控制面不可用或状态未知时仍按原方式自动进入会话，不会因此新建或重建浏览器。该提示页已在隔离 QA 与线上入口（无故障、自动进入）验证，**在 Trilium WebView 中的显示与操作待用户复测**；验收记录见 [健康验收](../infra/sealskin/health-acceptance-2026-09-13.md)。
+
 ## Trilium 0.105.0 的剪贴板限制
 
 官方 [WebView 实现](https://github.com/TriliumNext/Trilium/blob/v0.105.0/apps/client/src/widgets/type_widgets/WebView.tsx) 使用独立的 `persist:webview` Electron Session。[权限策略](https://github.com/TriliumNext/Trilium/blob/v0.105.0/apps/desktop/src/services/web_contents_security.ts#L126) 对 guest 仅允许 `fullscreen`；`clipboard-read` 和 `clipboard-sanitized-write` 均被拒绝，请求和权限查询都应用这一策略。增加服务端 HTTP 响应头不能授予被 Electron 主进程拒绝的权限。
@@ -64,6 +70,8 @@
 当前 Selkies 在窗口获焦时使用 `navigator.clipboard.read/readText` 读取本机剪贴板，在收到远程内容后使用 `write/writeText` 写入本机剪贴板，所以自动同步会受此限制。其 WebSocket 模式仍将远程文本显示在 Clipboard 面板中；面板文字框使用原生编辑操作，失去焦点时将内容发送至远程剪贴板。
 
 这一限制针对 Async Clipboard API。用户主动触发的原生 `paste` / `copy` 事件仍可传递数据；项目已在 Selkies 网页中补充这两条路径，没有修改 Trilium。
+
+远程→本机当前只支持纯文本。反向图片、HTML/RTF 与其他二进制没有可靠的已交付路径；本机→远程截图支持不代表反向也支持。Linux Electron 探针中，原生 Copy 可写 HTML，但 File 或 image MIME 字符串没有生成系统可读图片；当前远程桥接也未传递 HTML。Files 栏只提供上传，不能用于从远程下载。细节与限制见 [R4A 非文本结论](../infra/sealskin/client-migration-acceptance-2026-09-14.md#非文本能力决定)。
 
 ## 能否开启自动同步权限
 

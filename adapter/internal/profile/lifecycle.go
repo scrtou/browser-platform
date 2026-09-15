@@ -12,11 +12,17 @@ import (
 var (
 	ErrLifecycleDisabled = errors.New("verified lifecycle is not enabled")
 	ErrStopUnconfirmed   = errors.New("profile stop is pending; container removal has not been confirmed")
+	ErrResumeFailed      = errors.New("dormant generation could not be resumed; Worker remains stopped and the Home stays reserved")
+	ErrNotDormant        = errors.New("profile runtime is not a dormant generation")
 )
 
 type RuntimeController interface {
 	InspectHome(context.Context, string) (sealskin.HomeRuntime, error)
 	StopHome(context.Context, string, sealskin.StopProfileRequest, string) error
+	// ObserveHome is read-only; upstream requests a probe through the Relay.
+	ObserveHome(context.Context, string, bool) (sealskin.HomeHealth, error)
+	// ResumeHome restarts a dormant generation in order; it never creates.
+	ResumeHome(context.Context, string, sealskin.StopProfileRequest, string) (sealskin.ResumeResult, error)
 }
 
 type Option func(*Service)
@@ -38,6 +44,7 @@ type LifecycleResult struct {
 	Guards       int          `json:"guards"`
 	Networks     int          `json:"networks"`
 	NetworkPhase string       `json:"network_phase,omitempty"`
+	LaunchPhase  string       `json:"launch_phase,omitempty"`
 }
 
 func runtimeEmpty(snapshot sealskin.HomeRuntime) bool {
@@ -68,6 +75,8 @@ func lifecycleResult(id string, binding state.Binding, found bool, snapshot seal
 			result.Guards++
 		case "internal", "egress":
 			result.Networks++
+		case "launch":
+			result.LaunchPhase = resource.Status
 		}
 	}
 	return result
@@ -139,12 +148,17 @@ func validateOwnership(snapshot sealskin.HomeRuntime, definition Definition, bin
 	for _, resource := range snapshot.Resources {
 		if !resource.Owned || resource.ID == "" || resources[resource.Kind+":"+resource.ID] ||
 			resource.ProfileID != definition.ID || resource.OperationID != binding.OperationID ||
-			resource.AppID != definition.ApplicationID || resource.PolicyID == "" ||
+			resource.AppID != definition.ApplicationID ||
 			resource.PolicyID != binding.NetworkPolicyID || resource.PolicySHA256 != binding.NetworkPolicySHA256 {
 			return ErrOwnershipUnknown
 		}
 		switch resource.Kind {
 		case "reservation", "relay", "guard", "probe", "internal", "egress":
+			if resource.PolicyID == "" {
+				return ErrOwnershipUnknown
+			}
+		case "launch":
+			// A create-before journal may belong to a plain (policy-less) launch.
 		default:
 			return ErrOwnershipUnknown
 		}
@@ -165,6 +179,42 @@ func runtimeStopping(snapshot sealskin.HomeRuntime) bool {
 		}
 	}
 	return false
+}
+
+// dormantRuntime recognizes the state a daemon or host restart leaves behind:
+// one running-phase record, one owned stopped Worker and, for a managed
+// generation, its complete network allocation. Nothing else qualifies.
+func dormantRuntime(snapshot sealskin.HomeRuntime) (string, bool) {
+	if len(snapshot.Records) != 1 || len(snapshot.Workers) != 1 || runtimeStopping(snapshot) {
+		return "", false
+	}
+	record, worker := snapshot.Records[0], snapshot.Workers[0]
+	if record.Phase != "running" || record.IsCollaboration || !worker.Owned || !worker.Recorded ||
+		worker.SessionID != record.SessionID || !contains(record.InstanceIDs, worker.InstanceID) {
+		return "", false
+	}
+	if worker.Status != "exited" && worker.Status != "created" {
+		return "", false
+	}
+	kinds := map[string]int{}
+	for _, resource := range snapshot.Resources {
+		kinds[resource.Kind]++
+	}
+	if record.NetworkPolicyID == "" {
+		if len(snapshot.Resources) != 0 {
+			return "", false
+		}
+		return record.SessionID, true
+	}
+	for _, kind := range []string{"reservation", "internal", "egress", "relay", "guard"} {
+		if kinds[kind] != 1 {
+			return "", false
+		}
+	}
+	if kinds["probe"] != 0 {
+		return "", false
+	}
+	return record.SessionID, true
 }
 
 func liveRuntime(snapshot sealskin.HomeRuntime) (string, bool) {
@@ -229,16 +279,143 @@ func (s *Service) verifyBeforeEnsure(ctx context.Context, definition Definition,
 	if err := validateOwnership(snapshot, definition, binding); err != nil {
 		return err
 	}
-	if _, live := liveRuntime(snapshot); !live {
-		if err := s.mark(definition.ID, binding.OperationID, state.StatusUnknown, "runtime requires reconciliation"); err != nil {
+	if _, live := liveRuntime(snapshot); live {
+		return nil
+	}
+	if _, dormant := dormantRuntime(snapshot); dormant {
+		if _, err := s.resumeLocked(ctx, definition, binding); err != nil {
 			return err
 		}
-		return ErrOwnershipUnknown
+		return nil
 	}
-	return nil
+	if err := s.mark(definition.ID, binding.OperationID, state.StatusUnknown, "runtime requires reconciliation"); err != nil {
+		return err
+	}
+	return ErrOwnershipUnknown
 }
 
-func (s *Service) verifyManagedLaunch(ctx context.Context, definition Definition, binding state.Binding, sessionID string) error {
+// resumeLocked asks SealSkin to bring a dormant generation back in order and
+// re-verifies the live inventory before the binding is trusted again. The
+// caller holds the Profile lock. Failure leaves the journal as unknown with the
+// stable code; no launch or stop is issued.
+func (s *Service) resumeLocked(ctx context.Context, definition Definition, binding state.Binding) (sealskin.ResumeResult, error) {
+	if binding.ResumeIdempotencyKey == "" {
+		key, err := randomID()
+		if err != nil {
+			return sealskin.ResumeResult{}, err
+		}
+		if err := s.store.Update(definition.ID, func(current *state.Binding) (*state.Binding, error) {
+			if current == nil || current.OperationID != binding.OperationID {
+				return nil, ErrOwnershipUnknown
+			}
+			if current.ResumeIdempotencyKey == "" {
+				current.ResumeIdempotencyKey = key
+			}
+			current.LastError = "dormant generation resume in progress"
+			binding = *current
+			return current, nil
+		}); err != nil {
+			return sealskin.ResumeResult{}, err
+		}
+	}
+	request := sealskin.StopProfileRequest{ProfileID: definition.ID, OperationID: binding.OperationID,
+		ApplicationID: definition.ApplicationID, SessionID: binding.SessionID, BootstrapURL: binding.BootstrapURL,
+		NetworkPolicyID: binding.NetworkPolicyID, NetworkPolicySHA256: binding.NetworkPolicySHA256}
+	result, resumeErr := s.runtime.ResumeHome(ctx, definition.HomeName, request, binding.ResumeIdempotencyKey)
+	snapshot, inspectErr := s.inspectRuntime(ctx, definition.HomeName)
+	if resumeErr == nil && inspectErr == nil {
+		if err := validateOwnership(snapshot, definition, binding); err == nil {
+			if sessionID, live := liveRuntime(snapshot); live && sessionID == result.SessionID {
+				if err := s.bindRunning(definition.ID, binding.OperationID, sessionID); err != nil {
+					return result, err
+				}
+				if err := s.verifySessionAccess(ctx, definition, sessionID); err != nil {
+					return result, err
+				}
+				return result, nil
+			}
+		}
+		resumeErr = &sealskin.APIError{StatusCode: 409, Detail: "RESUME_INVENTORY_MISMATCH"}
+	}
+	detail := "dormant generation resume failed"
+	if resumeErr != nil {
+		detail += ": " + resumeCode(resumeErr)
+	} else if inspectErr != nil {
+		detail += ": inventory unavailable after resume"
+	}
+	if err := s.mark(definition.ID, binding.OperationID, state.StatusUnknown, detail); err != nil {
+		return result, err
+	}
+	return result, fmt.Errorf("%w: %v", ErrResumeFailed, errors.Join(resumeErr, inspectErr))
+}
+
+// resumeCode extracts the stable SealSkin code without any Docker detail.
+func resumeCode(err error) string {
+	var apiErr *sealskin.APIError
+	if errors.As(err, &apiErr) && apiErr.Detail != "" && len(apiErr.Detail) <= 64 {
+		return apiErr.Detail
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "RESUME_TIMEOUT"
+	}
+	return "RESUME_ERROR"
+}
+
+// Resume is the explicit operator entry: it resumes a dormant generation for
+// a running/unknown binding without launching anything.
+func (s *Service) Resume(ctx context.Context, id string) (LifecycleResult, error) {
+	definition, ok := s.profiles[id]
+	if !ok {
+		return LifecycleResult{}, ErrProfileNotFound
+	}
+	lock := s.profileLock(id)
+	lock.Lock()
+	defer lock.Unlock()
+	binding, found, err := s.store.Get(id)
+	if err != nil {
+		return LifecycleResult{}, err
+	}
+	if err := checkDefinition(definition, binding); err != nil {
+		return LifecycleResult{}, err
+	}
+	snapshot, err := s.inspectRuntime(ctx, definition.HomeName)
+	if err != nil {
+		return LifecycleResult{}, err
+	}
+	result := lifecycleResult(id, binding, found, snapshot)
+	if !found || binding.Status == state.StatusStopped || binding.Status == state.StatusFailed || binding.Status == state.StatusStopping {
+		return result, ErrNotDormant
+	}
+	if err := validateOwnership(snapshot, definition, binding); err != nil {
+		return result, err
+	}
+	if sessionID, live := liveRuntime(snapshot); live {
+		if err := s.bindRunning(id, binding.OperationID, sessionID); err != nil {
+			return result, err
+		}
+		if err := s.verifySessionAccess(ctx, definition, sessionID); err != nil {
+			return result, err
+		}
+		result.Status, result.SessionID = state.StatusRunning, sessionID
+		return result, nil
+	}
+	if _, dormant := dormantRuntime(snapshot); !dormant {
+		return result, ErrNotDormant
+	}
+	resumed, err := s.resumeLocked(ctx, definition, binding)
+	if err != nil {
+		result.Status = state.StatusUnknown
+		return result, err
+	}
+	remaining, inspectErr := s.inspectRuntime(ctx, definition.HomeName)
+	if inspectErr == nil {
+		result = lifecycleResult(id, binding, true, remaining)
+	}
+	result.Status, result.SessionID = state.StatusRunning, resumed.SessionID
+	return result, nil
+}
+
+func (s *Service) verifyManagedLaunch(ctx context.Context, definition Definition, binding state.Binding, sessionID string, initialURL bool) error {
 	if binding.NetworkPolicyID == "" {
 		return nil
 	}
@@ -248,6 +425,9 @@ func (s *Service) verifyManagedLaunch(ctx context.Context, definition Definition
 	}
 	if err := validateOwnership(snapshot, definition, binding); err != nil {
 		return err
+	}
+	if initialURL && snapshot.ProfileInitialURLVersion != 1 {
+		return errors.New("SealSkin initial URL capability changed during launch")
 	}
 	if actual, live := liveRuntime(snapshot); !live || actual != sessionID {
 		return ErrOwnershipUnknown
@@ -315,9 +495,10 @@ func (s *Service) stopLocked(ctx context.Context, id string) (LifecycleResult, e
 		return result, err
 	}
 	if runtimeEmpty(snapshot) {
-		if binding.SessionID == "" && (binding.Status == state.StatusLaunching || binding.Status == state.StatusUnknown) {
+		if binding.SessionID == "" && (binding.Status == state.StatusLaunching || binding.Status == state.StatusUnknown) && !snapshot.HasLaunchJournal() {
 			// An unacknowledged launch without any discoverable worker is not
-			// proof that a previously submitted create request never ran.
+			// proof that a previously submitted create request never ran,
+			// unless SealSkin journals every launch before Docker create.
 			return result, ErrOwnershipUnknown
 		}
 		if err := s.markStopped(id, binding.OperationID); err != nil {
@@ -434,7 +615,21 @@ func (s *Service) Reconcile(ctx context.Context, id string) (LifecycleResult, er
 		result.Status, result.SessionID = state.StatusRunning, sessionID
 		return result, nil
 	}
-	if runtimeEmpty(snapshot) && (binding.SessionID != "" || binding.Status == state.StatusStopped || binding.Status == state.StatusFailed) {
+	if _, dormant := dormantRuntime(snapshot); dormant && binding.Status != state.StatusStopped && binding.Status != state.StatusFailed {
+		resumed, err := s.resumeLocked(ctx, definition, binding)
+		if err != nil {
+			result.Status = state.StatusUnknown
+			return result, err
+		}
+		if remaining, inspectErr := s.inspectRuntime(ctx, definition.HomeName); inspectErr == nil {
+			result = lifecycleResult(id, binding, true, remaining)
+		}
+		result.Status, result.SessionID = state.StatusRunning, resumed.SessionID
+		return result, nil
+	}
+	if runtimeEmpty(snapshot) && (binding.SessionID != "" || binding.Status == state.StatusStopped || binding.Status == state.StatusFailed || snapshot.HasLaunchJournal()) {
+		// With a create-before journal, an empty inventory proves that no create
+		// was started for this Home; the ambiguous launch is settled as stopped.
 		if err := s.markStopped(id, binding.OperationID); err != nil {
 			return result, err
 		}

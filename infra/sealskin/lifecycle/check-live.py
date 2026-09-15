@@ -275,9 +275,24 @@ def main():
         sessions_file = root / "config/.config/sealskin/sessions.yml"
         sessions = yaml.safe_load(sessions_file.read_text())
         sid = binding()["session_id"]
-        assert list(sessions) == [sid] and sessions[sid]["instance_id"] == second
-        del sessions[sid]
-        write_json(sessions_file, sessions)  # JSON is a valid YAML subset.
+        if "session_state_version" in sessions:
+            # Inject record loss through the codec under the QA controller's
+            # own UID, preserving the authenticated format and its key.
+            source = """import sys
+from app import persistence, session_secrets
+from app.settings import settings
+path = settings.sessions_db_path
+sessions = session_secrets.decode(session_secrets.read(path), path)
+sid, worker = sys.argv[1:]
+assert list(sessions) == [sid] and sessions[sid]['instance_id'] == worker
+del sessions[sid]
+persistence.write_yaml_sync(path, session_secrets.encode(sessions, path))
+"""
+            docker("exec", "--user", "1000:1000", SERVER, "python3", "-c", source, sid, second)
+        else:
+            assert list(sessions) == [sid] and sessions[sid]["instance_id"] == second
+            del sessions[sid]
+            write_json(sessions_file, sessions)  # JSON is a valid YAML subset.
         docker("exec", SERVER, "s6-svc", "-u", "/run/service/svc-sealskin")
         wait_for(lambda: request("POST", "/api/handshake/initiate")[0] == 200, "QA SealSkin service restart")
         client = SecureClient(root)

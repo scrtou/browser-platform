@@ -1,0 +1,6 @@
+#!/usr/bin/with-contenv bash
+set -euo pipefail
+
+# This is an s6-rc oneshot DOWN action which depends on the desktop services.
+# A longrun finish hook is too late: its dependency teardown can already begin.
+exec s6-setuidgid abc python3 /usr/local/lib/browser-platform/browser-shutdown.py --timeout 12

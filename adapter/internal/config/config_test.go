@@ -3,6 +3,7 @@ package config
 import (
 	"testing"
 
+	"browser-platform/adapter/internal/access"
 	"browser-platform/adapter/internal/profile"
 )
 
@@ -15,6 +16,26 @@ func TestValidateRejectsRemoteListenWithoutOptIn(t *testing.T) {
 	cfg.AllowRemoteListen = true
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("explicit remote listen rejected: %v", err)
+	}
+}
+
+func TestAccessRequiresPrivateVerifiedControlAPI(t *testing.T) {
+	cfg := validConfig()
+	cfg.SealSkin.LifecycleEnabled = true
+	cfg.SealSkin.APIBaseURL = "https://127.0.0.1:8443"
+	cfg.Access = &access.Config{UsersFile: "/private/users.json", SessionCAFile: "/private/ca.pem",
+		SessionTLSName: "session.test", SessionUpstreamURL: cfg.SealSkin.APIBaseURL}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.SealSkin.APIBaseURL = cfg.SealSkin.PublicSessionBaseURL
+	if cfg.Validate() == nil {
+		t.Fatal("public control API bypass accepted")
+	}
+	cfg.SealSkin.APIBaseURL = cfg.Access.SessionUpstreamURL
+	cfg.SealSkin.AllowUnencryptedHTTP = true
+	if cfg.Validate() == nil {
+		t.Fatal("unencrypted control API accepted")
 	}
 }
 

@@ -1,0 +1,28 @@
+{
+  "zone": "qa.example.invalid",
+  "parent_authority_ipv4": "192.0.2.54",
+  "authorities": [
+    {"name": "ns1.qa.example.invalid", "ipv4": "192.0.2.53"}
+  ],
+  "ttl_seconds": 60,
+  "paths": {
+    "direct": {
+      "resolver_id": "qa-direct-recursive",
+      "resolver_ipv4": "192.0.2.55",
+      "before_ipv4": "192.0.2.80",
+      "after_ipv4": "192.0.2.81"
+    },
+    "bootstrap": {
+      "resolver_id": "qa-bootstrap-recursive",
+      "resolver_ipv4": "192.0.2.55",
+      "before_ipv4": "192.0.2.82",
+      "after_ipv4": "192.0.2.83"
+    },
+    "upstream": {
+      "resolver_id": "qa-upstream-recursive",
+      "resolver_ipv4": "192.0.2.56",
+      "before_ipv4": "192.0.2.84",
+      "after_ipv4": "192.0.2.85"
+    }
+  }
+}

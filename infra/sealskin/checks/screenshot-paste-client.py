@@ -21,8 +21,14 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--session-file', type=Path, required=True)
 parser.add_argument('--output-dir', type=Path, required=True)
 parser.add_argument('--emulate-mac-keyboard', action='store_true')
+parser.add_argument('--origin', default='https://mysession.azhen.de')
+parser.add_argument('--host-resolver-rules')
+parser.add_argument('--certificate-spki')
 args = parser.parse_args()
-session_url = urljoin('https://mysession.azhen.de', json.loads(args.session_file.read_text())['session_url'])
+session_url = urljoin(args.origin, json.loads(args.session_file.read_text())['session_url'])
+client_args = []
+if args.host_resolver_rules: client_args += ['--host-resolver-rules='+args.host_resolver_rules, '--no-proxy-server']
+if args.certificate_spki: client_args += ['--ignore-certificate-errors-spki-list='+args.certificate_spki]
 report = {'status': 'running', 'startedAt': datetime.now(timezone.utc).isoformat(),
           'clientOS': 'Linux; native CDP paste with Meta modifier; macOS Trilium requires user validation',
           'sourceScreenshotWrittenToLocalDisk': False}
@@ -36,13 +42,13 @@ def checkpoint(stage):
 
 try:
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
+        browser = playwright.chromium.launch(headless=True, args=client_args)
         report['clientBrowser'] = browser.version
         context = browser.new_context(viewport={'width': 1920, 'height': 1080})
         if args.emulate_mac_keyboard:
             context.add_init_script("Object.defineProperty(navigator,'platform',{get:()=> 'MacIntel'});")
             report['clientKeyboardMapping'] = 'MacIntel emulation on Linux; actual macOS remains unverified'
-        context.grant_permissions([], origin='https://mysession.azhen.de')
+        context.grant_permissions([], origin=args.origin)
         context.grant_permissions(['clipboard-read', 'clipboard-write'], origin='https://clipboard-seed.test')
         helper = context.new_page()
         helper.route('https://clipboard-seed.test/', lambda route: route.fulfill(

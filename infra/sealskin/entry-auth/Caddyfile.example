@@ -1,0 +1,30 @@
+{
+    admin off
+    log {
+        level ERROR
+        format filter {
+            wrap json
+            fields {
+                request delete
+                resp_headers delete
+                headers delete
+                error delete
+                err delete
+                err_trace delete
+                uri delete
+                url delete
+                upstream delete
+                msg replace CADDY_ERROR
+            }
+        }
+    }
+}
+
+# Replace both hosts and the loopback port with the reviewed deployment values.
+# Every public route, including Session HTTP/WebSocket, passes through access.
+mybrowser.example.com, mysession.example.com {
+    reverse_proxy 127.0.0.1:8080 {
+        header_up -Forwarded
+        header_up X-Forwarded-For {http.request.remote.host}
+    }
+}

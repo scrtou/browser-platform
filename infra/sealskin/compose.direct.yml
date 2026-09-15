@@ -1,0 +1,11 @@
+# Opt-in candidate overlay; see lifecycle/direct-network.md.
+services:
+  sealskin:
+    image: ${SEALSKIN_DIRECT_IMAGE:?Set a pinned DIRECT controller image}
+    volumes:
+      - type: bind
+        source: /proc/1/net/fib_trie
+        target: /run/browser-platform-host/ipv4-fib-trie
+        read_only: true
+        bind:
+          propagation: rprivate

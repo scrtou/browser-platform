@@ -1,0 +1,5 @@
+# R5C2 temporary DNS ingress proposal; not applied.
+# Recheck the current baseline and obtain maintenance authorization before use.
+# Roll back by deleting only the rule handles recorded for these two comments.
+insert rule ip filter VPS-BASELINE iifname "eth0" ip daddr 23.19.231.152 udp dport 53 counter accept comment "r5c2-public-dns-udp"
+insert rule ip filter VPS-BASELINE iifname "eth0" ip daddr 23.19.231.152 tcp dport 53 counter accept comment "r5c2-public-dns-tcp"

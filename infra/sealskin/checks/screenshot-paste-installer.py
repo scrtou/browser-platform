@@ -8,6 +8,7 @@ import tempfile
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--frontend', type=Path, required=True)
+parser.add_argument('--previous-addon', type=Path, help='optional immutable prior addon for upgrade/rollback verification')
 args = parser.parse_args()
 script = Path(__file__).resolve().parents[1] / 'enable-screenshot-paste.py'
 spec = importlib.util.spec_from_file_location('installer', script)
@@ -31,6 +32,17 @@ with tempfile.TemporaryDirectory() as directory:
     first = installer.install(root, state)
     installed_html = (root / 'index.html').read_bytes()
     assert (state / 'index.before.html').read_bytes() == original_html
+
+    if args.previous_addon:
+        previous_spec = importlib.util.spec_from_file_location('previous_installer',args.previous_addon/'enable-screenshot-paste.py')
+        previous = importlib.util.module_from_spec(previous_spec)
+        previous_spec.loader.exec_module(previous)
+        old = previous.install(root,state)
+        assert old['sha256'] != first['sha256']
+        assert installer.digest((root/'assets'/old['asset']).read_bytes()) == old['sha256']
+        restored = installer.install(root,state)
+        assert restored['sha256'] == first['sha256'] and (root/'index.html').read_bytes() == installed_html
+        assert (state/'index.before.html').read_bytes() == original_html
     assert (root / 'assets' / installer.SOURCE).read_bytes() == source
     assert installer.digest((root / 'assets' / first['asset']).read_bytes()) == first['sha256']
     second = installer.install(root, state)

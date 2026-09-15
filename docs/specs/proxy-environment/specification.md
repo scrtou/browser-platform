@@ -38,7 +38,7 @@
 | 对外支持目标 | 实现语义 |
 | --- | --- |
 | DIRECT | 按显式直连策略联网；仍禁止访问宿主机管理服务和默认 LAN |
-| HTTP | 连接普通 HTTP 上游，HTTPS 网站使用 CONNECT 隧道；支持的认证方式由转接器能力矩阵声明 |
+| HTTP | 连接普通 HTTP 上游；当前转接方案对所有 TCP 目标使用 CONNECT（含 HTTP 网页的 80 端口），上游必须允许对应目标端口；支持的认证方式由能力矩阵声明 |
 | HTTPS | 到上游代理本身使用 TLS，校验证书链和主机名；不等于“访问 HTTPS 网站” |
 | SOCKS5 | 由转接器执行 SOCKS5 握手、可选用户名/密码认证和远端域名解析 |
 
@@ -48,12 +48,14 @@ Chromium 不支持 SOCKS5 认证，也不会使用手工代理设置中内嵌的
 
 ```text
 Browser Worker
-  → 专属内部 HTTP CONNECT 转接器（固定内部地址，无上游密码）
+  → 专属内部 SOCKS5 CONNECT 转接器（固定内部地址，无上游密码）
   → HTTP / HTTPS / SOCKS5 上游
   → 网站
 ```
 
-转接器按 Profile 分配，只接受该 Worker 的连接，不对公网及其他 Profile 开放。它与 Worker 共享启停意图，但使用独立的凭证访问边界。转接器只允许通过配置的上游转发；上游失败返回错误，禁止自行向目标网站建立直连。
+转接器按 Profile 分配，只接受该 Worker 和本代次控制探测的连接，不对公网及其他 Profile 开放。它与 Worker 共享启停意图，但使用独立的凭证访问边界。`proxy_required` 只允许通过配置的上游转发；上游失败返回错误，禁止自行向目标网站建立直连。显式 DIRECT 不加载上游或凭据，由专属网关执行目标地址 ACL 后建立公开 IPv4 TCP 连接，Worker 的直接出站仍被阻断。
+
+当前实现映射见 [DEV-2026-09-14-006](../../deviations/DEV-2026-09-14-006-internal-proxy-protocol.md)：内部 SOCKS5 与 48.1 保持一致，不提供内部 HTTP 监听。R5A 的固定上游矩阵为 SOCKS5 `none/username_password`、HTTP/HTTPS `none/basic`；其他组合拒绝，配置凭据不得被静默忽略。HTTP 上游只支持 CONNECT，不支持仅接受 absolute-form 请求的上游。HTTPS 连接冻结 IP，但 TLS 验证原始上游主机名（最低 TLS 1.2），使用系统 CA 或固定摘要的受控 CA，不提供跳过验证。连接、TLS、认证及隧道协商必须受总握手时间限制（[DEV-2026-09-14-005](../../deviations/DEV-2026-09-14-005-relay-handshake-timeout.md)）。六组独立 QA 见 [R5A 验收](../../../infra/sealskin/proxy-protocols-acceptance-2026-09-14.md)，DIRECT 的 HTTP/HTTPS/WS/WSS、隔离与故障结果见 [R5C1 验收](../../../infra/sealskin/direct-network-acceptance-2026-09-14.md)；均未部署生产，完整 P/N/S 组仍保留其余条件。
 
 转接器软件选型是 PoC 交付物：固定版本，验证 HTTP/HTTPS/SOCKS5、认证、CONNECT、WebSocket、远端 DNS 和优雅停止。不得因为能代理一个网页就标记全部协议支持。
 
@@ -94,6 +96,8 @@ API 严格拒绝未知字段、错误枚举、重复 JSON 键和无效引用。�
 
 网络规则必须先于浏览器启动生效，不允许“先联网再补规则”。在适配层自己的网络中直接 curl 代理不能代替 Worker 路径的探测。初次创建环境时的安全探测见第 46.3 节。
 
+当前受管理入口在控制器明确提供 `profile_initial_url_version: 1` 时，将 Profile 配置的 HTTP(S) `initial_url` 与唯一 bootstrap 标记分别发送；控制器保留 `launch_context`，Worker 直接打开初始 URL。只允许命名 Home 和明确 Profile/operation，拒绝 userinfo、控制字符等无效 URL。旧控制器不接收该字段，未知结果继续保留占用。DIRECT 不为 bootstrap 放宽宿主机隔离，见 [DEV-011](../../deviations/DEV-2026-09-14-011-direct-bootstrap-url.md)。
+
 启动过程不跨网络调用持有 SQLite 写事务。一个 Profile 的所有请求共用持久化占用；外部创建超时或服务崩溃后，先按 operationID、Home 和运行归属核对实际实例。`unknown` 占用不可按 TTL 自动释放。目录锁由 Worker 持有至浏览器真正退出；TTL 和 API 请求去重都不能替代它。
 
 失败时保持网络阻断，先停止浏览器并确认退出，再清理转接器及网络资源。不能确认退出时保留占用；不能为了清理方便先解除出站限制。若 SealSkin 不能让网络策略先于启动生效，则该 PoC 门槛未通过。
@@ -111,6 +115,8 @@ API 严格拒绝未知字段、错误枚举、重复 JSON 键和无效引用。�
 | `GET /api/v1/profiles/{id}/health` | 返回缓存报告及新鲜度，不启动浏览器 |
 | `GET /api/v1/profiles/{id}/network-check` | 兼容原设计第 19 节的只读查询，不触发探测或启动 |
 | `POST /api/v1/profiles/{id}/network-check` | 对已运行实例执行受控探测；停用实例返回 409，不隐式启动 |
+
+当前实现的映射（2026-09-13，见 [DEV-2026-09-13-001](../../deviations/DEV-2026-09-13-001-health-endpoint-path.md)）：`GET /api/v1/profiles/{id}/health` 对应入口站点 `GET /browser/{id}/health`（脱敏，读缓存或触发一次只读采集）；`network-check` 的只读查询包含在同一报告的 `proxy` 分项中，受控探测对应本机 socket `POST /profiles/{id}/health`（CLI `-probe-profile`），不对公网开放。`start`/`status` 仍以固定入口与本机 `inspect` 实现。
 
 `/browser/{id}/` 返回固定入口页；入口页发出受保护的启动请求，再获取访问授权并跳转。Session token 不写入永久笔记、数据库快照或 URL 日志。调用方断开不会取消已提交的启动操作。
 
@@ -198,6 +204,8 @@ Camoufox 的 GeoIP 功能可以从 IP 生成位置与语言相关配置，因此
 
 Camoufox 与目标 Trilium 客户端的已验证范围分别见 [验收索引](../../acceptance/README.md) 和 [客户端记录](../../trilium-client.md)。
 
+客户端尺寸、DPR、输入坐标和原生输入法按平台逐项记录，见 [客户端矩阵](../../client-matrix.md)。文字通道必须保留 Unicode 补充平面字符，composition 更新不得删除已有前缀。系统 locale（如 `zh_TW.UTF-8`）与浏览器语言标签（`zh-TW`）分开配置。远程→本机当前交付纯文本；反向图片/富文本/二进制及文件下载未实现，不能从截图粘贴或 MIME 标签存在推断通过。
+
 ### 46.6 升级、迁移与恢复
 
 Profile 引擎创建后固定；Chromium Home 不能直接交给 Camoufox 使用。跨引擎迁移创建新 Home，通过受控迁移流程处理可导出的数据。
@@ -205,6 +213,8 @@ Profile 引擎创建后固定；Chromium Home 不能直接交给 Camoufox 使用
 升级前停止 Profile，备份 Home、环境产物及所需密钥，固定旧/新镜像摘要。新引擎需要新的已验证产物；实际支持的 UA/引擎版本随升级变化，不能为了维持旧哈希而伪装成旧版本。
 
 回退恢复升级前的 Home 和产物快照，不仅回退镜像；浏览器可能已经更新存储格式。基于实际站点可验证的恢复属于验收，不能承诺第三方网站永远保留登录。
+
+当前 Camoufox 跨引擎切换准备器创建独立候选 App/Home/策略引用，读取并保留运行 journal；只在已验证 stop 后应用新定义，下一次启动由 Adapter 正常写入新绑定。回退使用对应旧 Home 与旧定义，不能覆盖新 journal 强行解锁。R4A 的准备文件和 QA 重建不代替 R4B 的实际入口切换、备份与登录验证。
 
 ### 46.7 环境验收
 
@@ -244,6 +254,8 @@ E 组证据见 [Camoufox 验收记录](../../../infra/camoufox/acceptance-2026-0
 
 `coherence.mode` 为 `advisory` 或 `strict`。严格模式至少配置一项可判定的允许地区/时区约束。`onExitChange=recheck` 表示发现出口变化后重新验证；`block` 表示变化后暂停网站出站，等待重新启动前校验。二者都不自动修改环境或更换代理。
 
+页面 locale 以原始语言标签与冻结配置比较。控制端使用固定 Unicode CLDR 数据做语言/文字/地区规范化，保留显式变体；不以页面自行提供的 normalized 字段判定通过。等价的 `en`/`en-US` 可以匹配，真实地区/文字差异仍 FAIL，不支持或缺失的值为 UNKNOWN（[DEV-026](../../deviations/DEV-2026-09-14-026-intl-locale-canonicalization.md)）。
+
 GeoIP UNKNOWN 在 advisory 模式显示告警；在依赖地区的 strict 启动门槛中禁止发放可用 Session。可见的“健康”只表示符合声明的测试条件，不表示绕过网站检测或保证匿名性。
 
 ### 47.3 出口稳定性与轮换代理
@@ -252,9 +264,11 @@ GeoIP UNKNOWN 在 advisory 模式显示告警；在依赖地区的 strict 启动
 
 `lastPublicIp` 不放在共享代理配置里作为全局真值。每份观测绑定 Profile、operationID、代理修订和网络策略修订。复用必须与当前运行实例及配置快照一致且未过期。
 
+每代次独立保存上一实际出口的比较历史；中间 UNKNOWN 或同代次按序恢复不能把下一个不同出口视为首次观测。历史保留源、时间和归属，只用于变化比较，不能满足新鲜度或放行门槛；新代次从空历史开始。候选 4 实测缺口与修复记录见 [DEV-028](../../deviations/DEV-2026-09-14-028-exit-history-after-unknown.md)。
+
 启动前探测与随后浏览器请求可能获得不同出口，尤其是轮换代理。因此启动后须从实际浏览器复核；不满足严格策略则不对用户发布可用会话。无法提供稳定性约束的上游不承诺会话期间 IP 不变。
 
-运行中默认每 60 秒检查，检测到变化重新判定；这不是实时地区保证。若业务要求每次连接都满足地区限制，需要上游提供固定/受约束出口，或增加逐连接控制，不能用轮询健康结果替代。
+运行中一致性任务默认每 30 秒开始续查，报告从观测开始最多有效 60 秒；检测到变化重新判定，慢采样到期仍阻断。提前续查用于预留观测时间，见 [DEV-024](../../deviations/DEV-2026-09-14-024-coherence-renewal-scheduling.md)。这不是实时地区保证。若业务要求每次连接都满足地区限制，需要上游提供固定/受约束出口，或增加逐连接控制，不能用轮询健康结果替代。
 
 ### 47.4 一致性验收
 
@@ -288,7 +302,7 @@ Trilium ──HTTPS──→ Caddy ──→ SealSkin ──显示端口──�
 
 Worker 位于按 Profile 隔离的网络，默认没有可用的外网直连路径。Relay 连接内部和受控出站网络，仅执行应用代理转发，不启用通用 IP 转发。Caddy 通过明确的网络接入或受限路由到达显示端口。不能为了让 Caddy 可达而把 Worker 加入不受限制的管理网络。
 
-当前受管理 generation 各自创建 Docker `internal` bridge、egress bridge、Relay 和 Guard。Guard 只接内网，先在私有命名空间安装 nftables ACL 再降权；Worker／探测容器使用 `network_mode: container:<guard-id>`，主动出站只可到自己的 Relay TCP 1080。Relay 同时连接两张网络，出站只允许分配时由控制器解析并冻结的上游 IPv4／端口。控制器以固定内网 IPv4 访问显示端口，Worker 不能主动连接它的管理端口。Docker DNS 在 loopback 放行前单独拒绝；应用 overrides 不能放宽网络与 capabilities。
+当前受管理 generation 各自创建 Docker `internal` bridge、egress bridge、Relay 和 Guard。Guard 只接内网，先在私有命名空间安装 nftables ACL 再降权；Worker／探测容器使用 `network_mode: container:<guard-id>`，主动出站只可到自己的 Relay TCP 1080。Relay 同时连接两张网络，`proxy_required` 出站只允许分配时由控制器解析并冻结的上游 IPv4／端口，DIRECT 的网关约束见下文。控制器以固定内网 IPv4 访问显示端口，Worker 不能主动连接它的管理端口。Docker DNS 在 loopback 放行前单独拒绝；应用 overrides 不能放宽网络与 capabilities。
 
 存量会话与独立 Camoufox 的网络不同于此架构，不能用新代次验收推定其已迁移。已部署配置与生效时机统一记录在 [开发进度](../../progress.md#deployment)。
 
@@ -309,13 +323,15 @@ Worker 位于按 Profile 隔离的网络，默认没有可用的外网直连路�
 
 DIRECT 策略允许公开 Internet 出站，但仍阻止本机管理接口、云元数据、其他 Profile 和默认 LAN。LAN 例外必须通过运维端批准具体 CIDR、用途及协议，不能由网页或普通 Profile 编辑 API 放开；首版示例没有 LAN 例外。
 
+R5C1 候选映射：`mode=direct` 禁止非空上游、认证、凭据文件和 Secret Store 引用；Worker 仍只连接本代次网关。网关拒绝私网/保留地址、metadata、宿主机公网地址、IPv6 和 SOCKS 目标 53/853，完整域名回答或 CNAME 含受保护地址时整组拒绝。只读宿主机 `/proc/1/net/fib_trie` 同时供控制器和对应网关验证，Worker/Guard 不挂载；至少一个主机原生公网 IPv4，NAT-only 本版拒绝。证据丢失/变化关闭网关与已有隧道，恢复前重新核对配置摘要、挂载和冻结地址。DIRECT 规则只允许专属内网 SOCKS5 连接的回复方向先于私网拒绝，不允许通过源端口 1080 主动访问私网。配置、镜像能力和限制见 [DIRECT 契约](../../../infra/sealskin/lifecycle/direct-network.md)。
+
 这里保证本机与本平台网络的隔离。上游代理能否访问其所在的内网，必须由该代理的目标地址 ACL 限制；仅靠本机防火墙无法检查已经封装在代理隧道中的远端私网访问。
 
 ### 48.2 Docker 与主机重启行为
 
 基础环境验收记录 Docker 版本、内核版本、防火墙后端和规则部署方式。原生 nftables 后端与 iptables 后端不同，前者没有 `DOCKER-USER` 链；不要直接修改 Docker 拥有的表。[Docker nftables 文档](https://docs.docker.com/engine/network/firewall-nftables/)
 
-执行组件至少提供逻辑操作 `Prepare(profile, generation, policy)`、`Inspect`、`Block`、`RemoveAfterExit`，返回有效策略摘要及就绪证据。当前本地补丁已通过网络分配、Home 资源清查和确认 Worker 消失后的回收实现 Prepare／Inspect／RemoveAfterExit 语义；它们是项目内部扩展，不是官方 SealSkin 接口。独立 Block 操作、实时健康和完整整机重启恢复仍需实现或验收。Relay／Guard 为 `restart=no`。控制容器重建已通过原地址接回和真实 Firefox 原进程检查；独立 Docker 29.8.0 的 live-restore／停止后按序恢复也已通过，但使用合成 Worker、VFS 和无外部网络的容器，不能替代正式主机重启。
+执行组件至少提供逻辑操作 `Prepare(profile, generation, policy)`、`Inspect`、`Block`、`RemoveAfterExit`，返回有效策略摘要及就绪证据。当前本地补丁已通过网络分配、Home 资源清查和确认 Worker 消失后的回收实现 Prepare／Inspect／RemoveAfterExit 语义；它们是项目内部扩展，不是官方 SealSkin 接口。独立 Block 操作、实时健康和完整整机重启恢复仍需实现或验收。Relay／Guard／Profile Worker 为 `restart=no` 且不使用 Docker 自动删除（`0.3.2-resume-v1` 起；此前 Worker 为 AutoRemove，重启后会被删除，见 [DEV-2026-09-13-002](../../deviations/DEV-2026-09-13-002-worker-auto-remove.md)）。开机后由 Adapter 对账识别休眠代次并按序恢复：Relay → Guard 规则就绪 → 控制器接回 → 一次性探测 → Worker → 显示端点；任一步失败 Worker 不启动。控制容器重建已通过原地址接回和真实 Firefox 原进程检查；独立 Docker 29.8.0 的 live-restore／停止后按序恢复使用合成 Worker、VFS 和无外部网络的容器，真实 Firefox 代次的全容器停止后恢复见 [开机恢复验收](../../../infra/sealskin/boot-recovery-acceptance-2026-09-13.md)；两者都不能替代正式主机重启。
 
 控制容器接回前检查旧控制器已退出、所有资源归属及 Guard 配置摘要、Worker 命名空间和网络端点。冲突时保留占用并拒绝接回，不修改 Guard 或 Worker。Guard 停止后，先经 Profile stop 清理原代次再启动，不把单独重启 Guard 当作对仍存活 Worker 的恢复。
 
@@ -331,9 +347,13 @@ Worker 不得对外直连 UDP/TCP 53、853，也不得通过绕过代理的 DoH 
 
 特别验证 Docker 内置解析器：只修改 `/etc/resolv.conf` 或阻止容器外 UDP 53，不能据此认定阻止了 `127.0.0.11` 的转发。实现必须禁用/限制其外部递归或在正确网络命名空间阻断绕过；使用随机测试域名与受控权威 DNS 日志验证。
 
-连接上游所需的引导解析单独记录：当前由控制器在分配时解析主机名，将地址集合和选中的 IPv4 固定在 generation 占用及 Relay 配置中；Relay 自身无 DNS 权限。现用代次不热更新端点，下一代次重新解析。未来引导解析器选择与地址轮换仍须限定批准的解析器并验收，禁止临时放开全部 Internet。未来 HTTPS 上游连接仍按原始主机名校验证书。
+连接上游所需的引导解析单独记录：控制器在分配时解析主机名，将地址集合和选中的 IPv4 固定在 generation 占用及 Relay 配置中；`proxy_required` Relay 自身无 DNS 权限。现用代次不热更新端点，下一代次重新解析。HTTPS 上游连接按原始主机名校验证书，禁止临时放开全部 Internet。
+
+R5C2 候选使用成对的 `bootstrap_resolver_id` / `bootstrap_resolver_ip` 固定批准数值 IPv4:53，不读系统 resolver/hosts，也不回退。A/CNAME、完整 IPv4 回答、UDP 截断后的同端点 TCP 共用 5 秒预算，最多八次 CNAME；代理端点可以位于私网，保持既有端点 ACL。数值上游绕过 DNS。新的回答、各记录接收时间与 TTL 绑定 Home、operation 和策略 SHA，allocation 保存观测及配置摘要；恢复/重接核对原端点、配置及只读挂载。TTL 到期不释放占用或触发新解析。空字段保持旧 SHA 和 `legacy_system` 路径，无 DNS 证据的旧代次不伪造 TTL，均不能算批准解析器验收。具体模型与构建依赖见 [引导 DNS](../../../infra/sealskin/lifecycle/bootstrap-dns.md)。公开委派、实际递归来源、缓存到期及三个实际路径轮换是独立验收条件；R5C2 已在标准 Unbound 与受控公网端点通过，生产尚未采用。公共前端可能有多个缓存期限，不能把一次回答推广为整个服务保证。
 
 DIRECT 使用 `approved_resolver`，列出 `approvedResolverIds` 并验证实际解析路径。代理 DNS 与引导 DNS 不应混合报告成一个无证据的 “DNS OK”。
+
+R5C1 的本地策略用单个 `approved_resolver_id` / `approved_resolver_ip` 固定运维批准的数值 IPv4，端口为 53；仅该端点可用 UDP DNS 和截断后的 TCP 回退。网关自行校验事务、问题、类型、CNAME 和完整地址集合，不使用系统 resolver 或 `/etc/hosts`，没有应用级 DNS 缓存。查询失败阻止新域名连接；数值目标与已建立隧道继续受地址 ACL 管理。网页 DoH 可以作为经网关的 HTTPS 数据请求，不能绕过 Worker 的直接出站限制。私有 DNS、重绑定、SERVFAIL/超时、UDP/TCP 和包方向已有 R5C1 证据；公开委派、批准解析器实际递归路径和真实 TTL 轮换已在 R5C2 的限定 QA 环境通过，具体覆盖以报告为准。
 
 ### 48.4 WebRTC 与 IPv6
 
@@ -363,6 +383,8 @@ DIRECT 使用 `approved_resolver`，列出 `approvedResolverIds` 并验证实际
 故障测试使用受控 HTTP/HTTPS/WebSocket、DNS 和 STUN 端点。只访问一次公网查 IP 网站不能替代这些验收。测试抓包仅在测试网络执行，不收集真实账号会话内容。
 
 N 组已有证据与剩余范围见 [v2 网络隔离验收](../../../infra/sealskin/network-isolation-acceptance-2026-09-13.md) 和 [开机与恢复进度](../../progress.md#startup)。独立 daemon、私有 DNS、合成 UDP443 和关闭 WebRTC 的结果不能替代完整矩阵。
+
+[R5C1](../../../infra/sealskin/direct-network-acceptance-2026-09-14.md) 补充 DIRECT 的 N02/N03/N07、N04 的私有解析路径，以及 N06 的控制器重接/同代次恢复、N08 的清理中断与重绑定部分。该历史 R5C1 结果没有声明启用 WebRTC/HTTP3、公开 DNS 或正式主机重启已通过。后续 [R5C2](../../../infra/sealskin/approved-dns-ttl-acceptance-2026-09-14.md) 单独补齐公开三路径/真实 TTL、冻结/故障恢复和新代次轮换；生产整机重启和启用 ICE/TURN 等未测范围继续保留。
 
 ---
 
@@ -397,9 +419,17 @@ N 组已有证据与剩余范围见 [v2 网络隔离验收](../../../infra/seals
 4. 可选项 FAIL/WARN/UNKNOWN 返回 `degraded`。
 5. 所有必需项通过，其余为 PASS/NOT_APPLICABLE，才返回 `healthy`。
 
-代理预检默认有效 60 秒。定期健康检查默认 60 秒一次，允许小幅抖动分散请求。入口查询读取缓存；人工 POST 探测每 Profile 最短间隔 10 秒，同一 Profile 同时最多一个探测任务。严格启动条件不能使用上一 Session 或过期的健康结果。
+代理预检默认有效 60 秒。传统健康检查默认 60 秒一次，允许小幅抖动分散请求；R5C3 的访问门槛独立每 30 秒续查，证据上限仍为 60 秒，全局最多两个后台一致性任务。入口查询读取缓存；人工 POST 探测每 Profile 最短间隔 10 秒，同一 Profile 同时最多一个探测任务。严格启动条件不能使用上一 Session 或过期的健康结果。
+
+R5C3 候选已修复 Adapter 所有缓存返回路径对当前 journal 完整运行绑定的复核，见 [DEV-020](../../deviations/DEV-2026-09-14-020-health-cache-generation.md)；绑定变化返回 UNKNOWN，严格放行另由控制器的当前代次门槛执行。
 
 停止、失联和代理故障分别显示。代理离线不自动导致浏览器重建；发现或无法确认网络约束时按第 48 节先阻断网站出站。探测端点故障返回 UNKNOWN，而不是直接判定代理一定失效。
+
+当前实现（2026-09-13）：Adapter 报告的 `checks` 为 `entry`、`control`、`session`、`worker`、`browser`、`display`、`proxy`、`freshness`，每项含 `status`、`required`、`code`、`message`；`proxy` 在旧代次为 `warn PROXY_LEGACY_GENERATION`（非必需），未配置策略为 `not_applicable`；受管理代次的上游探测经 Relay 请求策略 `probe_url`，探测端点或上游异常返回 `unknown PROXY_UPSTREAM_UNKNOWN`／`PROXY_PROBE_TIMEOUT`，Relay 拒绝或不可达返回 `fail`。报告 60 秒有效，过期后 `freshness` 必需项为 `unknown`。地区、时区、DNS、WebRTC 与能力清单观测尚未实现。验收见 [健康验收](../../../infra/sealskin/health-acceptance-2026-09-13.md)。
+
+R5C1 候选增加 `network_mode=direct`：`proxy` 为非必需的 `not_applicable / DIRECT_NO_UPSTREAM`，必需的 `egress` 独立报告 `DIRECT_OK`、`DIRECT_GATEWAY_UNAVAILABLE`、`DIRECT_PROBE_NOT_RUN` 等状态。握手成功且未运行 HTTPS 探测仍为 unknown；配置/能力/地址证据不足也不能标为健康。报告绑定当前代次和修订，重复查询不改变绑定或容器。该项不替代 R5C3 的地区、浏览器环境、DNS/WebRTC 一致性报告。
+
+R5C3 候选（2026-09-14）实现受控隐藏页面、真实 socket 出口、固定 GeoIP 国家推断、环境/能力和网络拒绝证据；控制器拥有报告、完整运行绑定和代次门槛。候选 6 的实际正常报告为 DEGRADED（城市 UNKNOWN），通过范围及 H01 合成规则与 H02 实测的区别见 [R5C3 验收](../../../infra/sealskin/runtime-coherence-acceptance-2026-09-14.md)。它未部署生产，不扩大上一段 2026-09-13 生产报告的能力。
 
 ### 49.3 报告与 Dashboard
 
@@ -427,9 +457,9 @@ UI 中绿色状态只代表被声明且有新鲜证据的检查通过。未运�
 | H06 | `idlePolicy.mode=disconnected` | 最后一个已认证显示连接断开后计时；重新连接取消回收 |
 | H07 | `idlePolicy.mode=input_idle` | 只有被验证的真实输入事件刷新计时；不支持活动事件的后端拒绝此模式 |
 
-规划中的 MVP 默认 `disconnected` 且 900 秒；原设计的 Idle Manager 和 M6 验收据此具体化。自动空闲回收尚未实现。若选择 `input_idle`，必须补上真实输入事件采集后再开启，不能假定连接存活就等于用户在使用。超时从最后一个显示连接断开起算，期间重新连接取消回收；测试 60 秒超时不额外叠加隐藏宽限。
+规划中的 MVP 默认 `disconnected` 且 900 秒；原设计的 Idle Manager 和 M6 验收据此具体化。当前实现（2026-09-13）：Adapter 的 `idle_policy`（每 Profile 可选，默认关闭）以 SealSkin 代理持有的已认证显示连接数计时，重连取消，到期前强制重新观测，再经已验证的 `stop` 释放；`input_idle` 被拒绝。验收见 [生命周期保护验收](../../../infra/sealskin/lifecycle-protection-acceptance-2026-09-13.md)。若选择 `input_idle`，必须补上真实输入事件采集后再开启，不能假定连接存活就等于用户在使用。超时从最后一个显示连接断开起算，期间重新连接取消回收；测试 60 秒超时不额外叠加隐藏宽限。
 
-资源门槛独立于 idle：全局 `max_active_sessions`、并发启动上限、最低可用磁盘，以及 Profile 的 CPU/内存/PID/共享内存限制，在实例创建前检查。示例资源数值仅是初始约束，不是容量性能结论。
+资源门槛独立于 idle：全局 `max_active_sessions`、并发启动上限、最低可用磁盘，以及 Profile 的 CPU/内存/PID/共享内存限制，在实例创建前检查。示例资源数值仅是初始约束，不是容量性能结论。当前实现：Adapter `limits`（活动 Profile 数、并发启动、最低可用磁盘）在写入任何占用前拒绝；容器级 CPU/内存/PID 限制由应用定义的 `docker_overrides` 设置，生产 Firefox 应用尚未设置，实测基线见验收记录。
 
 ---
 
@@ -443,6 +473,8 @@ UI 中绿色状态只代表被声明且有新鲜证据的检查通过。未运�
 
 首版只要求实现一种受控生产存储方式，例如挂载的 Docker secret 文件或解密后进入 tmpfs 的文件；不要求同时实现 Vault、SOPS 和所有接口。开发 `.env` 仅用于本地调试，不作为生产默认，也不进入仓库或普通备份。
 
+当前映射（R5B，2026-09-14）：FileSecretStore 使用 AES-256-GCM、独立主密钥、不可覆盖版本及认证授权 metadata，配置字段为 `username_secret_ref` / `password_secret_ref`，精确授权绑定 SealSkin owner/Profile/Home/App。路径/链接/权限/密钥/密文异常均拒绝；旧文件策略保持旧 SHA，但不据此获得新存储保证。实现和隔离验收见 [Secret Store](../../../infra/sealskin/lifecycle/secret-store.md)、[R5B 报告](../../../infra/sealskin/secret-store-acceptance-2026-09-14.md)，生产未切换。
+
 ### 50.2 凭证流转与权限
 
 ```text
@@ -455,21 +487,33 @@ Profile 中的 proxy 修订
 
 优先通过运行时 tmpfs 文件把凭证交给 Relay，文件权限限制为实际 Relay UID 可读，目录仅执行组件可管理。运行组件可以使用 0400/0600 文件和 0700 目录，具体 UID/GID 随镜像确定并在部署验收中检查。
 
-不将上游密码放入浏览器启动参数、Docker 环境变量、镜像层、生成的 autostart 脚本、环境产物或持久化 Home。Relay 不需要获得所有 Profile 的密钥；Worker 只挂载自己的 Home 和所需环境配置。
+不将上游密码放入浏览器启动参数、Docker 环境变量、镜像层、生成的 autostart 脚本、环境产物或持久化 Home。Relay 不需要获得所有 Profile 的密钥；Worker 只挂载自己的 Home、所需环境配置和自身显示认证材料，不能获得上游凭据。
+
+R5D 的显示材料与上游凭据分别授权。控制器的原始显示密码仅驻留内存和密封 Session；Worker 只读挂载其 Session 专属 tmpfs，输入含绑定、带盐密码校验值和可选协作 token。Worker 的 nginx/Selkies 在进程内读取材料，TLS 私钥留在私有 tmpfs，不能把秘密重新导出为环境或 argv。缺失、错误绑定、权限异常、链接或可写输入挂载拒绝启动。正常停止须确认所有 Docker 引用已消失才清理材料，状态未知时保留并重试。细节见 [显示认证层](../../../infra/browser-access/README.md)；该要求没有取消显示认证。
 
 Secret Store 解决保存与分发；HTTP/SOCKS5 上游是否加密是另一件事。普通 HTTP/SOCKS5 连接不提供到代理的 TLS 保证，必须明确传输信任边界；需要加密时选择经验证的 HTTPS 上游或明确的安全隧道，不能用“存储已加密”代替传输保护。
 
 采用 SealSkin 适配服务代签时，给它分配满足启动需求的最小权限身份，避免常驻管理员私钥。Trilium 入口使用自己的短期认证会话，不能把 SealSkin 用户私钥、代理密码或一次性 Session token 写入 Note Attribute。
 
+R5D 候选采用本地账号、明确 Profile 列表和短期 host-only Cookie。入口、健康和 Session HTTP/WebSocket 都必须校验当前主体及绑定；两公开 origin 均经访问网关，控制 API 只使用受验证的私有 HTTPS 上游。登录/启动/注销的 CSRF、一次性交接、注销/到期/禁用/绑定变化的显示失效分别验收；撤销显示不停止 Worker 或删除 Home。兑换后的 URL 不含后端能力，私有能力头仍执行一致性门槛并在 Worker 前剔除；重复交接本身不撤销原显示连接，完整 Selkies 客户端保留单 primary 接管行为。账号表变化使现有登录失效，重启要求重新登录。参数、限流和兼容范围见 [访问契约](../../../infra/sealskin/entry-auth/README.md)，生产未切换。
+
 ### 50.3 停止、轮换与恢复
 
 停止顺序：限制新的访问/网站出站，优雅关闭浏览器，确认 Home 锁释放，停止 Relay，删除临时凭证挂载与临时资源。删除运行时文件不能宣称已经安全擦除进程内存或底层存储；平台应减少凭证副本及驻留时间。
+
+正常关闭不能用 TERM、容器退出码 0 或一次 API 成功代替。R5A 的 [DEV-008](../../deviations/DEV-2026-09-14-008-resume-storage-observation.md) 保留了立即写入 localStorage 后停止丢失的失败证据；新 Worker 以 X11 关闭请求等待浏览器退出。关闭被页面对话框阻止、命令失败或超时时，显式 stop 必须保留容器/占用并允许处理后重试；恢复验收继续比较真实 Cookie/localStorage/IndexedDB。强制终止及整机断电不提供正常关闭保证，正式主机停止窗口仍需 R2 验证。
 
 运行中紧急撤销凭证时先阻断受影响 Profile 出站并停止 Relay，不允许回退到无认证代理或 DIRECT。随后完成浏览器停止和修订切换。常规轮换使用“新版本验证 → 停止 Profile → 切换引用 → 重新启动”的流程。
 
 备份包含 Profile Home、入口元数据库、环境产物、SealSkin 必需状态及加密密钥备份。所有含浏览器数据或密钥的备份必须加密，恢复演练验证密钥确实可用；浏览器依赖的凭证解密材料也属于持久化范围。
 
 备份浏览器 Home 前停止该 Profile；SQLite 使用一致性备份接口，不在运行中仅复制主 `.db` 文件。SQLite 官方提供在线备份接口。[SQLite Backup API](https://www.sqlite.org/backup.html)
+
+R5B 当前实现：Relay 只读挂载专属主机 tmpfs 代次目录，每 100 ms 校验代次租约，失效关闭监听和已有隧道；控制器先持久化撤销并确认出站阻断，再执行正常关闭和清理，失败保留占用，启动及每两秒重新授权。恢复重新授权并重建材料，主密钥丢失不降级。100 ms 是检查间隔，不是主机故障下的实时保证。
+
+加密备份固定使用 age v1.2.1，创建直接加密，恢复先在 tmpfs 完成认证及全部成员校验，只写不存在的新目录。恢复 Store 先锁定，源/目标无容器挂载后合并当前撤销，持久化启用记录再解除锁；不覆盖现有 journal、不自动启动 Worker。实际 QA 已验证服务/Adapter 身份、固定产物、凭据及 Cookie/localStorage/IndexedDB；真实 Home/整机演练仍归 R2。旧 SSL 备份路径差异见 [DEV-009](../../deviations/DEV-2026-09-14-009-backup-key-paths.md)。
+
+旧部署没有 Store、入口登录和密封 Session 时，R2A 使用明确的 `encrypted-legacy-backup/v1` 格式，先只读记录实际运行镜像/绑定，再对同一 operation 的已停止 Home 加密；原 `create` 不自动降级。配置、绑定、实际镜像事实与未冻结环境的范围须保留，不能用当前应用定义代替旧 Worker，也不能补造环境验收。旧恢复只写新私有目录，不提供自动启用；其提示标记不由旧控制器强制执行。工具往返及生产只读快照见 [R2A](../../../infra/sealskin/legacy-backup-acceptance-2026-09-15.md)，不替代 S05 的真实 Home/浏览器新环境恢复，S05 条件保持。
 
 ### 50.4 日志与审计
 
@@ -479,17 +523,23 @@ Secret Store 解决保存与分发；HTTP/SOCKS5 上游是否加密是另一件�
 
 健康观测默认保留 7 天，健康报告 7 天，审计 90 天；运维可以调整，但不能因清理报告删除仍被 Profile 引用的配置修订或环境产物。健康和网络接口只向已授权用户暴露，避免把出口及基础设施信息公开。
 
+R5D 的 Session 快照以 AES-256-GCM 密封，专用私有密钥随加密备份恢复；缺库、缺失/错误密钥、损坏或迁移失败拒绝加载，保留停止意图。迁移后拒绝明文降级；不提供整目录替换的外部回滚计数保证。普通 Go/Python 输出不渲染不受信任消息/对象/异常参数，HTTP 校验不回显输入；两层 Caddy 删除请求、头、URI 和错误文本。生产生效、日志保留时长和完整验收均需分别记录，不能以单点静态检查替代 S01/S06。
+
 ### 50.5 凭证与规格验收
 
 | 编号 | 场景 | 通过条件 |
 | --- | --- | --- |
 | S01 | 遍历 JSON 配置、数据库、Note、Home、产物和普通日志 | 无上游密码/私钥/Session token 明文；配置只有 secretRef |
-| S02 | 检查 Worker/Relay 容器配置和进程参数 | 无密码环境变量或 argv；只有 Relay 获得其专属临时凭证文件 |
+| S02 | 检查 Worker/Relay 容器配置和进程参数 | 无密码环境变量或 argv；上游凭据只交给专属 Relay；Worker 自身显示材料按 Session 单独只读隔离，仍须验证正确/错误认证及恢复 |
 | S03 | 删除/禁用密钥、错误引用或路径逃逸 | 明确失败，无默认凭证、无跨 Profile 读取、无网络降级 |
 | S04 | 轮换及紧急撤销 | 绑定修订可追踪；旧版本不被静默修改；失败保持阻断 |
 | S05 | 恢复加密备份到新环境 | Profile 数据、已固定产物、凭证引用和必需解密材料可恢复 |
 | S06 | HTTP/API/代理认证异常 | 各层日志及错误响应均脱敏，重试不重复启动实例 |
 
+R5D 的 [候选 3 验收](../../../infra/sealskin/entry-authentication-acceptance-2026-09-15.md) 补充 S01/S02/S06 的双 QA Home、密封状态、真实显示认证和恢复后 407 个扫描面；S05 的 Session/账号恢复由加密备份控制测试补充。真实 Note、生产 Home、实际协作房间和生产发布未测，不能标为 S 组整体完成。此前上游凭据授权/撤销及新环境恢复仍按 R5B 的固定版本引用。
+
 文档静态检查应验证 JSON 可解析、Go 类型能编译（有工具链时）、SQL 可建库、外键和关键约束有效、配置引用一致。静态检查不能替代 P/N/E/C/H/S 各组运行测试；当前实现状态记录在 [开发进度](../../progress.md)，原始证据由 [验收索引](../../acceptance/README.md) 导航。
 
 ---
+
+R5E 的 [固定 r7 组合验收](../../../infra/sealskin/release-combination-acceptance-2026-09-15.md) 补充 C01–C05 适用变体、实际 Store 撤销与 S05 单 QA Home 新环境恢复。加密归档须包含全部策略引用的 `coherence-assets/`，创建与解密时校验直接路径、摘要、私有权限、成员和大小；恢复不得关闭一致性来绕过缺失资产。备份后撤销、当前禁用账号及三类浏览器存储在新根保持；原场景与生产/目标客户端未测边界不变。

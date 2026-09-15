@@ -17,9 +17,16 @@ import signal
 import stat
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 TABLE = "bp_guard"
+DIRECT_DENIED = json.loads((Path(__file__).parent / "internal/proxy/direct-denied-ipv4.json").read_text())
+
+
+def direct_public_ipv4(value):
+    address = ipaddress.IPv4Address(value)
+    return not any(address in ipaddress.IPv4Network(cidr) for cidr in DIRECT_DENIED)
 
 
 def ipv4(value):
@@ -40,6 +47,7 @@ def validate(value):
     fields = {
         "worker": {"relay_ip", "controller_ip", "display_port"},
         "relay": {"upstream_ip", "upstream_port"},
+        "direct": {"approved_resolver_ip", "host_ipv4"},
     }
     if value.get("version") != 1 or value.get("role") not in fields:
         raise ValueError("Unsupported policy")
@@ -57,9 +65,18 @@ def validate(value):
         if value["relay_ip"] == value["controller_ip"]:
             raise ValueError("Controller and Relay addresses collide")
         number(value["display_port"])
-    else:
+    elif value["role"] == "relay":
         ipv4(value["upstream_ip"])
         number(value["upstream_port"])
+    else:
+        resolver = ipaddress.IPv4Address(ipv4(value["approved_resolver_ip"]))
+        if resolver.is_link_local or resolver.is_reserved:
+            raise ValueError("Invalid approved resolver")
+        addresses = value["host_ipv4"]
+        if (not isinstance(addresses, list) or not 1 <= len(addresses) <= 64 or
+                any(not isinstance(item, str) or not direct_public_ipv4(item) for item in addresses) or
+                sorted(set(addresses)) != addresses):
+            raise ValueError("Invalid host address evidence")
     return value
 
 
@@ -67,12 +84,30 @@ def rules(value):
     value = validate(value)
     incoming = ""
     outgoing = ""
+    restrictions = ""
     if value["role"] == "worker":
         incoming = f"ip saddr {value['controller_ip']} tcp dport {value['display_port']} counter accept"
         outgoing = f"ip daddr {value['relay_ip']} tcp dport 1080 counter accept"
-    else:
+    elif value["role"] == "relay":
         incoming = f"ip saddr {value['internal_cidr']} tcp dport 1080 counter accept"
         outgoing = f"ip daddr {value['upstream_ip']} tcp dport {value['upstream_port']} counter accept"
+    else:
+        incoming = f"ip saddr {value['internal_cidr']} tcp dport 1080 counter accept"
+        denied = ", ".join(DIRECT_DENIED)
+        hosts = ", ".join(value["host_ipv4"])
+        # The sole private-network exception is DNS to the approved numeric
+        # resolver. Targets requested via SOCKS can never use DNS/DoT ports.
+        # Replies to the accepted internal SOCKS5 listener are not new LAN
+        # connections. Admit only their conntrack reply direction before the
+        # protected-destination filter; a new connection, even from port 1080,
+        # must still be rejected.
+        restrictions = f"""ip daddr {value['internal_cidr']} tcp sport 1080 ct direction reply ct state established counter accept
+  ip daddr {value['approved_resolver_ip']} udp dport 53 counter accept
+  ip daddr {value['approved_resolver_ip']} tcp dport 53 counter accept
+  ip daddr {{ {denied} }} counter drop
+  ip daddr {{ {hosts} }} counter drop
+  tcp dport {{ 53, 853 }} counter drop"""
+        outgoing = "meta nfproto ipv4 meta l4proto tcp counter accept"
     # The entire replacement is one nftables transaction. No permissive window.
     return f"""add table inet {TABLE}
 flush table inet {TABLE}
@@ -90,6 +125,7 @@ table inet {TABLE} {{
   ct state invalid counter drop
   ip daddr 127.0.0.11 counter drop
   oifname "lo" counter accept
+  {restrictions}
   ct state established,related counter accept
   {outgoing}
   counter drop
@@ -141,11 +177,40 @@ def hold(revision):
         signal.pause()
 
 
+def inspect_rules(value):
+    """Read the effective table, excluding volatile handles and counters from its hash."""
+    namespace_is_private(value["role"])
+    result = subprocess.run(["nft", "-j", "list", "table", "inet", TABLE],
+                            text=True, capture_output=True, check=True, timeout=3)
+    if len(result.stdout) > 256 * 1024:
+        raise ValueError("Rules observation too large")
+    table = json.loads(result.stdout)
+    drops = 0
+    for entry in table.get("nftables", []):
+        rule = entry.get("rule", {})
+        if rule.get("chain") == "output" and any("drop" in expr for expr in rule.get("expr", [])):
+            drops += sum(expr["counter"].get("packets", 0) for expr in rule["expr"] if "counter" in expr)
+
+    def stable(item):
+        if isinstance(item, dict):
+            return {key: stable(value) for key, value in item.items()
+                    if key not in {"handle", "packets", "bytes", "metainfo"}}
+        if isinstance(item, list):
+            return [stable(value) for value in item if not isinstance(value, dict) or "metainfo" not in value]
+        return item
+
+    encode = lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")).encode()
+    return {"version": 1, "role": value["role"], "config_sha256": hashlib.sha256(encode(value)).hexdigest(),
+            "rules_sha256": hashlib.sha256(encode(stable(table))).hexdigest(), "output_dropped_packets": drops}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--network-config", type=Path)
     parser.add_argument("--relay-config", type=Path)
     parser.add_argument("--hold")
+    parser.add_argument("--inspect", action="store_true")
+    parser.add_argument("--inspect-output")
     args = parser.parse_args()
     if args.hold:
         hold(args.hold)
@@ -153,7 +218,26 @@ def main():
     if not args.network_config:
         raise ValueError("A network policy is required")
     value = load(args.network_config)
-    if bool(args.relay_config) != (value["role"] == "relay"):
+    if args.inspect:
+        observed = inspect_rules(value)
+        if args.inspect_output:
+            nonce = args.inspect_output
+            if len(nonce) != 32 or any(char not in "0123456789abcdef" for char in nonce):
+                raise ValueError("Invalid observation nonce")
+            observed["nonce"] = nonce
+            # Inspect with NET_ADMIN, then write as the controller's configured
+            # UID. Docker's archive API cannot see this daemon's /dev/shm view.
+            os.setgid(value["gid"])
+            os.setuid(value["uid"])
+            fd, temporary = tempfile.mkstemp(prefix=".bp-coherence-", dir="/run/browser-platform-observation")
+            with os.fdopen(fd, "w") as handle:
+                os.fchmod(handle.fileno(), 0o600)
+                json.dump(observed, handle)
+            os.replace(temporary, "/run/browser-platform-observation/result.json")
+        else:
+            print(json.dumps(observed, sort_keys=True), flush=True)
+        return
+    if bool(args.relay_config) != (value["role"] in {"relay", "direct"}):
         raise ValueError("Role and process do not match")
     namespace_is_private(value["role"])
     policy = rules(value)

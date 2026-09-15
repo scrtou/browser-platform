@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"net/url"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"browser-platform/adapter/internal/sealskin"
 	"browser-platform/adapter/internal/state"
@@ -31,6 +33,36 @@ type Definition struct {
 	WaylandMode         bool    `json:"wayland_mode"`
 	NetworkPolicyID     string  `json:"network_policy_id,omitempty"`
 	NetworkPolicySHA256 string  `json:"network_policy_sha256,omitempty"`
+	// IdlePolicy enables automatic reclaim; nil or mode "off" disables it.
+	IdlePolicy *IdlePolicy `json:"idle_policy,omitempty"`
+}
+
+// IdlePolicy follows the health specification's idlePolicy: only the
+// "disconnected" mode is supported (time since the last authenticated display
+// connection closed). "input_idle" is rejected because no verified input
+// activity source exists yet.
+type IdlePolicy struct {
+	Mode           string `json:"mode"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+}
+
+func (p *IdlePolicy) Enabled() bool { return p != nil && p.Mode == "disconnected" }
+
+func (p *IdlePolicy) Timeout() time.Duration {
+	if p == nil || p.TimeoutSeconds <= 0 {
+		return 900 * time.Second
+	}
+	return time.Duration(p.TimeoutSeconds) * time.Second
+}
+
+// Limits are checked before any new launch; none of them ever releases an
+// existing reservation.
+type Limits struct {
+	MaxActiveProfiles   int    `json:"max_active_profiles,omitempty"`
+	MaxConcurrentLaunch int    `json:"max_concurrent_launches,omitempty"`
+	MinFreeDiskMiB      int    `json:"min_free_disk_mib,omitempty"`
+	StoragePath         string `json:"storage_path,omitempty"`
+	freeDiskMiB         func(string) (int64, error)
 }
 
 type Orchestrator interface {
@@ -46,6 +78,11 @@ type Service struct {
 	publicBase   *url.URL
 	profiles     map[string]Definition
 	runtime      RuntimeController
+	now          func() time.Time
+	health       healthCache
+	limits       Limits
+	launching    int32
+	stopHook     func(string) // test hook, called after an idle stop attempt
 
 	locksMu sync.Mutex
 	locks   map[string]*sync.Mutex
@@ -85,7 +122,8 @@ func NewService(orchestrator Orchestrator, store *state.Store, publicBaseURL str
 	}
 	service := &Service{
 		orchestrator: orchestrator, store: store, publicBase: publicBase,
-		profiles: profiles, locks: make(map[string]*sync.Mutex),
+		profiles: profiles, locks: make(map[string]*sync.Mutex), now: time.Now,
+		health: healthCache{reports: make(map[string]HealthReport), inflight: make(map[string]*healthFlight), started: make(map[string]time.Time)},
 	}
 	for _, option := range options {
 		option(service)
@@ -94,13 +132,26 @@ func NewService(orchestrator Orchestrator, store *state.Store, publicBaseURL str
 		if definition.NetworkPolicyID != "" && service.runtime == nil {
 			return nil, errors.New("network policies require verified lifecycle")
 		}
+		if definition.IdlePolicy.Enabled() && service.runtime == nil {
+			return nil, errors.New("idle reclaim requires verified lifecycle")
+		}
 	}
 	return service, nil
 }
 
+// WithLimits installs capacity thresholds checked before every new launch.
+func WithLimits(limits Limits) Option {
+	return func(s *Service) {
+		if limits.freeDiskMiB == nil {
+			limits.freeDiskMiB = freeDiskMiB
+		}
+		s.limits = limits
+	}
+}
+
 // Ensure returns a live session for a Profile. It never launches while an
 // earlier operation has an unproven outcome.
-func (s *Service) Ensure(ctx context.Context, profileID string) (sealskin.Session, error) {
+func (s *Service) Ensure(ctx context.Context, profileID string) (result sealskin.Session, resultErr error) {
 	definition, ok := s.profiles[profileID]
 	if !ok {
 		return sealskin.Session{}, ErrProfileNotFound
@@ -108,6 +159,13 @@ func (s *Service) Ensure(ctx context.Context, profileID string) (sealskin.Sessio
 	lock := s.profileLock(profileID)
 	lock.Lock()
 	defer lock.Unlock()
+	defer func() {
+		if resultErr == nil && result.SessionID != "" {
+			if err := s.verifySessionAccess(ctx, definition, result.SessionID); err != nil {
+				result, resultErr = sealskin.Session{}, err
+			}
+		}
+	}()
 
 	if err := s.ensureHome(ctx, definition.HomeName); err != nil {
 		return sealskin.Session{}, fmt.Errorf("ensure SealSkin Home %q: %w", definition.HomeName, err)
@@ -146,12 +204,27 @@ func (s *Service) Ensure(ctx context.Context, profileID string) (sealskin.Sessio
 		}
 	}
 
+	initialURL := ""
+	if s.runtime != nil && definition.NetworkPolicyID != "" {
+		snapshot, err := s.inspectRuntime(ctx, definition.HomeName)
+		if err != nil {
+			return sealskin.Session{}, err
+		}
+		if snapshot.ProfileInitialURLVersion == 1 {
+			initialURL = definition.StartURL
+		}
+	}
+	if err := s.checkCapacity(profileID); err != nil {
+		return sealskin.Session{}, err
+	}
+	atomic.AddInt32(&s.launching, 1)
+	defer atomic.AddInt32(&s.launching, -1)
 	binding, err = s.prepareLaunch(profileID)
 	if err != nil {
 		return sealskin.Session{}, err
 	}
 	request := sealskin.LaunchURLRequest{
-		URL: binding.BootstrapURL, ApplicationID: definition.ApplicationID,
+		URL: binding.BootstrapURL, InitialURL: initialURL, ApplicationID: definition.ApplicationID,
 		HomeName: definition.HomeName, Language: definition.Language,
 		Timezone: definition.Timezone, WaylandMode: definition.WaylandMode,
 		NetworkPolicyID: binding.NetworkPolicyID, NetworkPolicySHA256: binding.NetworkPolicySHA256,
@@ -164,7 +237,7 @@ func (s *Service) Ensure(ctx context.Context, profileID string) (sealskin.Sessio
 		if launched.SessionID == "" || launched.SessionURL == "" {
 			launchErr = errors.New("SealSkin returned an incomplete launch response")
 		} else {
-			if err := s.verifyManagedLaunch(ctx, definition, binding, launched.SessionID); err != nil {
+			if err := s.verifyManagedLaunch(ctx, definition, binding, launched.SessionID, initialURL != ""); err != nil {
 				_ = s.mark(profileID, binding.OperationID, state.StatusUnknown, "network-managed launch requires reconciliation")
 				return sealskin.Session{}, err
 			}
@@ -185,7 +258,7 @@ func (s *Service) Ensure(ctx context.Context, profileID string) (sealskin.Sessio
 	if listErr == nil {
 		matches := findByMarker(reconciled, binding.BootstrapURL, definition.ApplicationID)
 		if len(matches) == 1 {
-			if err := s.verifyManagedLaunch(ctx, definition, binding, matches[0].SessionID); err != nil {
+			if err := s.verifyManagedLaunch(ctx, definition, binding, matches[0].SessionID, initialURL != ""); err != nil {
 				_ = s.mark(profileID, binding.OperationID, state.StatusUnknown, "network-managed launch requires reconciliation")
 				return sealskin.Session{}, err
 			}
@@ -350,6 +423,9 @@ func (s *Service) bindRunning(profileID, operationID, sessionID string) error {
 		current.Status = state.StatusRunning
 		current.SessionID = sessionID
 		current.LastError = ""
+		// A running binding ends any resume episode; the next dormant episode
+		// must use a fresh idempotency key or SealSkin would replay this result.
+		current.ResumeIdempotencyKey = ""
 		return current, nil
 	})
 }
@@ -414,6 +490,18 @@ func randomID() (string, error) {
 func validateDefinition(definition Definition) error {
 	if definition.ID == "" || definition.ApplicationID == "" || definition.HomeName == "" || definition.StartURL == "" {
 		return errors.New("id, application_id, home_name and start_url are required")
+	}
+	if policy := definition.IdlePolicy; policy != nil {
+		switch policy.Mode {
+		case "off", "disconnected":
+		case "input_idle":
+			return errors.New("idle_policy.mode input_idle is not supported: no verified input activity source exists")
+		default:
+			return errors.New("idle_policy.mode must be off or disconnected")
+		}
+		if policy.Mode == "disconnected" && (policy.TimeoutSeconds < 60 || policy.TimeoutSeconds > 86400) {
+			return errors.New("idle_policy.timeout_seconds must be between 60 and 86400")
+		}
 	}
 	if !sealskin.ValidNetworkPolicyReference(definition.NetworkPolicyID, definition.NetworkPolicySHA256) {
 		return errors.New("network_policy_id and network_policy_sha256 must identify one complete immutable revision")

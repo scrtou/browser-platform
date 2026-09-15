@@ -96,7 +96,9 @@ class Acceptance:
         return result
 
     def unit(self):
-        result = self.container("unit", ["-m", "unittest", "discover", "-s", "/tests", "-p", "test_*.py", "-v"], network="none")
+        # Artifact validation runs in the pinned image. Deployment preparation
+        # tests need repository tools and are run separately on the host.
+        result = self.container("unit", ["-m", "unittest", "discover", "-s", "/tests", "-p", "test_environment.py", "-v"], network="none")
         if result.returncode:
             raise RuntimeError("artifact tests failed: " + (result.stdout + result.stderr)[-6000:])
         self.report["results"]["artifactTests"] = "pass"
