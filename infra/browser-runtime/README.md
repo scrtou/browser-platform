@@ -4,7 +4,9 @@
 
 固定 LinuxServer 桌面的原 `svc-de/finish` 向浏览器及其子进程发送 TERM；这不等于 Firefox/Camoufox 正常退出，刚写入的 localStorage 可丢失。失败与对照证据见 [DEV-008](../../docs/deviations/DEV-2026-09-14-008-resume-storage-observation.md)。本目录为已固定的 Worker 增加独立退出层，不修改浏览器二进制或环境配置。
 
-`browser-shutdown.py` 以桌面用户运行，只向可核对进程身份、启动时间及 PID 属性的 X11 顶层窗口发送 `WM_DELETE_WINDOW`。它等待浏览器退出及 Camoufox Home 锁释放，不发送终止信号，不确认关闭对话框。等待启动中的 Camoufox 校验器，避免在浏览器启动前错误地报告已关闭。
+`browser-shutdown.py` 以桌面用户运行，在 X11 下向可核对进程身份、启动时间及 PID 属性的顶层窗口发送 `WM_DELETE_WINDOW`。它等待浏览器退出及 Camoufox Home 锁释放，不发送终止信号，不确认关闭对话框。等待启动中的 Camoufox 校验器，避免在浏览器启动前错误地报告已关闭。
+
+`PIXELFLUX_WAYLAND=true` 时使用 `wayland_shutdown.py`：核对唯一 Firefox 主进程、`/config/.XDG/wayland-N` socket 的类型/属主及其 labwc peer 身份，再通过 `zwlr_foreign_toplevel_manager_v1` version 3 请求关闭已完成属性更新的 `firefox` 根窗口。每个窗口只请求一次，排除 parent 对话框和其他应用；协议不提供逐窗口 PID，因此仅适用于此固定单浏览器 Worker。未知协议、身份变化和无法确认的窗口状态均拒绝，详见 [DEV-042](../../docs/deviations/DEV-2026-09-15-042-work-wayland-shutdown.md)。
 
 新镜像标签为 `io.browser-platform.browser-shutdown=1`。支持该能力的 SealSkin 在显式 stop 时先执行固定的无输出、非交互退出命令，检查 Docker exec 的容器归属与最终退出码；超时、拒绝关闭、exec 故障均保留 Worker、Home 占用及停止意图，返回可重试失败。确认后才停止并删除容器，再按既有顺序回收 Guard/Relay。
 
@@ -38,4 +40,6 @@ python3 infra/camoufox/acceptance.py \
 
 `rebind-worker.py` 要求新镜像的基础标签和完整基础层与旧产物绑定的精确镜像一致，并在新镜像中校验候选；它只产生候选，不能生成成功验收报告。不同的基础浏览器升级必须使用对应升级流程，不能借此跳过版本校验。
 
-当前实现用于固定 X11 Firefox 家族；Camoufox r6 的完整产物、容器恢复、显式停止失败保留和即时存储恢复已通过，见 [R5A 验收](../sealskin/proxy-protocols-acceptance-2026-09-14.md)。r5 为已保留失败记录的中间候选，不能用于容器正常退出承诺。旧 Worker 不含此能力，不能沿用新版本的正常退出结论。Wayland、其他浏览器和跨版本升级不在此退出层的现有验收范围。
+固定 X11 Firefox 家族的 Camoufox r6 完整产物、容器恢复、显式停止失败保留和即时存储恢复已通过，见 [R5A 验收](../sealskin/proxy-protocols-acceptance-2026-09-14.md)。r5 为已保留失败记录的中间候选，不能用于容器正常退出承诺。旧 Worker 不含此能力，不能沿用新版本的正常退出结论。
+
+R4B 的 Work Wayland 候选已通过 10 项协议/身份单元检查、独立真实 Firefox 探测和完整控制器组合验收。实际 stop 在关闭对话框未处理时返回 503 并保留原 Worker/Home，取消后重试正常退出；`docker stop -t 30` 的 s6 顺序退出码为 0，原容器/Session resume 后即时 Cookie、localStorage、IndexedDB 均恢复。固定候选为 `sha256:ec848635e68db2d1c805fcf9972ef4586bcd86a9ed14b2075b0c5a40fbbc503f`，保留原 Work 镜像所有层，再增加退出和显示认证层；私有 App 候选只替换镜像字段，尚未部署。证据和版本边界见 [R4B 阶段验收](../sealskin/target-client-migration-acceptance-2026-09-15.md)。该范围不覆盖其他 compositor、浏览器或跨版本升级；r9 Camoufox 继续绑定此前已验收的退出层。

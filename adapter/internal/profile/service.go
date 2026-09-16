@@ -35,6 +35,9 @@ type Definition struct {
 	NetworkPolicySHA256 string  `json:"network_policy_sha256,omitempty"`
 	// IdlePolicy enables automatic reclaim; nil or mode "off" disables it.
 	IdlePolicy *IdlePolicy `json:"idle_policy,omitempty"`
+	// RequiredRuntimeCapabilities binds a new Worker to its controller contract.
+	// Stop and reconciliation remain available when the controller is older.
+	RequiredRuntimeCapabilities map[string]int `json:"required_runtime_capabilities,omitempty"`
 }
 
 // IdlePolicy follows the health specification's idlePolicy: only the
@@ -129,6 +132,9 @@ func NewService(orchestrator Orchestrator, store *state.Store, publicBaseURL str
 		option(service)
 	}
 	for _, definition := range definitions {
+		if len(definition.RequiredRuntimeCapabilities) != 0 && service.runtime == nil {
+			return nil, errors.New("runtime capability requirements need verified lifecycle")
+		}
 		if definition.NetworkPolicyID != "" && service.runtime == nil {
 			return nil, errors.New("network policies require verified lifecycle")
 		}
@@ -167,6 +173,16 @@ func (s *Service) Ensure(ctx context.Context, profileID string) (result sealskin
 		}
 	}()
 
+	// Reject an incompatible controller before even creating a new Home.
+	if len(definition.RequiredRuntimeCapabilities) != 0 {
+		snapshot, err := s.inspectRuntime(ctx, definition.HomeName)
+		if err != nil {
+			return sealskin.Session{}, err
+		}
+		if err := verifyRequiredCapabilities(definition, snapshot); err != nil {
+			return sealskin.Session{}, err
+		}
+	}
 	if err := s.ensureHome(ctx, definition.HomeName); err != nil {
 		return sealskin.Session{}, fmt.Errorf("ensure SealSkin Home %q: %w", definition.HomeName, err)
 	}
@@ -490,6 +506,11 @@ func randomID() (string, error) {
 func validateDefinition(definition Definition) error {
 	if definition.ID == "" || definition.ApplicationID == "" || definition.HomeName == "" || definition.StartURL == "" {
 		return errors.New("id, application_id, home_name and start_url are required")
+	}
+	for name, version := range definition.RequiredRuntimeCapabilities {
+		if version != 1 || (name != "browser_shutdown_version" && name != "session_auth_version") {
+			return errors.New("required_runtime_capabilities supports browser_shutdown_version and session_auth_version at version 1")
+		}
 	}
 	if policy := definition.IdlePolicy; policy != nil {
 		switch policy.Mode {

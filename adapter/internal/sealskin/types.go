@@ -58,7 +58,23 @@ type HomeRuntime struct {
 	LaunchJournalVersion      int               `json:"launch_journal_version,omitempty"`
 	ProfileInitialURLVersion  int               `json:"profile_initial_url_version,omitempty"`
 	CoherenceRuntimeVersion   int               `json:"coherence_runtime_version,omitempty"`
+	BrowserShutdownVersion    int               `json:"browser_shutdown_version,omitempty"`
+	SessionAuthVersion        int               `json:"session_auth_version,omitempty"`
 	Resources                 []RuntimeResource `json:"resources"`
+}
+
+// Capabilities reports versions observed from the current controller. Missing
+// fields remain zero; an image or a prepared manifest is not runtime evidence.
+func (snapshot HomeRuntime) Capabilities() map[string]int {
+	return map[string]int{
+		"network_runtime_version":     snapshot.NetworkRuntimeVersion,
+		"network_enforcement_version": snapshot.NetworkEnforcementVersion,
+		"launch_journal_version":      snapshot.LaunchJournalVersion,
+		"profile_initial_url_version": snapshot.ProfileInitialURLVersion,
+		"coherence_runtime_version":   snapshot.CoherenceRuntimeVersion,
+		"browser_shutdown_version":    snapshot.BrowserShutdownVersion,
+		"session_auth_version":        snapshot.SessionAuthVersion,
+	}
 }
 
 type RuntimeRecord struct {

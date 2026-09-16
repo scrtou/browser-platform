@@ -28,6 +28,16 @@ type fakeProfiles struct {
 	healthDelay   time.Duration
 }
 
+func TestUnsupportedRuntimeReturnsUnavailableWithoutSessionAddress(t *testing.T) {
+	profiles := &fakeProfiles{err: profile.ErrRuntimeUnsupported}
+	server := New(profiles, nil, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "https://adapter.example/browser/personal/start", nil))
+	if response.Code != http.StatusServiceUnavailable || response.Header().Get("Location") != "" || !strings.Contains(response.Body.String(), "需完成维护后再试") {
+		t.Fatalf("unexpected capability rejection: status=%d body=%q", response.Code, response.Body.String())
+	}
+}
+
 func (f *fakeProfiles) Health(ctx context.Context, _ string, opts profile.HealthOptions) (profile.HealthReport, error) {
 	f.healthCalls++
 	f.healthOptions = append(f.healthOptions, opts)

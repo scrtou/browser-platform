@@ -17,3 +17,5 @@ docker build \
 ```
 
 仅锁定 Firefox 配置还不构成 egress kill switch。静态基线限制 Worker 只接对应 `internal` 网络；受管理 Personal 进一步共享已安装 ACL 的 Guard 命名空间，阻止同网段管理端口访问。不能再加入默认 bridge 或其他具有公网路由的网络。存量会话的实际生效范围见 [开发进度](../../docs/progress.md#deployment)。
+
+生产 Work 使用另一份固定 LinuxServer Firefox/Wayland 镜像，不沿用本目录的 X11 环境产物。R4B 已在该精确旧镜像之上生成正常退出与显示认证候选，并通过控制器停止、s6 停止/resume、入口、错误材料和秘密边界验收；候选尚未替换生产 Work。版本与限制见 [正常退出层](../browser-runtime/README.md) 和 [R4B 阶段验收](../sealskin/target-client-migration-acceptance-2026-09-15.md)。

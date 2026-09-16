@@ -8,7 +8,7 @@
 
 ## 固定版本
 
-R5D 的 r7 在同一浏览器/冻结环境基础上加入 [显示认证层](../browser-access/README.md)，将 nginx/Selkies 材料与 TLS 私钥移出 Docker 环境和持久化 Home。新产物 `env-tw-camoufox-r7` 已重新验收：完整重放、两个 QA Home 各十次重建、离线恢复及正常 `/init`/真实显示、控制器重启和 Worker 恢复通过；五类错误材料拒绝及最终扫描也通过。版本与范围见 [R5D 报告](../sealskin/entry-authentication-acceptance-2026-09-15.md)。r7 尚未迁移生产，R4B 必须使用匹配 r7 的应用、Home 与策略候选；R5D 未重跑启用一致性策略的 R5C3 全矩阵。
+R5D 的 r7 在同一浏览器/冻结环境基础上加入 [显示认证层](../browser-access/README.md)，将 nginx/Selkies 材料与 TLS 私钥移出 Docker 环境和持久化 Home。新产物 `env-tw-camoufox-r7` 已重新验收：完整重放、两个 QA Home 各十次重建、离线恢复及正常 `/init`/真实显示、控制器重启和 Worker 恢复通过；五类错误材料拒绝及最终扫描也通过。版本与范围见 [R5D 报告](../sealskin/entry-authentication-acceptance-2026-09-15.md)。生产 r7 迁移未成功；R4B 后续按用户要求修订为 r9，应用、Home、策略和完整报告须绑定最终修订，不能套用旧候选。R5D 未重跑启用一致性策略的 R5C3 全矩阵。
 
 | 组件 | 固定值 |
 | --- | --- |
@@ -77,7 +77,24 @@ python3 acceptance.py --phase all --recreations 10 \
 
 Firefox 152 的 `privacy.baselineFingerprintingProtection` 会独立于旧 RFP/FPP 开关向 Canvas PNG 写入随机 `deBG` 元数据；`gfx.font_rendering.fallback.async` 会使首次繁体文字形回退不一致。本环境锁定前者及旧 RFP/FPP 开关为 false，并关闭异步字体回退，由冻结的 Camoufox 原生配置提供稳定设备参数。探测等待完整 131 项语音加载后比较，没有删除失败字段或注入 navigator hooks。
 
-基础镜像的 Openbox 默认最大化所有窗口，会产生 innerWidth 大于冻结 outerWidth 的不一致。[configure-desktop.py](configure-desktop.py) 为 Camoufox 加入不最大化、无外部边框的原生规则，正式桌面与重放测试均为 outer 1600×900、inner 1600×844；远程屏幕仍是 1920×1080、DPR 1。
+基础镜像的 Openbox 默认最大化所有窗口，会产生 innerWidth 大于冻结 outerWidth 的不一致。[configure-desktop.py](configure-desktop.py) 为 Camoufox 加入不强制最大化、无装饰的规则。r4–r7 的窗口为 outer 1600×900、inner 1600×844，居中放在 1920×1080 桌面上；用户在 R4B 反馈该窗口过小。
+
+R4B 使用 [桌面规格](spec.tw.desktop.json) 将窗口改为 1920×1080、位置 (0, 0)，screen/DPR 仍为 1920×1080 / 1。[resize-window.py](resize-window.py) 只调整新产物的显式窗口尺寸/位置，保留完整原始 BrowserForge 结果作为生成来源，其他设备、seeds、preferences 和旧产物不变。`--id` 必须新建、revision 必须增大；输出仍须完整验收，不能沿用旧报告。原 [spec.tw.json](spec.tw.json) 保留 r4 的历史规格。
+
+正常 Openbox 桌面另有 `keepBorder=yes` 的 1 像素边框，会将全桌面客户区压为 1918×1078；仅修改窗口产物的 r8 因此不满足正常桌面与重放一致性。当前配置器改为 `keepBorder=no`；[Dockerfile.desktop](Dockerfile.desktop) 可在已核对的 r7 镜像上应用这一小型桌面层，再用 `rebind-worker.py` 生成 r9。构建引用使用已核对到精确 image ID 的本地标签，`BASE_IMAGE_ID` 仍传完整 ID，`DESKTOP_INPUT_SHA256` 记录 Dockerfile/配置器输入摘要。新镜像必须保留原正常退出与显示认证层，且通过重放、正常桌面和客户端分项后才可迁移。发现、失败与验证范围见 [DEV-041](../../docs/deviations/DEV-2026-09-15-041-camoufox-window-size.md)。
+
+窗口修订示例（从项目根目录执行，使用独立输出路径）：
+
+```bash
+python3 infra/camoufox/resize-window.py \
+  --artifact infra/camoufox/artifacts/env-tw-camoufox-r7.json \
+  --id env-tw-camoufox-r8 --revision 8 --width 1920 --height 1080 \
+  --output infra/camoufox/artifacts/env-tw-camoufox-r8.json
+```
+
+此步骤只生成窗口候选；r9 还需绑定上述桌面层镜像并执行完整 `acceptance.py --phase all --recreations 10`。每次验收使用新的输出报告，保留失败历史，不覆盖已挂载的文件。
+
+2026-09-15 的 r9 已通过完整产物验收（23 次稳定观测）、正常 Openbox 桌面及 Linux 公网客户端复测：客户区 1920×1080、边框 0，网页 outer 1920×1080 / inner 1920×1024；点击、上传/拖放、断线和原生截图预览通过。原独立 QA Home 与用户三类测试存储保持，入口保留供 Mac 新窗口/预览复测。精确镜像、产物和失败历史见 [R4B 阶段验收](../sealskin/target-client-migration-acceptance-2026-09-15.md)，未宣称生产迁移或全部旧协议/一致性矩阵已在 r9 重跑。
 
 ## 独立 SealSkin 应用
 
@@ -158,7 +175,7 @@ python3 infra/camoufox/check-stream.py \
 
 2026-09-14 [R4A](../sealskin/client-migration-acceptance-2026-09-14.md) 已验证正常 Camoufox 的 Guard 网络、Linux 客户端边界、原生复制/截图和停止重建。`prepare-sealskin.py --network-policy-id ID --network-policy-sha256 SHA` 生成由 SealSkin 管理的网络引用，不设置静态 `docker_overrides.network`；与 `--network` 互斥。默认不传参数时保留已有静态 internal 网络路径。
 
-可选 `--clipboard-addon` 接受与当前仓库三个脚本完全一致、无 symlink 且不允许其他用户写入的目录，并只读挂载；开启 Files upload，下载按钮仍隐藏。先冻结新的客户端包，不覆盖旧目录：
+可选 `--clipboard-addon` 接受与当前仓库三个脚本完全一致、无 symlink 且不允许其他用户写入的目录，并只读挂载；开启 Files upload，下载按钮仍隐藏。当前安装器还将固定分辨率显示的画面和输入层映射到客户端完整视区，以适配 1280×800 等非 16:9 视区；这保留远端 1920×1080 screen/DPR，但会在不同比例下产生非等比缩放。先冻结新的客户端包，不覆盖旧目录：
 
 ```bash
 python3 infra/sealskin/build-client-addon.py \
@@ -187,6 +204,10 @@ python3 infra/camoufox/prepare-migration.py \
 ```
 
 工具验证原策略完整修订，复制其代理设置到新的 Home/App 身份，旧策略和 journal 保留；生成的回退配置保留原路径引用与其他 Profile。当前助手只支持已验收的台湾环境及现有 SOCKS5 策略格式，其他格式或配置漂移会拒绝。工具不会实施切换，`readyToSwitch=false`；[运维步骤](../../docs/operations.md#camoufox-入口切换与回退准备) 说明实机、备份与维护核对。
+
+R4B 增加控制器能力核对（[DEV-040](../../docs/deviations/DEV-2026-09-15-040-migration-controller-capabilities.md)）：先从产物绑定的精确镜像读取正常退出/显示认证标签，再向运行中的 Adapter inspect 读取控制器实际 `capabilities`。缺少网络/启动日志或目标镜像要求的版本时，在生成候选前拒绝；旧 Adapter 没有能力字段也视为未知。匹配时在新 Profile 写入 `required_runtime_capabilities`，准备结束再次核对能力、绑定及输入摘要。入口登录账号/CA 的相对路径也固定到原配置目录；不复制或替换 journal。完整发布仍需各 Profile 的镜像、显示 tmpfs、授权入口和回退条件，能力版本通过不是部署完成证明。
+
+2026-09-15 的生产旧控制器已实际拒绝 r7 迁移准备，独立 r7 QA 则生成候选并保留全部输入；失败代次已清理，生产入口增加启动保护，见 [R4B 阶段验收](../sealskin/target-client-migration-acceptance-2026-09-15.md)。正式 Personal 仍在维护中。
 
 生产独立应用 `camoufox-personal-r4` 仍在此前的静态网络，固定入口未迁移。R4A 的隔离 Guard 结果不能视为 R4B 的 Mac/Trilium、真实站点或生产切换通过。
 

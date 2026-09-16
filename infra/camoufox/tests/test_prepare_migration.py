@@ -72,10 +72,34 @@ class MigrationTests(unittest.TestCase):
         self.plan()  # Server defaults are included in the same canonical digest.
         self.config['state_file'] = './state.json'
         self.config['sealskin']['client_private_key_file'] = './private.pem'
+        self.config['access'] = {'users_file':'./users.json','session_ca_file':'./ca.pem'}
         fixed = migration.resolve_config(self.config,Path('/original'))
         self.assertEqual(fixed['state_file'],'/original/state.json')
         self.assertEqual(fixed['control_socket'],'/original/state.json.control.sock')
         self.assertEqual(fixed['sealskin']['client_private_key_file'],'/original/private.pem')
+        self.assertEqual(fixed['access']['users_file'],'/original/users.json')
+        self.assertEqual(fixed['access']['session_ca_file'],'/original/ca.pem')
+
+    def test_worker_requirements_come_from_exact_image_labels(self):
+        required = migration.required_capabilities({'io.browser-platform.browser-shutdown':'1',
+            'io.browser-platform.session-auth':'1','unrelated':'ignored'})
+        self.assertEqual(required,{'browser_shutdown_version':1,'session_auth_version':1})
+        self.assertEqual(migration.required_capabilities({}),{})
+        for labels in [None,{'io.browser-platform.session-auth':'2'},{'io.browser-platform.session-auth':1}]:
+            with self.subTest(labels=labels),self.assertRaises(ValueError):
+                migration.required_capabilities(labels)
+
+    def test_incompatible_or_unreported_controller_is_rejected(self):
+        base = {'network_runtime_version':1,'network_enforcement_version':1,'launch_journal_version':1}
+        required = {'browser_shutdown_version':1,'session_auth_version':1}
+        for actual in [None,base,{**base,'browser_shutdown_version':1},
+                       {**base,**required,'session_auth_version':True},
+                       {**base,**required,'session_auth_version':2},
+                       {**base,**required,'network_enforcement_version':0}]:
+            with self.subTest(actual=actual),self.assertRaises(ValueError):
+                migration.check_capabilities({'capabilities':actual},required)
+        self.assertEqual(migration.check_capabilities({'capabilities':{**base,**required}},required),{**base,**required})
+        self.assertEqual(migration.check_capabilities({'capabilities':base},{}),base)
 
 
 if __name__ == '__main__':

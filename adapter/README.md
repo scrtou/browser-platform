@@ -14,6 +14,7 @@
 - SealSkin 启动成功但响应丢失时，使用 `launch_context` 中的 bootstrap URL 精确认领会话。
 - 控制器明确提供 `profile_initial_url_version: 1` 时，受管理启动另传配置的 `start_url` 作为 `initial_url`，保留 bootstrap 对账标记；DIRECT 无需访问宿主机中转页。
 - 无法证明启动结果时记录 `unknown`，后续请求不会再次启动。
+- Profile 可声明 `required_runtime_capabilities: {"browser_shutdown_version": 1, "session_auth_version": 1}`。Adapter 从当前控制器读取能力，在创建 Home、启动/复用及恢复前核对，启动后再次核对；缺失/版本不匹配时入口返回 503，保持 journal 和资源。停止与对账仍可用。未声明要求的旧 Profile 保持兼容；本机 inspect 的 `capabilities` 是实时观测，缺失值为 0。R4B 的迁移准备器依据目标镜像标签生成要求，见 [DEV-040](../docs/deviations/DEV-2026-09-15-040-migration-controller-capabilities.md)。
 - Profile 已绑定的会话从 SealSkin 列表消失时转为 `unknown`，避免在 SealSkin 重启后遗漏孤儿容器。
 - 状态文件使用跨进程 `flock`、`fsync`、原子 rename 和 `0600` 权限。
 - 启用 lifecycle 补丁后，启动前检查 Home 的会话记录与全部 Docker 挂载；新 Worker 使用固定容器名及 Home/Profile/operation 标签。

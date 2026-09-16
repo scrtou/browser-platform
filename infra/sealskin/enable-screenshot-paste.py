@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Install the pinned native-paste client without restarting any service.
+"""Install the pinned native-paste and fixed-display client.
 
 Run inside the Worker with screenshot-paste.js beside this script. Known
 unpatched, Files-only, and previously recorded native-paste assets are accepted.
-The original frontend is never overwritten; index.html is changed atomically.
+The fixed remote display fills the client viewport while keeping its server-side
+resolution unchanged. The original frontend is never overwritten; index.html is
+changed atomically.
 """
 
 import hashlib
@@ -26,6 +28,36 @@ settings:()=>({...bpClientSettings}),
 resetKeyboard:()=>{window.webrtcInput?.resetKeyboard();if(m?.readyState===WebSocket.OPEN)m.send("kr")}
 });'''
 
+# Manual resolution normally uses aspect-preserving ``contain`` sizing, which
+# leaves bars whenever the client and fixed remote display have different aspect
+# ratios. Fill the client viewport and retain the full remote desktop. Selkies'
+# manual-mode input path maps X and Y independently from the rendered element's
+# bounding rectangle to the fixed buffer, so pointer coordinates remain aligned.
+WEBRTC_MANUAL_CONTAIN = (
+    b'if($){const oe=N/k,ta=le/Oe;let sa,pa;oe>ta?(sa=le,pa=le/oe):(pa=Oe,sa=Oe*oe);'
+    b'const qt=(Oe-pa)/2,Fa=(le-sa)/2;Q.style.position="absolute",Q.style.width=`${sa}px`,'
+    b'Q.style.height=`${pa}px`,Q.style.top=`${qt}px`,Q.style.left=`${Fa}px`,'
+    b'Q.style.objectFit="contain",console.log(`Applied manual style (Scaled): CSS ${sa}x${pa}, Pos ${Fa},${qt}`)}'
+)
+WEBRTC_MANUAL_FILL = (
+    b'if($){const sa=le,pa=Oe,qt=0,Fa=0;Q.style.position="absolute",Q.style.width=`${sa}px`,'
+    b'Q.style.height=`${pa}px`,Q.style.top="0px",Q.style.left="0px",Q.style.objectFit="fill",'
+    b'console.log(`Applied manual style (Viewport): CSS ${sa}x${pa}, Pos ${Fa},${qt}`)}'
+)
+WEBSOCKET_MANUAL_CONTAIN = (
+    b'if(X){const _e=_/x,et=qe/Mt;let Pe,ze;_e>et?(Pe=qe,ze=qe/_e):(ze=Mt,Pe=Mt*_e);'
+    b'const _t=(Mt-ze)/2,Bt=(qe-Pe)/2;Kt=`${Pe}px`,wt=`${ze}px`,j=`${_t}px`,K=`${Bt}px`,'
+    b'p.style.position="absolute",p.style.width=Kt,p.style.height=wt,p.style.top=j,p.style.left=K,'
+    b'p.style.objectFit="contain",console.log(`Applied manual style (Scaled): CSS ${Pe.toFixed(2)}x${ze.toFixed(2)}, '
+    b'Buffer ${ae}x${we}, Pos ${Bt.toFixed(2)},${_t.toFixed(2)}`)}'
+)
+WEBSOCKET_MANUAL_FILL = (
+    b'if(X){Kt=`${qe}px`,wt=`${Mt}px`,j="0px",K="0px",p.style.position="absolute",'
+    b'p.style.width=Kt,p.style.height=wt,p.style.top=j,p.style.left=K,p.style.objectFit="fill",'
+    b'console.log(`Applied manual style (Viewport): CSS ${qe.toFixed(2)}x${Mt.toFixed(2)}, '
+    b'Buffer ${ae}x${we}, Pos 0,0`)}'
+)
+
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
@@ -38,6 +70,8 @@ def install(root=Path('/usr/share/selkies/web'), state=Path('/var/lib/browser-pl
     for before, after in [
         (b'g.files=O.ui_sidebar_show_files?.value??!0', b'g.files=!0'),
         (b'g.fileDownload=Ye?Ye.value.includes("download"):!0', b'g.fileDownload=!1'),
+        (WEBRTC_MANUAL_CONTAIN, WEBRTC_MANUAL_FILL),
+        (WEBSOCKET_MANUAL_CONTAIN, WEBSOCKET_MANUAL_FILL),
         # UTF-16 surrogate halves are not Unicode characters or valid X11
         # keysyms. Preserve supplementary CJK/emoji in both committed text and
         # composition updates; Latin modifier handling remains upstream's.
@@ -105,6 +139,7 @@ def install(root=Path('/usr/share/selkies/web'), state=Path('/var/lib/browser-pl
     asset_path.chmod(0o644)
     report = {'asset': name, 'sha256': sha256, 'addonSHA256': digest(addon),
               'sourceSHA256': SOURCE_SHA256, 'nativePaste': True, 'nativeTextCopy': True,
+              'fixedDisplayFillsViewport': True,
               'previousAsset': current, 'previousSHA256': known[current],
               'filesVisible': True, 'downloadButtonVisible': False, 'servicesRestarted': False}
     # Write the manifest before HTML: interruption leaves either known index valid.

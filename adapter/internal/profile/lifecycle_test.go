@@ -59,6 +59,7 @@ func (f *lifecycleFake) LaunchURL(ctx context.Context, request sealskin.LaunchUR
 	f.snapshot = sealskin.HomeRuntime{Version: 1, HomeName: request.HomeName,
 		NetworkRuntimeVersion: 1, NetworkEnforcementVersion: 1, Resources: []sealskin.RuntimeResource{},
 		ProfileInitialURLVersion: f.snapshot.ProfileInitialURLVersion,
+		BrowserShutdownVersion:   f.snapshot.BrowserShutdownVersion, SessionAuthVersion: f.snapshot.SessionAuthVersion,
 		Records: []sealskin.RuntimeRecord{{SessionID: response.SessionID, AppID: request.ApplicationID,
 			NetworkPolicyID: request.NetworkPolicyID, NetworkPolicySHA256: request.NetworkPolicySHA256,
 			ProfileID: request.ProfileID, OperationID: request.OperationID, Phase: "running", InstanceIDs: []string{instance},

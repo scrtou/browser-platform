@@ -8,6 +8,7 @@
 
 | 日期 / 记录 | 验证内容 | 范围与后续关系 |
 | --- | --- | --- |
+| 2026-09-15–16 · [R4B 迁移能力修复与客户端阶段验收](../../infra/sealskin/target-client-migration-acceptance-2026-09-15.md) | 534 项控制/10 项准备、生产保护；r9 完整产物/桌面与 fill-r10 全视区/Linux 客户端；Work Wayland 控制器/s6、三类存储、入口、五类错误材料和 342 面扫描 | Work 兼容 QA 已清理，生产 Work/Mac QA 保持；Mac 已确认 r9 按钮/图片预览及 fill-r10 视觉铺满、点击正常，窄视区字体拉伸作为固定分辨率取舍保留；生产账号/主机配置、迁移/回退仍待完成，未部署 |
 | 2026-09-15 · [R2B 旧 Firefox 加密恢复](../../infra/sealskin/legacy-browser-recovery-acceptance-2026-09-15.md) | 固定旧 Firefox/Wayland 真实三类浏览器存储、正常关闭、旧格式 age 加密往返、新私有根读回、错误路径与 QA 清理 | 独立 QA；源代次先退出，生产四容器/五份配置保持；真实生产 Home、linger、主机重启、Debian 13 和 R4B 仍未测 |
 | 2026-09-15 · [R5E r7 组合](../../infra/sealskin/release-combination-acceptance-2026-09-15.md) | 23 项实际组合、101 项备份、r7 新私有根数据/资产恢复 | 代码/组合 QA/清理/文档已收尾；原失败保留，生产与目标客户端未迁移 |
 | 2026-09-15 · [R2A 旧部署加密备份准备](../../infra/sealskin/legacy-backup-acceptance-2026-09-15.md) | 原 37 项 + 新 43 项备份检查、真实 age/CLI/Unix socket 往返、两个生产只读快照与身份文件前置检查 | 工具与维护材料；未读取/复制真实 Home，未执行浏览器恢复或停机。旧格式仅离线准备，S05/整机维护条件保持 |

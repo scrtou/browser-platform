@@ -122,6 +122,11 @@ def run(args):
                     assert_equal(observed[key], wanted, key)
                 for key in ("width", "height"):
                     assert_equal(observed["screen"][key], spec["screen"][key], "screen." + key)
+                for key, window_size in (("outerWidth", spec["window"]["width"]),
+                                         ("outerHeight", spec["window"]["height"])):
+                    assert_equal(observed["window"][key], window_size, "window." + key)
+                assert 0 < observed["window"]["innerWidth"] <= observed["window"]["outerWidth"], "inner/outer width mismatch"
+                assert 0 < observed["window"]["innerHeight"] <= observed["window"]["outerHeight"], "inner/outer height mismatch"
                 for key, property_name in (("userAgent", "navigator.userAgent"), ("platform", "navigator.platform"),
                                            ("hardwareConcurrency", "navigator.hardwareConcurrency")):
                     assert_equal(observed[key], artifact["resolvedConfig"][property_name], key)

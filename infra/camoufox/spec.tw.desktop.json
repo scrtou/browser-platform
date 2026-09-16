@@ -1,0 +1,16 @@
+{
+  "id": "env-tw-camoufox-r9",
+  "revision": 9,
+  "osFamily": "linux",
+  "locale": "zh-TW",
+  "languages": ["zh-TW", "zh", "en-US", "en"],
+  "timezone": "Asia/Taipei",
+  "screen": {"width": 1920, "height": 1080, "deviceScaleFactor": 1},
+  "window": {"width": 1920, "height": 1080},
+  "webrtcPolicy": "disabled",
+  "geolocationPolicy": "disabled",
+  "requiredCapabilities": [
+    "locale", "languages", "timezone", "fixed-screen", "fixed-dpr",
+    "frozen-device-config", "webrtc-disabled", "proxy-only"
+  ]
+}

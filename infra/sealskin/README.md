@@ -98,7 +98,7 @@ systemctl --user status profile-adapter.service
 
 [Camoufox Worker](../camoufox/README.md) 的 r4 已通过完整冻结/重放、存储、Canvas/字体/音频稳定性和正常 X11 入口验收，安装为独立 `camoufox-personal-r4` 应用。该应用使用额外只读 mounts 保留 SealSkin 的 Home volumes，固定实际镜像摘要和成功报告，限制 1536 MiB / 1.5 CPU。现有 Personal/Work 应用、会话和 Home 保持原绑定；当前 Camoufox 只使用独立 cleanroom 验收。
 
-[R4A](client-migration-acceptance-2026-09-14.md) 补齐了 Camoufox 受管理 Guard 网络、Linux 客户端矩阵和新前端的 Unicode/剪贴板回归。客户端包可由 [build-client-addon.py](build-client-addon.py) 固定到新的内容命名目录；迁移准备器只生成可审阅候选，不更新真实入口。生产仍保持旧客户端包，目标 Mac/Trilium 和实际迁移归 R4B。
+[R4A](client-migration-acceptance-2026-09-14.md) 补齐了 Camoufox 受管理 Guard 网络、Linux 客户端矩阵和新前端的 Unicode/剪贴板回归。客户端包可由 [build-client-addon.py](build-client-addon.py) 固定到新的内容命名目录；迁移准备器只生成可审阅候选，不更新真实入口。R4B 的 `fill-r10` 客户端候选在固定 r9 显示上把画面和输入层铺到整个客户端视区，Linux 多尺寸坐标/截图已通过；生产仍保持旧客户端包，目标 Mac/Trilium 和实际迁移归 R4B。
 
 ## 域名与 Caddy 路由
 

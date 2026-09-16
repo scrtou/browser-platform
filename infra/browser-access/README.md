@@ -43,4 +43,6 @@ python3 infra/browser-access/build-image.py \
 
 nginx 访问日志仅保留固定事件和 HTTP 状态；原始 error 文本不写日志。Selkies Python 日志不渲染动态消息、参数或 traceback，保留固定事件和级别。该边界避免认证失败把请求或 token 写入普通输出，代价是日志不再包含原始异常详情；私有排障仍须避免把能力复制到公开记录。
 
-验收分别记录正常 `/init`、正确/错误显示认证、HTTP/WebSocket、缺失/错误材料拒绝、控制器恢复、Worker resume 和最终 inspect/进程/Home/日志扫描。最终证据在本机忽略目录 `infra/sealskin/runtime/r5d-entry-auth-2026-09-14/` 的 `client-qa-13/`、`worker-auth-negative-2/`、`runtime-security-3/`；QA 已清理。实际协作房间未测，可选协作 token 的文件/进程契约仅有控制测试，不能扩展为多人显示验收。
+验收分别记录正常 `/init`、正确/错误显示认证、HTTP/WebSocket、缺失/错误材料拒绝、控制器恢复、Worker resume 和最终 inspect/进程/Home/日志扫描。R5D 的最终证据在本机忽略目录 `infra/sealskin/runtime/r5d-entry-auth-2026-09-14/` 的 `client-qa-13/`、`worker-auth-negative-2/`、`runtime-security-3/`；QA 已清理。实际协作房间未测，可选协作 token 的文件/进程契约仅有控制测试，不能扩展为多人显示验收。
+
+R4B 另将同一认证层装到保留原 Firefox/Wayland 的 Work 候选。三个真实 Linux 客户端共取得 44 个显示帧并通过错误登录、无 Cookie Session 拒绝和输入附着；缺少输入、错误 Session、权限过宽、符号链接、可写挂载五类实际 `/init` 均拒绝且未监听显示端口。控制器 stop、s6 停止、同 Session resume 和三类存储恢复通过，342 个 Docker/进程/Home/日志面未发现材料泄漏。私有组合 QA 已按身份清理，生产 Work 与 Mac r9 QA 保持；见 [R4B 阶段验收](../sealskin/target-client-migration-acceptance-2026-09-15.md)。

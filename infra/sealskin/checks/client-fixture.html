@@ -16,6 +16,8 @@
   textarea { display: block; width: min(100%, 850px); height: 110px; padding: 10px; font: 20px/1.5 sans-serif; }
   #status { min-height: 30px; }
   #report { height: 180px; font: 13px monospace; }
+  #paste-target { width: min(100%, 850px); min-height: 65px; padding: 12px; border: 2px dashed #67818e; background: white; }
+  #image-preview { max-width: min(100%, 850px); max-height: 320px; object-fit: contain; }
   #scroll-target { margin-top: 1000px; padding: 25px; background: #dfebee; }
 </style>
 <h1>客戶端驗收</h1>
@@ -27,12 +29,48 @@
 <p id="status" role="status">等待操作</p>
 <button id="export" type="button">複製驗收資料（F9）</button>
 <textarea id="report" readonly aria-label="驗收資料"></textarea>
+<section aria-label="截圖貼上測試">
+  <h2>截圖預覽</h2>
+  <div id="paste-target" contenteditable="true" role="textbox" tabindex="0" aria-label="截圖貼上區">點擊此處，再按 ⌘V 貼上測試截圖。</div>
+  <p id="image-status" role="status">尚未收到圖片。</p>
+  <img id="image-preview" alt="已貼上的測試截圖" hidden>
+</section>
 <div id="scroll-target">捲動至此處後，按 Home 返回。</div>
 <script>
 const input = document.querySelector('#input'), report = document.querySelector('#report');
 const step = new URL(location.href).searchParams.get('step') || 'one';
 document.querySelector('#step').textContent = '目前頁面：' + step;
-const observations = {coordinates:[], inputEvents:[], reportSequence:0};
+const observations = {coordinates:[], inputEvents:[], screenshotPastes:[], reportSequence:0};
+let previewURL = null, pasteSequence = 0;
+document.querySelector('#paste-target').addEventListener('paste', async event => {
+  const file = [...(event.clipboardData?.files || [])].find(item => item.type.startsWith('image/'));
+  if (!file) return;
+  event.preventDefault();
+  const sequence = ++pasteSequence, status = document.querySelector('#image-status');
+  status.textContent = '正在讀取圖片…';
+  if (file.size > 25 * 1024 * 1024) { status.textContent = '圖片超過 25 MiB，請使用較小的測試截圖。'; return; }
+  let url = null;
+  try {
+    url = URL.createObjectURL(file);
+    const decoded = new Image(); decoded.src = url; await decoded.decode();
+    const sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()))]
+      .map(value => value.toString(16).padStart(2,'0')).join('');
+    const canvas = document.createElement('canvas'); canvas.width = decoded.naturalWidth; canvas.height = decoded.naturalHeight;
+    const context = canvas.getContext('2d'); context.drawImage(decoded, 0, 0);
+    const pixelSHA256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', context.getImageData(0,0,canvas.width,canvas.height).data))]
+      .map(value => value.toString(16).padStart(2,'0')).join('');
+    if (sequence !== pasteSequence) return;
+    if (previewURL) URL.revokeObjectURL(previewURL);
+    previewURL = url; url = null;
+    const preview = document.querySelector('#image-preview'); preview.src = previewURL; preview.hidden = false;
+    observations.screenshotPastes.push({trusted:event.isTrusted,type:file.type,bytes:file.size,
+      width:decoded.naturalWidth,height:decoded.naturalHeight,sha256,pixelSHA256});
+    observations.screenshotPastes = observations.screenshotPastes.slice(-5);
+    status.textContent = `圖片已顯示：${decoded.naturalWidth} × ${decoded.naturalHeight}。請確認內容，再複製驗收資料。`;
+  } catch (error) {
+    if (sequence === pasteSequence) status.textContent = '圖片預覽失敗：' + error.name;
+  } finally { if (url) URL.revokeObjectURL(url); }
+});
 input.value = sessionStorage.getItem('bp-r4-input') || '';
 for (const name of ['keydown','keyup','compositionstart','compositionupdate','compositionend','beforeinput','input']) {
   input.addEventListener(name, event => {
@@ -83,7 +121,8 @@ async function observe() {
       inner:{width:innerWidth,height:innerHeight},outer:{width:outerWidth,height:outerHeight},position:{x:screenX,y:screenY},
       userAgent:navigator.userAgent,platform:navigator.platform,webRTC:typeof RTCPeerConnection},
     storage:{localStorage:localStorage.getItem('bp-r4-nonce'),indexedDB:await database(),cookie:cookie || null},
-    input:input.value, inputRect:input.getBoundingClientRect().toJSON(), scroll:{x:scrollX,y:scrollY}, ...observations,
+    input:input.value, inputRect:input.getBoundingClientRect().toJSON(),
+    pasteRect:document.querySelector('#paste-target').getBoundingClientRect().toJSON(), scroll:{x:scrollX,y:scrollY}, ...observations,
     targets:[...document.querySelectorAll('#targets button')].map(element => ({id:element.id,...element.getBoundingClientRect().toJSON()}))
   };
 }

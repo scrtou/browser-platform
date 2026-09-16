@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Request normal X11 browser closure; never signal or kill browser processes.
+"""Request normal browser closure; never signal or kill browser processes.
 
 Run as the desktop user. A timeout (including a beforeunload dialog) is a
 failure: an API caller must keep the container and its Home reservation.
@@ -163,7 +163,12 @@ def shutdown(timeout):
             if not active and not launching and home_released():
                 return
             if active:
-                display = display or Display()
+                if display is None:
+                    if os.environ.get("PIXELFLUX_WAYLAND") == "true":
+                        from wayland_shutdown import WaylandDisplay
+                        display = WaylandDisplay(active, browsers, deadline)
+                    else:
+                        display = Display()
                 display.close_windows(active, sent)
             time.sleep(.05)
         raise RuntimeError("BROWSER_SHUTDOWN_TIMEOUT")

@@ -118,11 +118,17 @@ Camoufox 作为独立应用固定 Python 包、BrowserForge、浏览器发布、
 
 R5A 发现 TERM 不等于正常浏览器退出，最近 localStorage 写入可能丢失，见 [DEV-008](deviations/DEV-2026-09-14-008-resume-storage-observation.md)。新的 [退出层](../infra/browser-runtime/README.md) 在 X11/桌面存活时请求窗口关闭；显式 API 在未确认退出时保留 Worker 和占用，容器停止钩子也先尝试同一正常关闭。该能力由新镜像标签与控制清单版本声明，旧生产 Worker 不据此获得保证；强制结束、OOM 和断电仍属于未完成正常退出的场景。
 
+R4B 为保留 Work 的 Firefox/Wayland 增加原生窗口关闭候选：限定单一已核对的 Firefox 主进程、可信 labwc socket 及 version 3 顶层管理协议，只关闭无 parent 的 `firefox` 窗口。协议没有逐窗口 PID，不能用于任意 Wayland 桌面。真实控制器 stop 的关闭拒绝/重试、s6 停止与 resume、入口显示认证、五类错误材料和三类存储恢复已通过隔离验收；候选未部署，见 [DEV-042](deviations/DEV-2026-09-15-042-work-wayland-shutdown.md)。
+
 Camoufox 准备器支持由 SealSkin 分配 Guard/Relay 的受管理网络；该模式禁止同时指定静态 Docker network。冻结产物与成功报告继续只读挂载，生命周期所有权不变。此路径已通过 R4A 隔离验收；生产独立应用仍使用此前的静态网络，实际切换留待 R4B。
 
 不同引擎使用各自 Home。升级与回退要配套处理镜像、Home 和产物快照，不能只改镜像标签。版本及结果见 [Camoufox 说明](../infra/camoufox/README.md) 和 [开发进度](progress.md)。
 
 迁移准备只生成候选 App、策略及 Adapter 正向/回退配置，记录当前实际绑定和摘要。实际切换必须先用旧配置完成 stop 并确认资源释放，随后让 Adapter 在下一次启动写入新绑定；回退也走已验证 stop，保留 journal 和两个 Home。
+
+R4B 的迁移契约还要求目标镜像与实际控制器能力匹配：精确镜像的正常退出/显示认证标签转换为 Profile 的 `required_runtime_capabilities`，准备器从当前 Adapter inspect 核对，Adapter 在创建 Home、发起启动/复用和恢复前再次核对。能力未知或版本不匹配时不创建新代次；实际启动后的能力漂移保留 unknown 占用，停止路径继续可用。共享控制器的升级须核对所有 Profile 的后续新建镜像，旧 Work 的兼容恢复不能证明它可以在新显示契约下再次创建，见 [DEV-040](deviations/DEV-2026-09-15-040-migration-controller-capabilities.md)。
+
+目标客户端要求浏览器铺满远程桌面。R4B 将默认窗口从 1600×900 修订为 1920×1080、位置 (0, 0)，screen 1920×1080 / DPR 1 保持固定；这是新的环境产物修订，须重新验收后启用。原始 BrowserForge 结果作为生成来源保留，原生窗口配置按显式规格覆盖；其余设备、seeds、preferences 保持。r9 在精确 r7 镜像上增加去除 Openbox 边框的桌面层，重新绑定镜像并验收；不能在旧产物下临时最大化来绕过 inner/outer 一致性，见 [DEV-041](deviations/DEV-2026-09-15-041-camoufox-window-size.md)。
 
 加密归档必须包含当前网络策略引用的 `coherence-assets/`，连同 Home、完整环境/成功报告、Store、密封状态密钥和授权身份保存；创建和解密阶段核对路径、摘要与成员。恢复先离线合并当前撤销和账号授权，再重绑新根并取得实际新鲜报告。[R5E](../infra/sealskin/release-combination-acceptance-2026-09-15.md) 已验证单 QA Home 的这一组合，生产真实 Home 和切换仍归 R2/R4B。
 
@@ -135,6 +141,18 @@ Session 持久化使用独立密钥密封，Worker 使用 [专属显示材料](.
 Trilium Core 保持原样。主动原生 copy/paste 事件与 Selkies 面板支持已验收的文字/截图传递；WebView 的程序剪贴板访问限制继续存在。浏览器关闭而 Worker 存活时，固定入口先显示恢复提示并保留手动进入；直接进入仍会复用空桌面，恢复操作见 [客户端说明](trilium-client.md#关闭远程-firefox-后出现黑框)。自动重开尚未实现。
 
 远程→本机仅支持纯文本，未交付反向图片、HTML/RTF 或文件下载。Unicode 输入按 code point 处理；系统 `LC_ALL` 使用 POSIX UTF-8 locale，不能直接套用浏览器 BCP 47 标签。显示、组合输入、文件与重连的证据按平台分列于 [客户端矩阵](client-matrix.md)，CDP 事件不能替代 Mac 原生输入法/Finder 验收。
+
+## R6 管理面设计提案
+
+新增的账号访问、手动代理、指纹选择和环境关闭统一放在 Adapter 管理面，具体契约见[环境管理面规格](specs/proxy-environment/management.md)。这部分目前是设计提案，尚未实现或部署。
+
+- 访问继续使用 R5D 的 HTTPS 表单登录、短期 `__Host-` Cookie、CSRF、精确 Origin 和当前 Profile/Session 授权；增加 `view`、`start`、`stop`、`configure_proxy`、`select_environment` 等环境级能力。不把长期密码或 SealSkin 能力交给 Trilium 客户端。
+- 指纹只能从已经生成、验收和发布的 `EnvironmentArtifact` 中选择。第一版每个可选择组合使用独立 Profile/Home，避免同一组 Cookie 在运行中切换引擎、屏幕、语言、时区或其他指纹字段；客户端不提交任意 resolved config。
+- 手动代理采用草稿、隔离探针、Secret Store 引用和不可变 ProxyConfig/NetworkPolicy 修订的顺序。Worker 继续只经 Guard/Relay 出站，代理失败保持阻断；代理和指纹的变化在新的 generation 生效。
+- 关闭按钮复用现有 `profile.Stop`/`Reconcile`，先撤销显示访问、持久化停止意图并确认资源清理，保留 Home；关闭、停用和删除是三个不同的权限动作。
+- 启动前由服务端生成一次性 `launch_plan`，冻结账号、Profile、Home、Artifact、代理、网络策略和能力摘要。修订漂移、过期、跨账号或重复使用都拒绝，不能通过查询参数切换固定 Profile 的后端资源。
+
+该提案归入 R6。实现前先完成 R4B/R2 的既有生产条件；实现顺序为只读环境列表、关闭入口、已验收指纹选择、代理草稿/探针，最后才准备生产候选和回退。
 
 <a id="decisions"></a>
 ## 设计决策
@@ -153,6 +171,9 @@ Trilium Core 保持原样。主动原生 copy/paste 事件与 Selkies 面板支�
 | ADR-008 · SealSkin 优先 | 当前复用 SealSkin，补丁范围可审计；独立 Docker Broker 未启动实施 |
 | ADR-009 · 后端由验收与维护成本决定 | 同一批 Worker 始终只有一个生命周期管理者 |
 | ADR-010 · Persona Studio 可选 | 不是当前生产或 MVP 的前置依赖 |
+| ADR-011 · 选择已验收环境槽位 | R6 提案：用户选择不可变 Artifact/Profile/Home 组合，不允许运行中修改任意指纹字段 |
+| ADR-012 · 管理操作经过 Adapter | R6 提案：客户端只提交授权选择和一次性计划，Adapter 负责权限、修订和生命周期调用 |
+| ADR-013 · 代理秘密只进 Secret Store | R6 提案：手动代理先测试再固化，Worker 只经 Guard/Relay，失败不能直连 |
 
 上游已知缺口及本地处理见 [SealSkin 审计](sealskin-0.3.2-audit.md)。原始理由和备选方案保存在 [历史 ADR](archive/design-v1.3-2026-09-13.md#38-architecture-decision-records)。
 

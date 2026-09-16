@@ -11,11 +11,22 @@
 | Work | <https://mybrowser.azhen.de/browser/work/> |
 | Personal | <https://mybrowser.azhen.de/browser/personal/> |
 
-`https://mysession.azhen.de/` 承载 SealSkin 会话与显示通道。入口会自动跳转并授权，不把带 token 的 Session URL 保存到永久笔记。现有两个入口仍使用原 Firefox Profile，更新后的 Personal 环境只在新建 Session 时生效；部署范围见 [开发进度](progress.md#deployment)。
+`https://mysession.azhen.de/` 承载 SealSkin 会话与显示通道。入口会自动跳转并授权，不把带 token 的 Session URL 保存到永久笔记。Work 继续使用旧 Firefox；Personal 在 R4B 迁移维护中，旧 Home 已加密备份并保留，正式入口暂时返回维护提示。新 r7 配置受能力检查保护，在匹配控制器发布前不会再次启动；部署范围见 [开发进度](progress.md#deployment)。
 
 待 [入口登录候选](../infra/sealskin/entry-auth/README.md) 发布后，仍保存上述固定地址；首次进入或登录到期时先登录，再进入获授权的 Profile。入口首页可退出登录，退出会断开该登录的画面，浏览器数据保留。再次登录后打开固定入口可重新连接；打开第二个完整画面会接管前一个画面的控制。此流程已在 Linux Chromium 验证，生产尚未启用，Mac/Trilium 实机仍待 R4B 验收。
 
 ## 常用操作
+
+<a id="r4b-独立实机验收"></a>
+### R4B 独立实机验收
+
+本轮临时入口为 <https://mybrowser.azhen.de/browser/network-qa-browser/>。在 Trilium WebView 打开后使用本机忽略目录 `infra/sealskin/runtime/r4b-production-migration-2026-09-15/mac-client-access.txt` 中的临时账号；公开文档不保存密码。该入口使用 r9 Camoufox 环境和 `fill-r10` 客户端，保留原独立 QA Home 和测试数据。远端浏览器仍为固定 1920×1080；客户端会把完整画面和输入层铺到 Trilium 当前视区。用户已确认视觉铺满且点击映射正常；未横向展开时会出现非等比拉伸，字体看起来细长，这是固定分辨率取舍。
+
+在验收页依次点击五个彩色按钮，输入中文/emoji/补充平面汉字，检查输入法候选和取消；再测试文字双向传递、截图粘贴、Files 选择/拖放、标签页/导航及断网后恢复重载。点击「复制验收资料（F9）」保存文字报告，按 [矩阵](client-matrix.md) 记录通过、失败和未测。QA 只开放该入口、登录路径及当前 QA Session 的显示路径，Work 路由保留；测试完成后由 R4B 清理专用路由、账号、浏览器和网络。
+
+本次补测重点是固定画面铺满：用户已确认 fill-r10 在当前 Trilium 视区没有黑色留边并且彩色按钮点击正常，但观察到未横向展开时字体变细长；这是把固定 1920×1080 画面映射到非 16:9 视区的显示缩放。截图预览已经由用户在上一代次确认可见，Linux fill-r10 也已复验实际 320×160 图片像素。若再次核对截图，点击页面下方「截圖貼上區」再按 ⌘V，直接核对显示出的图片；只有右下角成功提示还不能确认页面已收到图片。请只用测试截图；F9 报告会增加实际图片的类型、尺寸和摘要，无需上传截图到项目记录。Linux 的窗口、坐标、上传、断线恢复和图片像素对照已通过，Mac 的 fill-r10 视觉和点击映射已确认。
+
+以下常用操作的历史证据仍按各自环境适用。
 
 | 要做什么 | 操作说明 |
 | --- | --- |
@@ -28,7 +39,7 @@
 
 ## 当前用户验收
 
-2026-09-13，用户使用 Trilium 0.105.0、macOS Sequoia 15.1，反馈如下。两个固定入口仍对应原 Firefox Profile。
+2026-09-13，用户使用 Trilium 0.105.0、macOS Sequoia 15.1，反馈如下。当时两个固定入口均对应原 Firefox Profile。
 
 | 项目 | 用户反馈 |
 | --- | --- |
@@ -43,9 +54,13 @@
 | 远程文字原生复制到本机 | 已部署；X11 / Wayland 隔离回归通过，用户在 Mac / Trilium 上确认反向文字复制可用 |
 | Files 栏与图片上传 | 两个入口已开启，隔离测试通过；Mac / Trilium 文件选择待用户复测 |
 
-显示缩放比例、输入法名称与 screen/DPR 实测尚未提供。恢复会话的反馈不能替代主机重启、网络中断等故障验收。入口修复与回归见 [入口验收](../infra/sealskin/entry-acceptance-2026-09-13.md)。
+该轮尚未提供显示缩放比例、输入法名称与 screen/DPR 分项。恢复会话的反馈不能替代主机重启等故障验收。入口修复与回归见 [入口验收](../infra/sealskin/entry-acceptance-2026-09-13.md)。
 
-2026-09-14 新增 [客户端分项矩阵](client-matrix.md)：Camoufox 的 Linux 隔离验收已覆盖三组尺寸/DPR、坐标、Unicode、导航/标签页、文件上传与断线后重载，以及完整原生复制/截图回归。Mac 输入法、Finder 与 Trilium 实机分项仍待 R4B；当前固定入口仍是原 Firefox。
+2026-09-14 新增 [客户端分项矩阵](client-matrix.md)：Camoufox 的 Linux 隔离验收覆盖三组尺寸/DPR、坐标、Unicode、导航/标签页、文件上传与断线后重载，以及完整原生复制/截图回归；该轮的 Mac 分项留给 R4B。
+
+2026-09-15，用户补充 macOS 15.1 (24B83) / Trilium 0.105.0、本机 1280×800、正常显示、macOS 系统中文输入法，并确认 r7 QA 的基础输入/候选取消、双向文字、Files 按钮选择/Finder 拖放、后退/前进、新标签页和断网恢复重载通过。用户反馈窗口偏小、截图仅看到成功提示；r9 已修复窗口并补上图片预览区，原入口留供复测。远端报告的 1920×1080 / DPR 1 不代表 Mac 本机参数。
+
+2026-09-16，用户复测 r9 后确认五个按钮可点击、页面可见图片预览，但固定画面没有铺满 Trilium 视区，并指出 Work 页面显示正常。检查发现远端窗口本身已铺满，留边来自客户端对固定 16:9 串流的等比缩放；独立 QA 已切到 `fill-r10`，改为完整视区映射并通过 Linux 多尺寸坐标回归。用户随后确认 fill-r10 已铺满且点击正常，但 Trilium 未横向展开时字体显得细长、分辨率观感与 Work 不同；这是固定远端画面被非等比映射的结果，作为固定分辨率取舍保留。
 
 ## 关闭远程 Firefox 后出现黑框
 
@@ -146,11 +161,11 @@ QA 客户端是 Chromium 151 / Linux，使用原生浏览器粘贴命令在该�
 
 侧栏上传只将文件传入远程电脑，需要继续在目标网站选择该文件。也可将 Finder 中的文件拖到远程画面中央上传。这两个路径不调用系统 Clipboard API，也不需要开启 Clipboard 面板的 Image Support。当前 Files 栏提供上传按钮。
 
-此前 Files 被桌面加固初始化脚本注入的 `SELKIES_UI_SIDEBAR_SHOW_FILES=false` 隐藏；该值不出现在 Docker 的初始 Env 中，需要核对 Selkies 进程环境。现在两个应用定义显式设置 `SELKIES_UI_SIDEBAR_SHOW_FILES=true`、`SELKIES_FILE_TRANSFERS=upload`，保留 `HARDEN_DESKTOP=true`。现有两个 Worker 仍是旧 Wayland 会话，使用静态页面更新立即显示 Files；额外的 custom-init hook 为其后续启动设置相同环境。配置、验证与回滚见 [Files 开启记录](../infra/sealskin/files-sidebar-acceptance-2026-09-13.md)。
+此前 Files 被桌面加固初始化脚本注入的 `SELKIES_UI_SIDEBAR_SHOW_FILES=false` 隐藏；该值不出现在 Docker 的初始 Env 中，需要核对 Selkies 进程环境。两个应用定义显式设置 `SELKIES_UI_SIDEBAR_SHOW_FILES=true`、`SELKIES_FILE_TRANSFERS=upload`，保留 `HARDEN_DESKTOP=true`。该轮两个 Worker 均为旧 Wayland 会话，使用静态页面更新立即显示 Files；额外的 custom-init hook 为其后续启动设置相同环境。配置、验证与回滚见 [Files 开启记录](../infra/sealskin/files-sidebar-acceptance-2026-09-13.md)。
 
 初次采用串流重载时，旧 Work 的 Wayland 桌面连带重启了 Firefox；该次设置已回滚，Home 和 Session 绑定保留。最终静态更新没有再重启两个 Worker 的浏览器、桌面或串流进程。不能把 X11 下的串流重载验收用于证明旧 Wayland 浏览器进程不受影响。
 
-隔离 Wayland 会话已验证：Clipboard 读写权限均为 denied 时，Files 栏可见，点击 Upload Files 触发文件选择，PNG 上传后的大小和 SHA-256 完全匹配。见按钮上传验证（本机 `infra/sealskin/runtime/files-sidebar-wayland-acceptance-2026-09-13/image-upload.json`）。此前独立测试也通过了图片拖放验证（本机 `infra/sealskin/runtime/image-drop-acceptance-2026-09-13/image-upload.json`）。**用户 Mac / Trilium 的原生文件选择与拖放尚待实测**。
+隔离 Wayland 会话已验证：Clipboard 读写权限均为 denied 时，Files 栏可见，点击 Upload Files 触发文件选择，PNG 上传后的大小和 SHA-256 完全匹配。见按钮上传验证（本机 `infra/sealskin/runtime/files-sidebar-wayland-acceptance-2026-09-13/image-upload.json`）。此前独立测试也通过了图片拖放验证（本机 `infra/sealskin/runtime/image-drop-acceptance-2026-09-13/image-upload.json`）。2026-09-15 用户已确认 r7 QA 的 Mac / Trilium Files 选择和 Finder 拖放均成功；r9 的 Linux 选择/拖放及远端文件摘要复测也通过，版本范围见 [矩阵](client-matrix.md)。
 
 ## 文字长度与大文本
 

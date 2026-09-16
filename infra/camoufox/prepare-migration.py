@@ -25,6 +25,28 @@ POLICY_DEFAULTS = {'username_file':'','username_sha256':'','password_file':'','p
                    'probe_ca_file':'','probe_ca_sha256':'','probe_timeout_seconds':10}
 POLICY_REQUIRED = {'username','profile_id','home_name','application_id','relay_image','probe_image',
                    'upstream_host','upstream_port','probe_url'}
+IMAGE_CAPABILITIES = {'io.browser-platform.browser-shutdown':'browser_shutdown_version',
+                      'io.browser-platform.session-auth':'session_auth_version'}
+
+
+def required_capabilities(labels):
+    if not isinstance(labels,dict):
+        raise ValueError('target image capability labels are unavailable')
+    required = {}
+    for label,name in IMAGE_CAPABILITIES.items():
+        if label in labels:
+            if labels[label] != '1':
+                raise ValueError('unsupported target image capability version')
+            required[name] = 1
+    return required
+
+
+def check_capabilities(current, required):
+    actual = current.get('capabilities')
+    expected = {'network_runtime_version':1,'network_enforcement_version':1,'launch_journal_version':1,**required}
+    if not isinstance(actual,dict) or any(type(actual.get(k)) is not int or actual[k] != v for k,v in expected.items()):
+        raise ValueError('running Adapter/controller does not confirm the target Worker capabilities; upgrade the matched control stack first')
+    return {key:actual[key] for key in expected}
 
 
 def sha(raw):
@@ -61,6 +83,7 @@ def resolve_config(config, directory):
     config = copy.deepcopy(config)
     for target,keys in [(config,['state_file','control_socket']),
             (config['sealskin'],['server_public_key_file','client_private_key_file']),
+            (config.get('access',{}),['users_file','session_ca_file']),
             (config.get('limits',{}),['storage_path'])]:
         for key in keys:
             if target.get(key):
@@ -150,6 +173,23 @@ def main():
     current = inspect(config['control_socket'],args.profile)
     if (current['status'],current.get('session_id')) != (binding['status'],binding.get('session_id')):
         raise ValueError('binding changed while observing the running Adapter')
+    artifact = read(args.artifact)
+    image = artifact['runtimeImageDigest']
+    if not isinstance(image,str) or not re.fullmatch(r'sha256:[a-f0-9]{64}',image):
+        raise ValueError('target artifact must bind an exact image ID')
+    observed_image = docker(['image','inspect',image],timeout=15)
+    if observed_image.returncode:
+        raise ValueError('target artifact-bound image is not installed')
+    images = json.loads(observed_image.stdout)
+    if len(images) != 1 or images[0].get('Id') != image:
+        raise ValueError('target image identity differs from the artifact')
+    required = required_capabilities(images[0]['Config'].get('Labels',{}))
+    capabilities = check_capabilities(current,required)
+    target = next(p for p in future['profiles'] if p['id'] == args.profile)
+    if required:
+        target['required_runtime_capabilities'] = required
+    else:
+        target.pop('required_runtime_capabilities',None)
     storage = args.storage_root.resolve(strict=True)/config['sealskin']['username']
     old = next(p for p in config['profiles'] if p['id'] == args.profile)
     if not (storage/old['home_name']).is_dir() or (storage/args.new_home).exists():
@@ -191,11 +231,13 @@ def main():
     if prepared.returncode:
         raise ValueError('candidate image rejected the app or frozen evidence: '+prepared.stderr[:250])
     app = read(output/'application.json')
-    artifact = read(args.artifact)
     if (artifact['spec']['locale'],artifact['spec']['timezone']) != ('zh-TW','Asia/Taipei'):
         raise ValueError('this migration helper requires the accepted Taiwan environment')
     if source_hashes != {'config':sha(config_path.read_bytes()),'registry':sha(registry_path.read_bytes()),'journal':sha(state_path.read_bytes())}:
         raise ValueError('source configuration or binding changed during preparation')
+    latest = inspect(config['control_socket'],args.profile)
+    if (latest['status'],latest.get('session_id')) != (current['status'],current.get('session_id')) or check_capabilities(latest,required) != capabilities:
+        raise ValueError('running controller or binding changed during preparation')
     write(output/'adapter.candidate.json',future)
     write(output/'adapter.rollback.json',config)
     write(output/'network-policies.candidate.json',registry)
@@ -206,6 +248,7 @@ def main():
         'preparedAt':datetime.now(timezone.utc).isoformat(),'productionChangesApplied':False,'readyToSwitch':False,
         'profile':args.profile,'from':old,'to':new,'observedBinding':observed_binding,'runtime':current,
         'observedOldWorkers':runtime_workers,
+        'requiredRuntimeCapabilities':required,'observedControllerCapabilities':capabilities,
         'newHomeAbsentAndUnmounted':True,'sourceSHA256':source_hashes,
         'artifactSHA256':sha(args.artifact.read_bytes()),'acceptanceSHA256':sha(args.acceptance.read_bytes()),
         'image':app['provider_config']['image'],'applicationSHA256':sha((output/'application.json').read_bytes()),

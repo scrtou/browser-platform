@@ -31,7 +31,13 @@ with tempfile.TemporaryDirectory() as directory:
     (root / 'index.html').write_bytes(original_html)
     first = installer.install(root, state)
     installed_html = (root / 'index.html').read_bytes()
+    installed_asset = (root / 'assets' / first['asset']).read_bytes()
     assert (state / 'index.before.html').read_bytes() == original_html
+    assert first['fixedDisplayFillsViewport'] is True
+    assert installed_asset.count(b'Applied manual style (Viewport)') == 2
+    assert b'Applied manual style (Scaled)' not in installed_asset
+    assert installer.WEBRTC_MANUAL_FILL in installed_asset
+    assert installer.WEBSOCKET_MANUAL_FILL in installed_asset
 
     if args.previous_addon:
         previous_spec = importlib.util.spec_from_file_location('previous_installer',args.previous_addon/'enable-screenshot-paste.py')

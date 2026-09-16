@@ -4687,7 +4687,7 @@ new file mode 100644
 index 0000000..3cb4874
 --- /dev/null
 +++ b/server/app/profile_runtime.py
-@@ -0,0 +1,412 @@
+@@ -0,0 +1,413 @@
 +"""Verified Profile lifecycle for the pinned browser-platform integration.
 +
 +Docker remains owned by SealSkin. Inventory contains no access tokens, browser
@@ -4858,6 +4858,7 @@ index 0000000..3cb4874
 +            "network_runtime_version": 1, "network_enforcement_version": 1, "launch_journal_version": 1,
 +            "network_upstream_version": 1,
 +            "browser_shutdown_version": 1,
++            "session_auth_version": 1,
 +            "secret_store_version": 1,
 +            "network_direct_version": 1,
 +            "network_bootstrap_dns_version": 1,
@@ -7507,7 +7508,7 @@ new file mode 100644
 index 0000000..bb8b616
 --- /dev/null
 +++ b/server/tests/test_launch_journal.py
-@@ -0,0 +1,237 @@
+@@ -0,0 +1,238 @@
 +"""Create-before journal, Home delete protection and display-connection observation."""
 +
 +from __future__ import annotations
@@ -7581,6 +7582,7 @@ index 0000000..bb8b616
 +    assert journal_phase() is None and not launch_journal.read_pending(identity())
 +    snapshot = await runtime.inspect_home("qa", "test-home")
 +    assert [r["kind"] for r in snapshot["resources"]] == [] and snapshot["launch_journal_version"] == 1
++    assert snapshot["browser_shutdown_version"] == 1 and snapshot["session_auth_version"] == 1
 +
 +
 +async def test_failed_launch_keeps_a_failed_journal_that_reserves_the_home_until_explicit_stop(plain):

@@ -1,5 +1,6 @@
 *
 !Dockerfile
 !browser-shutdown.py
+!wayland_shutdown.py
 !before-desktop-stop
 !install.py

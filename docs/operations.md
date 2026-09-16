@@ -48,7 +48,7 @@ R5C2 候选的 `network_bootstrap_dns_version: 1` 表示支持 [批准引导 DNS
 
 开机顺序与恢复：`docker.service` 启动后控制器与静态 Relay（`unless-stopped`）自动启动；Profile 的 Worker、Guard、Relay 代次容器保持 `restart=no`。Adapter 启动时先等待控制面可读（`startup.control_wait_seconds`，默认 120 秒），再逐 Profile 对账；识别为休眠代次时由 SealSkin 按 **Relay → Guard 规则就绪 → 控制器接回内网 → 一次性探测 → Worker → 显示端点** 顺序恢复，任一步失败 Worker 不启动、占用保留。运维可用 `-resume-profile` 重试。详细顺序、管理员待办（linger 或系统服务）和维护窗口准备见 [管理员待办](../infra/sealskin/ADMIN-linger-and-boot.md)。
 
-只有 `0.3.2-resume-v1` 之后新建的代次具备上述可恢复性；此前创建的 Work/Personal 代次由 Docker 自动删除，重启后会消失并在下次入口新建（Home 保留），见 [DEV-2026-09-13-002](deviations/DEV-2026-09-13-002-worker-auto-remove.md)。`Linger=no` 的处理与正式整机重启验收仍待管理员与维护窗口，属于 [R2](roadmap.md#r2)。
+只有 `0.3.2-resume-v1` 之后新建的代次具备上述可恢复性；旧 [DEV-002](deviations/DEV-2026-09-13-002-worker-auto-remove.md) 记录的是此前的自动删除容器。2026-09-15 R2C 已将 Work 恢复为非自动删除代次，Personal 当前停止；`Linger=yes` 已确认。退出全部登录、正式整机重启和 Debian 13 仍归 [R2](roadmap.md#r2) 验证。
 
 受管理 Personal 的恢复流程必须先确认状态与资源归属，再准备 Guard 规则、Relay 和探测，最后启动 Worker。规则或探测失败时保留阻断；不得先让浏览器联网后补规则。独立 daemon 验证所用的显式重启步骤不应直接应用到仍有存活 Worker 的生产 Guard。
 
@@ -87,7 +87,7 @@ Home 删除接口在删除前核对会话记录、挂载该 Home 的容器（含
 
 含 Home 或密钥的备份使用 [Secret Store 与 age 加密恢复](../infra/sealskin/lifecycle/secret-store.md#加密备份与恢复)：先经 Adapter 确认停止和已落盘 journal，直接加密 Home、固定产物、配置和必要身份/解密材料；恢复只写新目录，先在 tmpfs 完整认证，再以恢复锁阻止旧凭据生效，离线合并当前撤销后才允许重绑。R5B 的 [新 QA 环境恢复](../infra/sealskin/secret-store-acceptance-2026-09-14.md) 已通过，真实 Home/整机演练仍待 R2。旧 `backup-home.py` 保留历史 QA 工具范围，不能把明文归档作为正式备份。
 
-当前生产无 Store/入口账号且 Session 未密封，改用 R2A 的 [旧部署加密步骤](../infra/sealskin/lifecycle/secret-store.md#旧部署的加密备份)。运行中只生成 `snapshot-legacy`，记录实际镜像和同代次输入；维护窗口停机确认后才执行 `create-legacy`。旧格式不伪造冻结产物，也不允许现代状态降级；恢复回执标记离线，旧控制器不会执行该提示作为启动锁。一个包只含目标 Home，不能直接启动其中引用其他 Profile 的控制 metadata。R2B 已在独立 QA 使用相同旧 Firefox/Wayland 镜像完成 Cookie、localStorage、IndexedDB 的真实写入、正常关闭、加密恢复和新根读回；停止后精确 Wayland socket 按 DEV-039 规则排除，其他特殊节点继续拒绝。真实生产 Home 仍须维护窗口执行。准备材料与尚待执行的维护步骤见 [管理员说明](../infra/sealskin/ADMIN-linger-and-boot.md)。
+当前生产无 Store/入口账号且 Session 未密封，采用 R2A 的 [旧部署加密步骤](../infra/sealskin/lifecycle/secret-store.md#旧部署的加密备份)。运行中只生成 `snapshot-legacy`，停机确认后才执行 `create-legacy`。一个包只含目标 Home；恢复回执为离线，不能直接激活其中引用其他 Profile 的控制 metadata。R2B 已完成相同旧镜像的三类浏览器存储恢复，R2C 已完成两个真实旧 Home 的 age 归档、verify 和离线 restore，Work 恢复运行。后续维护仍须重新核对备份时点和当前 journal；退出登录/整机重启等未测事项见 [管理员说明](../infra/sealskin/ADMIN-linger-and-boot.md)。
 
 Camoufox 的现有离线恢复证据使用 QA Home 和同一固定版本。真实 Home 备份恢复、跨引擎迁移和跨版本回退依照 [R2](roadmap.md#r2)、[R4](roadmap.md#r4)、[R6](roadmap.md#r6) 分别验收。
 
@@ -100,6 +100,8 @@ DIRECT 部署还需保留 [Compose overlay](../infra/sealskin/compose.direct.yml
 ## Camoufox 入口切换与回退准备
 
 [prepare-migration.py](../infra/camoufox/prepare-migration.py) 只读核对当前定义、journal、Adapter 清单和 Docker Home 挂载，生成独立 App、追加策略的 registry、`adapter.candidate.json`、`adapter.rollback.json` 与 `migration.json`。命令见 [Camoufox 说明](../infra/camoufox/README.md#迁移准备)。它拒绝已引用/已存在的新 Home、漂移的策略或未完成的运行操作，输出路径中的相对配置引用会固定为原位置，避免误用另一个 journal。它不安装应用、不创建 Home、不停止服务。
+
+准备器现在还从目标镜像读取正常退出/显示认证要求，核对当前 Adapter inspect 的实际 `capabilities`，并把要求写入新 Profile。旧 Adapter/控制器未声明支持时拒绝生成候选；不能删掉要求重试，或以产物重放通过代替控制器支持。共享控制器升级前逐一核对包括 Work 在内的后续新建镜像：旧会话可恢复不等于旧镜像可在新显示契约下新建。失败代次先走原配置的 stop/清查，保持 journal；R4B 的实际处理和完整发布缺口见 [阶段记录](../infra/sealskin/target-client-migration-acceptance-2026-09-15.md)。
 
 2026-09-14 的私有候选位于 `infra/sealskin/runtime/r4-client-migration-2026-09-13/migration-preparation-v2/`。Personal 候选 Home 为 `personal-camoufox-r4`，旧 `personal` 保留；Work 定义保持。候选是准备时的快照，真正操作前须重新生成或逐项核对摘要。
 

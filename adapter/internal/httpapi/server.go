@@ -276,6 +276,8 @@ func (s *Server) writeProfileError(writer http.ResponseWriter, profileID string,
 	case errors.Is(err, profile.ErrCapacity):
 		status, message = http.StatusServiceUnavailable, "Capacity limit reached; no browser was started. Retry later or ask the operator"
 		writer.Header().Set("Retry-After", "30")
+	case errors.Is(err, profile.ErrRuntimeUnsupported):
+		status, message = http.StatusServiceUnavailable, "浏览器暂时不可用，需完成维护后再试。"
 	}
 	s.logger.Error("profile entry failed", "profile", profileID, "status", status, "error", err)
 	http.Error(writer, message, status)

@@ -198,7 +198,9 @@ Camoufox 的 GeoIP 功能可以从 IP 生成位置与语言相关配置，因此
 
 ### 46.5 屏幕、语言与交互体验
 
-首版固定远程显示尺寸，Trilium/Web 客户端用缩放或留白适配窗口。客户端窗口变化不应静默改变已冻结的远程 screen/DPR。动态分辨率作为后续独立能力，需重新定义可变字段及验收。
+首版固定远程显示尺寸，Trilium/Web 客户端将完整画面映射到当前视区并同步映射输入层；不同比例下允许非等比缩放，但不裁切远端桌面。客户端窗口变化不应静默改变已冻结的远程 screen/DPR。动态分辨率作为后续独立能力，需重新定义可变字段及验收。
+
+R4B 目标客户端要求默认浏览器铺满远程桌面。窗口尺寸与位置通过新的环境修订冻结，并在正常桌面核对原生窗口和页面 outer/inner；保留原生成记录与设备 seeds。修改窗口后须重新执行产物验收，不能只把窗口管理器设为最大化而沿用不匹配的旧报告，见 [DEV-041](../../deviations/DEV-2026-09-15-041-camoufox-window-size.md)。
 
 页面上的 screen、viewport、outer/inner window 和 DPR 分别观测，不能混为一个尺寸。locale、Accept-Language、Intl timezone 也分别验证。Camoufox 配置可能影响缓存、导航和界面行为，Worker 验收仍必须包含后退、前进、标签页、中文输入、剪贴板和会话恢复。
 
@@ -501,7 +503,7 @@ R5D 候选采用本地账号、明确 Profile 列表和短期 host-only Cookie�
 
 停止顺序：限制新的访问/网站出站，优雅关闭浏览器，确认 Home 锁释放，停止 Relay，删除临时凭证挂载与临时资源。删除运行时文件不能宣称已经安全擦除进程内存或底层存储；平台应减少凭证副本及驻留时间。
 
-正常关闭不能用 TERM、容器退出码 0 或一次 API 成功代替。R5A 的 [DEV-008](../../deviations/DEV-2026-09-14-008-resume-storage-observation.md) 保留了立即写入 localStorage 后停止丢失的失败证据；新 Worker 以 X11 关闭请求等待浏览器退出。关闭被页面对话框阻止、命令失败或超时时，显式 stop 必须保留容器/占用并允许处理后重试；恢复验收继续比较真实 Cookie/localStorage/IndexedDB。强制终止及整机断电不提供正常关闭保证，正式主机停止窗口仍需 R2 验证。
+正常关闭不能用 TERM、容器退出码 0 或一次 API 成功代替。R5A 的 [DEV-008](../../deviations/DEV-2026-09-14-008-resume-storage-observation.md) 保留了立即写入 localStorage 后停止丢失的失败证据；新 Worker 以受核对的原生窗口关闭请求等待浏览器退出。X11 使用 PID/启动时间及窗口属性；R4B 的固定 Work Wayland 候选核对单一 Firefox、labwc peer 和 version 3 协议下无 parent 的 `firefox` 顶层窗口，其他 Wayland 环境不在其范围（[DEV-042](../../deviations/DEV-2026-09-15-042-work-wayland-shutdown.md)）。关闭被页面对话框阻止、命令失败或超时时，显式 stop 必须保留容器/占用并允许处理后重试；恢复验收继续比较真实 Cookie/localStorage/IndexedDB。强制终止及整机断电不提供正常关闭保证，正式主机停止窗口仍需 R2 验证。
 
 运行中紧急撤销凭证时先阻断受影响 Profile 出站并停止 Relay，不允许回退到无认证代理或 DIRECT。随后完成浏览器停止和修订切换。常规轮换使用“新版本验证 → 停止 Profile → 切换引用 → 重新启动”的流程。
 

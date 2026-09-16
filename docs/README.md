@@ -38,9 +38,9 @@
 | [公开测试端点](../infra/sealskin/checks/public-dns-endpoint/README.md) | 外部机器的轻量网站/受限代理、固定离线包、隔离验证与清理 |
 | [Secret Store 与加密恢复](../infra/sealskin/lifecycle/secret-store.md) | 加密版本、精确授权、tmpfs 租约、撤销、age 备份与旧部署只读快照/离线恢复 |
 | [Relay](../relay/README.md) | 内部 SOCKS5、上游协议/认证矩阵、凭据边界、镜像构建 |
-| [Firefox Worker](../infra/firefox-proxy/README.md) | 代理锁定、X11 与环境启动校验 |
+| [Firefox Worker](../infra/firefox-proxy/README.md) | 代理锁定、X11 环境启动校验及 Work Wayland 版本边界 |
 | [Camoufox](../infra/camoufox/README.md) | 固定依赖、完整环境产物、独立应用验收 |
-| [浏览器正常退出层](../infra/browser-runtime/README.md) | X11 关闭、服务停止顺序、失败保留与新镜像绑定 |
+| [浏览器正常退出层](../infra/browser-runtime/README.md) | X11 与固定 Work Wayland 关闭、服务停止顺序、失败保留与新镜像绑定 |
 | [Worker 显示认证层](../infra/browser-access/README.md) | Session 专属 tmpfs、nginx/Selkies 认证材料、恢复校验与日志边界 |
 
 ## 维护规则

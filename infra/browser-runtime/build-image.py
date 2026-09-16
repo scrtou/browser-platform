@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Add the reviewed X11 shutdown layer without overwriting a Worker version."""
+"""Add the reviewed shutdown layer without overwriting a Worker version."""
 
 import argparse
 import hashlib
@@ -10,7 +10,7 @@ import shlex
 import subprocess
 
 ROOT = Path(__file__).resolve().parent
-FILES = (".dockerignore", "Dockerfile", "browser-shutdown.py", "before-desktop-stop", "install.py")
+FILES = (".dockerignore", "Dockerfile", "browser-shutdown.py", "wayland_shutdown.py", "before-desktop-stop", "install.py")
 
 
 def docker(*args, check=True):

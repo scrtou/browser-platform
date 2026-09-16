@@ -10,10 +10,11 @@ import (
 )
 
 var (
-	ErrLifecycleDisabled = errors.New("verified lifecycle is not enabled")
-	ErrStopUnconfirmed   = errors.New("profile stop is pending; container removal has not been confirmed")
-	ErrResumeFailed      = errors.New("dormant generation could not be resumed; Worker remains stopped and the Home stays reserved")
-	ErrNotDormant        = errors.New("profile runtime is not a dormant generation")
+	ErrLifecycleDisabled  = errors.New("verified lifecycle is not enabled")
+	ErrStopUnconfirmed    = errors.New("profile stop is pending; container removal has not been confirmed")
+	ErrResumeFailed       = errors.New("dormant generation could not be resumed; Worker remains stopped and the Home stays reserved")
+	ErrNotDormant         = errors.New("profile runtime is not a dormant generation")
+	ErrRuntimeUnsupported = errors.New("SealSkin does not provide the required Worker runtime capabilities")
 )
 
 type RuntimeController interface {
@@ -33,18 +34,19 @@ func WithLifecycle(runtime RuntimeController) Option {
 
 // LifecycleResult intentionally omits bootstrap URLs and access credentials.
 type LifecycleResult struct {
-	ProfileID    string       `json:"profile_id"`
-	Status       state.Status `json:"status"`
-	SessionID    string       `json:"session_id,omitempty"`
-	Records      int          `json:"records"`
-	Workers      int          `json:"workers"`
-	Orphans      int          `json:"orphans"`
-	Resources    int          `json:"resources"`
-	Relays       int          `json:"relays"`
-	Guards       int          `json:"guards"`
-	Networks     int          `json:"networks"`
-	NetworkPhase string       `json:"network_phase,omitempty"`
-	LaunchPhase  string       `json:"launch_phase,omitempty"`
+	ProfileID    string         `json:"profile_id"`
+	Status       state.Status   `json:"status"`
+	SessionID    string         `json:"session_id,omitempty"`
+	Records      int            `json:"records"`
+	Workers      int            `json:"workers"`
+	Orphans      int            `json:"orphans"`
+	Resources    int            `json:"resources"`
+	Relays       int            `json:"relays"`
+	Guards       int            `json:"guards"`
+	Networks     int            `json:"networks"`
+	NetworkPhase string         `json:"network_phase,omitempty"`
+	LaunchPhase  string         `json:"launch_phase,omitempty"`
+	Capabilities map[string]int `json:"capabilities,omitempty"`
 }
 
 func runtimeEmpty(snapshot sealskin.HomeRuntime) bool {
@@ -53,7 +55,8 @@ func runtimeEmpty(snapshot sealskin.HomeRuntime) bool {
 
 func lifecycleResult(id string, binding state.Binding, found bool, snapshot sealskin.HomeRuntime) LifecycleResult {
 	result := LifecycleResult{ProfileID: id, Status: binding.Status, SessionID: binding.SessionID,
-		Records: len(snapshot.Records), Workers: len(snapshot.Workers), Resources: len(snapshot.Resources)}
+		Records: len(snapshot.Records), Workers: len(snapshot.Workers), Resources: len(snapshot.Resources),
+		Capabilities: snapshot.Capabilities()}
 	if !found {
 		result.Status = state.StatusStopped
 		if !runtimeEmpty(snapshot) {
@@ -267,6 +270,9 @@ func (s *Service) verifyBeforeEnsure(ctx context.Context, definition Definition,
 	if err != nil {
 		return err
 	}
+	if err := verifyRequiredCapabilities(definition, snapshot); err != nil {
+		return err
+	}
 	if !found || binding.Status == state.StatusStopped || binding.Status == state.StatusFailed {
 		if definition.NetworkPolicyID != "" && !snapshot.HasNetworkEnforcement() {
 			return errors.New("SealSkin must support network enforcement before a policy-managed launch")
@@ -299,6 +305,15 @@ func (s *Service) verifyBeforeEnsure(ctx context.Context, definition Definition,
 // caller holds the Profile lock. Failure leaves the journal as unknown with the
 // stable code; no launch or stop is issued.
 func (s *Service) resumeLocked(ctx context.Context, definition Definition, binding state.Binding) (sealskin.ResumeResult, error) {
+	if len(definition.RequiredRuntimeCapabilities) != 0 {
+		snapshot, err := s.inspectRuntime(ctx, definition.HomeName)
+		if err != nil {
+			return sealskin.ResumeResult{}, err
+		}
+		if err := verifyRequiredCapabilities(definition, snapshot); err != nil {
+			return sealskin.ResumeResult{}, err
+		}
+	}
 	if binding.ResumeIdempotencyKey == "" {
 		key, err := randomID()
 		if err != nil {
@@ -416,11 +431,14 @@ func (s *Service) Resume(ctx context.Context, id string) (LifecycleResult, error
 }
 
 func (s *Service) verifyManagedLaunch(ctx context.Context, definition Definition, binding state.Binding, sessionID string, initialURL bool) error {
-	if binding.NetworkPolicyID == "" {
+	if binding.NetworkPolicyID == "" && len(definition.RequiredRuntimeCapabilities) == 0 {
 		return nil
 	}
 	snapshot, err := s.inspectRuntime(ctx, definition.HomeName)
 	if err != nil {
+		return err
+	}
+	if err := verifyRequiredCapabilities(definition, snapshot); err != nil {
 		return err
 	}
 	if err := validateOwnership(snapshot, definition, binding); err != nil {
@@ -431,6 +449,16 @@ func (s *Service) verifyManagedLaunch(ctx context.Context, definition Definition
 	}
 	if actual, live := liveRuntime(snapshot); !live || actual != sessionID {
 		return ErrOwnershipUnknown
+	}
+	return nil
+}
+
+func verifyRequiredCapabilities(definition Definition, snapshot sealskin.HomeRuntime) error {
+	actual := snapshot.Capabilities()
+	for name, required := range definition.RequiredRuntimeCapabilities {
+		if actual[name] != required {
+			return ErrRuntimeUnsupported
+		}
 	}
 	return nil
 }

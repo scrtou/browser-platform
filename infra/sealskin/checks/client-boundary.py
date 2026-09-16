@@ -24,6 +24,7 @@ def main():
     parser.add_argument('--origin', required=True)
     parser.add_argument('--host-resolver-rules')
     parser.add_argument('--certificate-spki')
+    parser.add_argument('--storage-state', type=Path, help='private Playwright login state for an authenticated QA entry')
     parser.add_argument('--emulate-mac-keyboard', action='store_true')
     args = parser.parse_args()
     report = {'schemaVersion':'browser-platform/client-boundary/v1', 'status':'running',
@@ -55,7 +56,8 @@ def main():
             browser = p.chromium.launch(headless=True,args=launch_args)
             report['clientBrowser'] = browser.version
             assert browser.version == '151.0.7922.34'
-            context = browser.new_context(viewport={'width':1920,'height':1080})
+            context = browser.new_context(viewport={'width':1920,'height':1080},
+                                          storage_state=str(args.storage_state) if args.storage_state else None)
             context.grant_permissions([], origin=args.origin)
             if args.emulate_mac_keyboard:
                 context.add_init_script("Object.defineProperty(navigator,'platform',{get:()=> 'MacIntel'});")
@@ -129,6 +131,15 @@ def main():
                 page.set_viewport_size({'width':width,'height':height})
                 cdp.send('Emulation.setDeviceMetricsOverride',{'width':width,'height':height,'deviceScaleFactor':dpr,'mobile':False})
                 page.wait_for_timeout(700)
+                client = page.evaluate('({width:innerWidth,height:innerHeight,dpr:devicePixelRatio})')
+                overlay_box = overlay.bounding_box()
+                canvas_box = page.locator('#videoCanvas').bounding_box()
+                expected_box = {'x':0,'y':0,'width':width,'height':height}
+                assert client == {'width':width,'height':height,'dpr':dpr}
+                assert all(abs(overlay_box[key]-value) <= 1 for key,value in expected_box.items()), \
+                    'input overlay does not fill the client viewport'
+                assert all(abs(canvas_box[key]-value) <= 1 for key,value in expected_box.items()), \
+                    'fixed display does not fill the client viewport'
                 observed = remote()
                 assert observed['environment']['screen'] == env['screen'] and observed['environment']['dpr'] == env['dpr']
                 clicks = []
@@ -140,7 +151,8 @@ def main():
                     assert abs(event['clientX']-rect['x']-rect['width']/2) <= 6
                     assert abs(event['clientY']-rect['y']-rect['height']/2) <= 6
                     clicks.append(event)
-                report['viewportChecks'].append({'client':page.evaluate('({width:innerWidth,height:innerHeight,dpr:devicePixelRatio})'),
+                report['viewportChecks'].append({'client':client,
+                    'displayBounds':{'overlay':overlay_box,'canvas':canvas_box},
                     'remoteScreen':observed['environment']['screen'],'remoteDPR':observed['environment']['dpr'],'clicks':clicks})
                 checkpoint('coordinates-'+str(width)+'-'+str(dpr))
             cdp.send('Emulation.clearDeviceMetricsOverride')

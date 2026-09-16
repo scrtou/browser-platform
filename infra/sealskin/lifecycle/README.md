@@ -14,6 +14,8 @@ R5C2 的 `0.3.2-dns-v1` 候选增加代理端点批准解析器、绑定 DNS 回
 
 R5D 的 `0.3.2-entry-auth-v1` 候选增加 Session 密封、专属 Worker 显示材料、私有访问头与最终日志/HTTP 清洗。候选 3 的 534 项控制测试、真实客户端/恢复、五类材料拒绝及凭据扫描已通过 [隔离验收](../entry-authentication-acceptance-2026-09-15.md)，生产未部署。入口配置、维护包与匹配回退见 [访问说明](../entry-auth/README.md)。
 
+R4B 新候选在 Home runtime 清单增加 `session_auth_version: 1`，与已有 `browser_shutdown_version: 1` 一起用于迁移/启动前协商；缺失字段是未知，不能从镜像文件存在推断线上支持。该元数据变更的 534 项控制测试和 r7 客户端 QA 见 [阶段验收](../target-client-migration-acceptance-2026-09-15.md)。生产控制器仍为旧 lifecycle；新 Adapter 会拒绝要求不匹配的新 Worker，同时保留停止和清理能力。
+
 ## 身份与恢复
 
 新 Worker 使用按宿主机 Home 路径 SHA-256 生成的固定容器名，并带 `io.browser-platform.*` 标签：`version`、`scope`、`owner`、`home`、`home_hash`、`app`、`profile`、`operation`、`session`。`scope` 绑定 SealSkin 状态文件的宿主机路径。应用 overrides 不能覆盖这些字段或替换 Home 挂载。
