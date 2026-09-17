@@ -13,7 +13,7 @@
 
 `https://mysession.azhen.de/` 承载 SealSkin 会话与显示通道。入口会自动跳转并授权，不把 Session URL 保存到永久笔记。Work 现使用带正常退出和显示认证能力的兼容 Firefox/Wayland 代次；Personal 已切换到 r9/fill-r10、新 Home 与受管理代理。旧 Personal、r7 和 Work Home、加密备份及回退材料仍保留；部署范围见 [开发进度](progress.md#deployment)。
 
-[入口登录](../infra/sealskin/entry-auth/README.md) 已随 R4B 上线。仍保存上述固定地址；首次进入或登录到期时先登录，再进入获授权的 Profile。入口首页可退出登录，退出会断开该登录的画面，浏览器数据保留。再次登录后打开固定入口可重新连接；打开第二个完整画面会接管前一个画面的控制。服务器端生产登录、交接与最终 Session 已通过；用户也已在目标 Mac/Trilium 确认正式登录、Personal 铺满/点击/图片预览和 Work 打开正常。
+[入口登录](../infra/sealskin/entry-auth/README.md) 已随 R4B 上线。仍保存上述固定地址；首次进入或登录到期时先登录，再进入获授权的 Profile。入口首页可退出登录，退出会断开该登录的画面，浏览器数据保留。再次登录后打开固定入口可重新连接；打开第二个完整画面会接管前一个画面的控制。服务器端生产登录、交接与最终 Session 已通过；用户也已在目标 Mac/Trilium 确认正式登录、Personal 铺满/点击/图片预览和 Work 打开正常。R6A 候选新增首页“环境列表与状态”链接（`/manage/`）用于只读查看授权环境的记录状态、最近健康采样与环境产物；该候选尚未部署生产，Trilium 中的实际显示未测。
 
 ## 常用操作
 

@@ -8,6 +8,7 @@
 
 | 日期 / 记录 | 验证内容 | 范围与后续关系 |
 | --- | --- | --- |
+| 2026-09-17 · [R6A 授权环境列表与只读环境摘要](../../infra/sealskin/environment-list-acceptance-2026-09-17.md) | 12 项新增 Go 测试（网关权限边界、脱敏、只读、真实网关端到端）、全模块 138 项测试、vet、checks 镜像 race | 候选代码与二进制未部署生产；真实浏览器/Trilium、组合 QA 归管理面第 5 步；R2 退出登录/Debian 13 保持 |
 | 2026-09-15–17 · [R4B 迁移能力修复与客户端阶段验收](../../infra/sealskin/target-client-migration-acceptance-2026-09-15.md) | 534 项控制/10 项准备；r9/fill-r10 与 Work Wayland/存储/入口/秘密边界；39 文件生产包、实际维护、目标 Mac 及 Caddy/Docker/VPS 重启检查 | 共享控制器、账号入口、Work 兼容镜像和 r9 Personal 已部署；公网认证、目标 Mac 和正式 Caddy/Docker/VPS 同代次恢复通过，旧 Home/备份保留。R2 的退出全部登录与 Debian 13 仍待外部条件 |
 | 2026-09-15 · [R2B 旧 Firefox 加密恢复](../../infra/sealskin/legacy-browser-recovery-acceptance-2026-09-15.md) | 固定旧 Firefox/Wayland 真实三类浏览器存储、正常关闭、旧格式 age 加密往返、新私有根读回、错误路径与 QA 清理 | 独立 QA；源代次先退出，生产四容器/五份配置保持；真实生产 Home、linger、主机重启、Debian 13 和 R4B 仍未测 |
 | 2026-09-15 · [R5E r7 组合](../../infra/sealskin/release-combination-acceptance-2026-09-15.md) | 23 项实际组合、101 项备份、r7 新私有根数据/资产恢复 | 代码/组合 QA/清理/文档已收尾；原失败保留，生产与目标客户端未迁移 |

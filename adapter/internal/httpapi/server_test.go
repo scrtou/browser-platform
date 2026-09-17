@@ -17,15 +17,18 @@ import (
 )
 
 type fakeProfiles struct {
-	ensureCalls   int
-	session       sealskin.Session
-	err           error
-	target        string
-	health        profile.HealthReport
-	healthErr     error
-	healthCalls   int
-	healthOptions []profile.HealthOptions
-	healthDelay   time.Duration
+	ensureCalls      int
+	session          sealskin.Session
+	err              error
+	target           string
+	health           profile.HealthReport
+	healthErr        error
+	healthCalls      int
+	healthOptions    []profile.HealthOptions
+	healthDelay      time.Duration
+	environments     map[string]profile.EnvironmentSummary
+	environmentErr   error
+	environmentCalls []string
 }
 
 func TestUnsupportedRuntimeReturnsUnavailableWithoutSessionAddress(t *testing.T) {
@@ -49,6 +52,18 @@ func (f *fakeProfiles) Health(ctx context.Context, _ string, opts profile.Health
 		}
 	}
 	return f.health, f.healthErr
+}
+
+func (f *fakeProfiles) Environment(_ context.Context, id string) (profile.EnvironmentSummary, error) {
+	f.environmentCalls = append(f.environmentCalls, id)
+	if f.environmentErr != nil {
+		return profile.EnvironmentSummary{}, f.environmentErr
+	}
+	summary, ok := f.environments[id]
+	if !ok {
+		return profile.EnvironmentSummary{}, profile.ErrProfileNotFound
+	}
+	return summary, nil
 }
 
 func (f *fakeProfiles) Ensure(context.Context, string) (sealskin.Session, error) {

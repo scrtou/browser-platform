@@ -22,6 +22,7 @@ var messages = map[string]bool{
 	"HTTP server failure": true, "profile health unavailable": true, "render browser entry": true,
 	"reject SealSkin session URL": true, "display authorization unavailable": true, "entry pre-check skipped": true,
 	"render recovery hint": true, "profile entry failed": true,
+	"environment summary unavailable": true, "render environment list": true,
 }
 
 var identifier = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)

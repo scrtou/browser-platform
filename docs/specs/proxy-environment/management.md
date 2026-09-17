@@ -1,143 +1,188 @@
-# 环境管理面设计：访问、代理、指纹与关闭
+# 远程浏览器管理面设计：新增/修改/删除、代理、指纹与访问
 
-状态：**设计提案，未实施**。本文把账号访问、手动代理、已验收指纹选择和手动关闭纳入现有 Adapter/SealSkin 生命周期；不表示任何生产入口已经启用这些新操作。
+状态：**设计（2026-09-17 第 2 版，按用户需求修订）；第 1 步只读列表已完成候选代码与 Go 隔离测试，其余未实施，均未部署生产**。本文把远程浏览器的新增、修改、删除，每个浏览器的代理、指纹、起始页和访问账号，纳入现有 Adapter/SealSkin 生命周期；不表示任何生产入口已经启用这些操作。
 
-相关基础：[当前架构](../../design.md)、[代理与环境规格](specification.md)、[入口登录与 Session 访问](../../../infra/sealskin/entry-auth/README.md)、[Secret Store](../../../infra/sealskin/lifecycle/secret-store.md)、[R6 设计工作项](../../work-items/R6-2026-09-16-environment-management.md)。
+相关基础：[当前架构](../../design.md)、[代理与环境规格](specification.md)、[入口登录与 Session 访问](../../../infra/sealskin/entry-auth/README.md)、[Secret Store](../../../infra/sealskin/lifecycle/secret-store.md)、[按 generation 分配代理与网络](../../../infra/sealskin/lifecycle/README.md#按-generation-分配代理与网络)、[受管理 DIRECT](../../../infra/sealskin/lifecycle/direct-network.md)、[Camoufox 产物与验收](../../../infra/camoufox/README.md)、[R6 工作项](../../work-items/R6-2026-09-16-environment-management.md)。
+
+## 需求与修订说明
+
+2026-09-17 用户明确需求：一个面板，可以新增、删除、修改远程浏览器；为每个远程浏览器配置代理（不配置就直连）；配置指纹（固化的或自定义的）；配置浏览器页面的登录 URL 与账号密码。本文据此修订 2026-09-16 的第 1 版提案，主要变化：
+
+| 第 1 版（2026-09-16） | 第 2 版（本文） | 原因 |
+| --- | --- | --- |
+| 只在已有 Profile 之间选择，不新增/删除 | 面板可新增、修改、删除远程浏览器；Profile 定义改为服务端持久化的可修订记录 | 用户需求 |
+| 指纹只能从已验收产物中选择，客户端不能提交任何指纹字段 | 保留“固化指纹”目录选择；新增“自定义指纹”：用户只提交第 46.2 节的高层字段，服务端生成、验收、发布后才可绑定 | 用户需求；仍不接受任意 resolved config |
+| 代理是可选草稿，未说明“无代理”的网络形态 | 每个浏览器的网络二选一：受管理代理（http/https/socks5）或受管理 DIRECT；没有配置代理即 DIRECT，不是无 Guard 的裸容器网络 | 用户需求“不配置就直连”与无直连回退原则 |
+| 访问只沿用现有账号表，未在面板管理 | 面板显示每个浏览器的固定入口 URL，可创建/重置/禁用访问账号并分配浏览器 | 用户需求“登录 URL 和账号密码” |
+| 删除环境不实现 | 删除 = 停止并确认资源为零 → Home 归档（不立即物理删除）→ 撤销应用/策略/授权；物理清除是单独管理员动作 | 用户需求 + Home 删除保护 |
+
+本文对“浏览器页面登录 URL 和账号密码”的理解是：面板中每个远程浏览器展示其固定入口地址（供 Trilium 笔记保存），并可管理登录该入口所用的平台账号与密码。目标网站的账号密码自动填充不在本设计内；若用户实际指的是后者，须另建设计（涉及 Secret Store 注入与浏览器内自动登录，风险和验收都不同）。
 
 ## 目标与边界
 
-用户可以在一个受保护的管理页面中：
+用户可以在一个受保护的管理面板中：
 
-1. 登录并只查看自己获授权的环境。
-2. 从已经生成、验证和发布的环境产物中选择一个指纹环境。
-3. 录入代理配置，经过隔离测试后绑定到下一次启动。
-4. 安全关闭当前环境，保留 Home 和配置。
+1. 登录后查看自己获授权的远程浏览器列表、记录状态、最近健康采样与环境产物身份（已由 R6A 实现候选）。
+2. 新增远程浏览器：填写名称、起始页 URL、选择固化指纹或提交自定义指纹规格、选择代理或留空（DIRECT）、指定可访问的账号。
+3. 修改远程浏览器：名称、起始页、代理、指纹、访问账号；涉及指纹/代理/引擎的修改只在浏览器停止时允许，并在下一代次生效。
+4. 删除远程浏览器：先安全关闭并确认资源为零，Home 归档保留，撤销访问与配置引用。
+5. 管理访问账号：创建账号、重置密码、禁用、分配浏览器；查看每个浏览器的固定入口 URL。
+6. 安全关闭运行中的浏览器（复用现有 Stop）。
 
-客户端不能提交任意 Camoufox 配置、挂载路径、Docker 参数、SealSkin Session URL 或代理密码。Trilium 继续保存稳定的 Profile 入口；管理页面只负责选择和发起受保护的操作。
+客户端不能提交 Docker 参数、挂载路径、SealSkin Session URL、镜像引用、resolved config、seeds 或代理密码明文之外的任何后端资源标识；所有后端对象由服务端按目录与修订解析。Trilium 继续保存稳定的固定入口地址；面板只负责配置和发起受保护的操作。
 
-本提案不提供在线修改运行中浏览器的指纹或代理，不把关闭操作实现为删除 Home，也不新增第二个 Docker 生命周期所有者。R5D 入口与 R4B 的 r9 App/策略组合现已部署生产；实现前须以该实际账号、Profile 授权、生命周期与网络状态为基线，并等待 R4B/R2 剩余验收收尾。
+本设计不提供在线修改运行中浏览器的指纹或代理，不把删除实现为立即物理清除 Home，不新增第二个 Docker 生命周期所有者，不修改 Trilium Core。
 
-## 现有基础与职责
+## 现有基础与职责变化
 
-| 能力 | 现有基础 | 本提案的扩展 |
+| 能力 | 现有基础（截至 2026-09-17） | 本设计的变化 |
 | --- | --- | --- |
-| 账号登录 | R5D 的 Adapter 账号表、PBKDF2-SHA256、短期 `__Host-` Cookie、CSRF、Origin 检查和限速 | 增加环境级能力授权和管理页面接口；不使用长期 HTTP Basic 作为显示凭据 |
-| 显示访问 | Adapter 一次性交接、显示 Cookie、Session/主体/Profile/当前绑定核对 | 管理操作完成后重新交接；授权撤销立即取消显示请求 |
-| 指纹产物 | `browser_environments`、不可变 `environment_artifacts`、Camoufox 摘要和成功报告 | 只能从已批准产物中选择；同一个 Home 不在运行中切换指纹 |
-| 代理 | `proxies`、`network_policies`、R5A 协议矩阵、R5B Secret Store、Guard/Relay | 增加短期代理草稿、隔离探针和下一代绑定流程 |
-| 生命周期 | Adapter `Ensure`/`Stop`/`Reconcile`、SealSkin Session/Worker/Guard/Relay | 关闭按钮调用现有 Stop；不直接操作 Docker 或删除数据 |
-
-Adapter 负责业务授权、修订和操作日志；SealSkin 继续负责 Session 与 Docker 资源；Relay 只得到运行时所需的代理密钥；Worker 不得到主密钥或上游代理凭据。
+| Profile 定义 | Adapter 启动时从配置文件 `profiles` 数组静态加载，改动需改文件并重启 | 改为 Adapter 私有的 **Profile 目录**（`profiles.json`，version/revision，flock + fsync + 原子替换，同现有 journal 保护），运行中可增删改并按修订核对；配置文件中的 `profiles` 只作首次导入或只读兼容 |
+| 账号 | `entry-users.json` version 1：账号、PBKDF2 派生值、Profile 列表、禁用；只有 CLI 管理 | 升级为 version 2：增加 `role`（`admin`/`user`）；面板由 admin 创建/重置/禁用账号并分配浏览器；CLI 继续可用；账号表变化仍撤销现有登录 |
+| 应用定义 | SealSkin `installed_apps.yml` 由离线工具（`sealskin-install-app`、`prepare-sealskin.py`）经管理员 API 安装，拒绝覆盖 | Adapter 新增仅用于管理面的 **管理员 SealSkin 客户端**（独立密钥，只调用应用安装/更新/删除），按 Profile 修订生成应用定义；生命周期 API 仍用原用户身份 |
+| 网络策略 | `profile-network-policies.json` 由管理员离线写入，策略 SHA 固定到应用与 Profile | 由 Adapter 管理面写入新修订（只追加，不改历史修订），SHA 计算沿用控制器规则；控制器已监视配置路径变化 |
+| 代理凭据 | Secret Store：CLI 导入版本化凭据并授权到 owner/Profile/Home/App，撤销走控制 API | 面板创建代理草稿时由 Adapter 调用同一导入路径（tmpfs 0600 输入、只返回引用）；草稿过期/失败即撤销 |
+| DIRECT | R5C1 候选已隔离验收，生产未部署，需要主机 IPv4 证据挂载 | “无代理”默认使用 DIRECT 策略；部署前置条件列入实施顺序，不用裸网络代替 |
+| 指纹产物 | `environment.py generate` + `acceptance.py --phase all --recreations 10` 离线生成/验收，产物绑定精确镜像摘要 | 新增 **环境目录**（固化产物 + 验收报告索引）与 **生成作业**：自定义指纹由服务端在隔离容器中生成并验收，通过后进入目录 |
+| Home | `POST /api/homedirs` 创建，删除受 R3 保护（有会话/容器/占用/启动日志即拒绝） | 新增：先 Stop 并确认为零，再把 Home 目录移到归档目录；物理清除需管理员单独执行且要求已有加密备份 |
+| 生命周期 | Adapter Ensure/Stop/Reconcile/Resume，SealSkin Session/Worker/Guard/Relay | 不变；面板的关闭按钮调用 Stop；启动仍走固定入口的 launch plan 核对 |
 
 ## 核心对象
 
-第一版可以把一个可选择的环境直接建模为一个独立 Profile。每个 Profile 绑定一套不可变组合：
-
 ```text
-Profile / 环境槽位
-├── 独立 persistentHome
-├── EnvironmentArtifact（引擎、指纹、屏幕、DPR、语言、时区）
-├── ProxyConfig 修订或 DIRECT NetworkPolicy 修订
-├── 受验收的 Worker 镜像与能力版本
-└── ProfileAccess（账号与能力）
+Browser（远程浏览器，= Profile 记录，可修订）
+├── id（固定，用于 /browser/{id}/；创建后不可改）
+├── label、start_url
+├── engine：camoufox（新建默认）| firefox-legacy（仅保留现有 Work，不能新建）
+├── environment_ref：EnvironmentArtifact ID + 摘要（来自环境目录）
+├── network_ref：NetworkPolicy ID + SHA（DIRECT 或 proxy_required 修订）
+├── home_name（创建时生成，固定）
+├── application_id（由服务端派生，固定到 environment_ref/network_ref 修订）
+├── required_runtime_capabilities（由目标镜像标签派生）
+├── enabled（停用后禁止新的启动/复用，Home 保留）
+└── revision、updated_by、updated_at
 ```
 
-如果将来需要一个 Profile 下维护多个槽位，再增加 `environment_slots` 目录；当前不为“启动时随意拼接指纹、代理和 Home”建立新的组合器。
-
-建议补充的 Adapter 元数据如下：
-
-| 对象 | 关键字段 | 生命周期 |
+| 对象 | 关键字段 | 生命周期与约束 |
 | --- | --- | --- |
-| `profile_access` | `subject`, `profile_id`, `capabilities`, `revision`, `enabled` | 修订不可变；账号变更撤销登录 |
-| `proxy_draft` | `id`, `owner`, `type`, `endpoint`, `secret_ref`, `probe_status`, `expires_at` | 短期、一次绑定或过期删除；不保存明文密码 |
-| `launch_plan` | `id`, `subject`, `profile_id`, 精确环境/代理/策略摘要, `expires_at`, `used_at` | 由服务端创建，短期、一次性、不可转移 |
-| `audit_event` | `subject`, `profile_id`, `operation_id`, `event`, 安全摘要, `result` | 只记修订和结果，不记秘密、Cookie 或完整指纹 |
+| `profiles.json`（Profile 目录） | `version`, `revision`, `browsers[]`（上表） | Adapter 独占写入；每次修改递增全局与条目修订，写前核对当前修订（乐观锁）；运行中的浏览器只允许改 `label`、`start_url`、账号分配、`enabled` |
+| `environment_catalog/` | `artifacts/<id>.json`、`acceptance/<id>.json`、`index.json`（ID、引擎、镜像摘要、locale/timezone/screen/DPR、状态 `accepted`/`generating`/`failed`/`retired`、来源 `frozen`/`custom`） | 只追加；`accepted` 必须有完整成功报告且报告绑定同一镜像摘要；退役只改状态，不删文件 |
+| `environment_job` | `id`, `subject`, `spec`（46.2 高层字段）, `image_digest`, `status`, `started_at`, `finished_at`, `artifact_id`, `failure_code` | 一次只运行一个作业；在隔离容器（默认拒绝网络、只读根、内存/CPU 上限）执行 generate → verify → acceptance；失败保留报告，不发布 |
+| `proxy_draft` | `id`, `subject`, `type`, `host`, `port`, `auth`, `secret_ref`, `probe_status`, `expires_at` | 短期（默认 30 分钟）；凭据只进 Secret Store，Adapter/日志只保留引用；探针通过后固化为 ProxyConfig + NetworkPolicy 修订并绑定到浏览器的下一代次 |
+| `network_policy` 修订 | 现有 registry 格式；`mode=direct` 或 `proxy_required` | 只追加；DIRECT 修订使用固定解析器模板；被引用的修订不删除 |
+| `account` | 现有字段 + `role` | `admin` 可管理浏览器/账号；`user` 只能查看/启动/关闭被分配的浏览器 |
+| `launch_plan` | `subject`, `browser_id`, `revision`, 环境/策略/能力摘要, `expires_at`, `used_at` | 固定入口启动前由服务端生成并核对；修订漂移、过期、跨账号、重复使用拒绝 |
+| `audit_event` | `subject`, `browser_id`, `revision`, `event`, `result`, 安全摘要 | 只记修订和结果，不记密码、Cookie、Session URL、完整指纹或代理主机名以外的敏感值 |
+| `archive/<home>-<timestamp>/` | 归档的 Home 目录 + `archive.json`（原浏览器记录、修订、时间、操作者） | 删除浏览器后保留；物理清除是单独管理员命令，要求已有加密备份或显式确认 |
 
-已有 `profiles`、`environment_artifacts`、`proxies`、`network_policies`、`runtime_bindings` 和 `audit_events` 继续作为事实来源。修订写入必须在 Profile 停止、Home 占用明确和生命周期锁保护下完成。
+## 面板功能与服务端流程
 
-## 访问与授权流程
+### 列表与状态
 
-访问页面使用现有登录入口：
+沿用 R6A：只读，来自 Profile 目录、journal 与缓存健康报告；增加 `enabled`、`revision`、指纹来源（固化/自定义）、代理摘要（类型、主机、端口、DIRECT）和固定入口 URL。
+
+### 新增远程浏览器
 
 ```text
-HTTPS 登录
-  → 短期登录 Cookie
-  → 列出授权 Profile 与状态
-  → 选择 Profile / 已批准环境产物
-  → 选择已有代理或提交代理草稿
-  → 服务端创建 launch_plan
-  → 启动/复用前再次核对授权、修订和当前绑定
-  → 交接一次性 Session 显示访问
+admin 提交 {label, start_url, environment: {artifact_id} | {custom_spec}, proxy: {draft_id} | none, accounts[]}
+  → 校验字段；自定义指纹先创建 environment_job，作业 accepted 前浏览器保持 `draft`
+  → 分配 id/home_name；派生 application_id 与能力要求
+  → 网络：none → 复用/创建 DIRECT 修订；draft → 探针必须已通过，固化为 proxy_required 修订
+  → 写入 Profile 目录（draft → ready）
+  → 经管理员客户端安装 SealSkin 应用（拒绝覆盖已有 ID）；创建 Home
+  → 账号分配写入账号表；返回固定入口 URL
 ```
 
-客户端只提交选择项和 CSRF，不提交后端 Session 地址。服务端先生成 `launch_plan`，把账号、Profile、Home、环境产物摘要、代理/网络策略摘要和能力版本冻结在一起；启动时如果任一修订发生变化，计划失效并要求重新选择。
+创建过程中任一步失败，记录已完成的步骤并把浏览器留在 `draft`/`failed` 状态，允许重试或删除；不会留下无记录的应用、Home 或策略。
 
-推荐的最小接口：
+### 修改远程浏览器
+
+- 运行中：只允许 `label`、`start_url`（下次启动生效）、账号分配、`enabled=false`（停用后新启动拒绝，已运行代次不受影响）。
+- 停止且资源为零：允许更换指纹产物或代理/DIRECT；生成新的应用定义修订与策略修订，写入新的 Profile 修订；旧修订保留供回退与审计。同一 Home 更换引擎或关键指纹字段时提示风险（Cookie 与设备指纹不再匹配），并在审计中记录。
+- 引擎 `firefox-legacy` 的现有 Work 只能改标签、起始页、账号与启用状态；迁移到 Camoufox 按 R4B 的迁移准备流程另做。
+
+### 删除远程浏览器
+
+```text
+admin 请求删除 → 必须已停止且 records/workers/resources 为 0（否则 409 ENVIRONMENT_BUSY）
+  → 撤销该浏览器的显示授权与账号分配
+  → Profile 记录标为 `deleting`
+  → 归档 Home 目录到 archive/（同文件系统 rename；失败保持 `deleting`，可重试）
+  → 删除 SealSkin 应用定义；撤销该浏览器专属的 Secret Store 授权
+  → Profile 记录标为 `deleted`（保留在目录中供审计），固定入口返回 404
+```
+
+物理清除归档需要单独的管理员命令，并要求存在该 Home 的加密备份或显式的“无需备份”确认；本设计的面板不提供该按钮。
+
+### 代理配置
+
+沿用第 1 版的“草稿 → 探针 → 固化 → 下一代次生效”，并明确：
+
+1. 类型 `http`、`https`、`socks5`，认证 `none` 或用户名/密码；HTTPS 可选上游 CA。字段范围、地址类别与长度先校验；私网、metadata、宿主机地址拒绝。
+2. 凭据经 tmpfs 0600 输入进入 Secret Store，Adapter 只保存引用；草稿过期或探针失败即撤销引用。
+3. 探针在隔离网络中验证认证、TLS、DNS 与出口，不访问宿主机/私网/未批准地址；结果带出口国家/地区供一致性策略参考。
+4. 通过后创建不可变 ProxyConfig 与 `proxy_required` NetworkPolicy 修订；运行中的代次不热切换。
+5. 没有代理 = `mode=direct` 的受管理 DIRECT：Guard/网关仍强制、无 VPS 裸直连；主机缺少 IPv4 证据时创建拒绝并提示，不退回无 Guard 网络。
+
+### 指纹配置
+
+- **固化指纹**：从环境目录中状态为 `accepted`、镜像摘要与当前 Camoufox 镜像一致的产物中选择；面板只显示名称、引擎、locale/languages、timezone、screen/DPR、验收日期。
+- **自定义指纹**：用户提交第 46.2 节的高层字段（osFamily、locale、languages、timezone、screen、deviceScaleFactor、可选 geolocation 策略），服务端：
+  1. 按 46.2 的范围校验；
+  2. 创建 `environment_job`，在隔离容器中运行 `environment.py generate`（一次 BrowserForge + 固定转换器）；
+  3. 运行 `acceptance.py --phase all`（默认 `--recreations 10`，可配置下限）；
+  4. 通过后把产物与报告写入目录并标为 `accepted`，失败保留报告标为 `failed`；
+  5. 只有 `accepted` 才可绑定到浏览器；作业运行时浏览器保持 `draft`。
+- 不接受 UA、Canvas/Audio seed、字体、WebGL、`resolvedConfig`、`firefoxUserPrefs` 等低层字段；不允许运行时切换。
+- 每个自定义作业消耗约 1.5 GiB 内存与 1.5 CPU（沿用验收容器限制），一次只运行一个；主机可用内存不足时排队并提示。
+
+### 访问账号与登录 URL
+
+- 面板对每个浏览器显示固定入口 URL：`{public_base_url}/browser/{id}/`，并提示登录页 `{public_base_url}/auth/login`。
+- `admin` 可创建账号（账号 ID、初始密码经一次性显示或由用户自设）、重置密码、禁用/启用、分配/取消浏览器；`user` 只能修改自己的密码。
+- 密码继续使用 PBKDF2-SHA256（600,000 次）派生值，表中不存明文；账号表变化撤销现有登录与显示（沿用 R5D 行为，因此修改账号会让当前用户重新登录）。
+- 不提供长期 HTTP Basic、API token 或把凭据写入 Trilium 笔记的方式。
+
+### 安全关闭
+
+复用 `profile.Stop`/`Reconcile`：撤销显示、持久化停止意图、正常关闭浏览器、确认 Worker/Guard/Relay/网络/占用消失、保留 Home。停止失败或不明确时状态保持 `STOPPING`/`UNKNOWN`，允许重试或对账；按钮不能执行 `docker rm`、删除 Home 或跳过生命周期所有权检查。
+
+## 接口
 
 | 接口 | 用途 | 必要约束 |
 | --- | --- | --- |
-| `GET /manage/environments` | 返回账号获授权的 Profile、标签、状态和有限环境摘要 | 不泄漏未授权 Profile 是否存在，不返回完整 resolved config |
-| `POST /manage/launch-plans` | 创建一次性启动计划 | 校验能力、Home、代理、网络和 Profile 访问权；短 TTL |
-| `POST /browser/{profile}/start` | 启动或复用 | 需要 `start`、CSRF、幂等键和有效 launch plan |
-| `POST /browser/{profile}/stop` | 安全关闭 | 需要 `stop`、CSRF、幂等键；调用现有生命周期 Stop |
-| `POST /manage/proxy-drafts` | 创建代理草稿 | 只写 Secret Store 引用；限制类型、地址、端口和大小 |
-| `POST /manage/proxy-drafts/{id}/probe` | 隔离测试代理 | 受 SSRF、解析、认证、TLS、超时和网络策略约束 |
+| `GET /manage/`、`GET /manage/environments` | 列表与只读摘要（R6A） | `view`；不泄漏未授权浏览器 |
+| `POST /manage/browsers` | 新增浏览器 | `admin`、CSRF、幂等键；返回记录与固定入口 URL |
+| `GET /manage/browsers/{id}` | 单个浏览器详情（脱敏） | `view` |
+| `PATCH /manage/browsers/{id}` | 修改（按修订号乐观锁） | `admin`；指纹/代理变更要求已停止 |
+| `DELETE /manage/browsers/{id}` | 删除（归档 Home） | `admin`；要求已停止、资源为零 |
+| `POST /browser/{id}/start` | 启动或复用（现有） | `start`、CSRF、有效 launch plan |
+| `POST /browser/{id}/stop` | 安全关闭 | `stop`、CSRF、幂等键 |
+| `GET /manage/environments/catalog` | 固化指纹目录 | `admin`/`view` |
+| `POST /manage/environment-jobs` / `GET …/{id}` | 自定义指纹生成作业 | `admin`；一次一个；结果只含摘要与状态 |
+| `POST /manage/proxy-drafts`、`POST …/{id}/probe`、`GET …/{id}` | 代理草稿与探针 | `admin`；只写 Secret Store 引用 |
+| `GET/POST /manage/accounts`、`PATCH /manage/accounts/{id}` | 账号管理 | `admin`；密码只经表单 POST，响应不回显 |
 
-固定 `/browser/{profile}/` 入口继续可用；它只使用该 Profile 的已发布绑定，不允许通过查询参数切换指纹或代理。
-
-## 指纹选择规则
-
-- UI 只显示已通过环境验收、与账号授权匹配的名称和摘要，例如引擎、语言、时区、屏幕和 DPR。
-- `environmentArtifactId`、摘要和镜像必须由服务端从目录读取；客户端不能提交任意 Artifact JSON、UA、Canvas seed、字体或窗口字段。
-- 运行中的 Profile 不能修改环境产物。服务返回 `409 ENVIRONMENT_BUSY`，要求先安全关闭。
-- 同一 Home 默认只绑定同一套环境产物。改变屏幕、语言、时区、引擎或关键指纹字段时，创建新的 Profile/Home。
-- 选择成功不等于环境已启动；只有新的 generation 通过 Worker 产物、能力和运行时一致性门槛后才生效。
-- 对外只展示摘要和修订标识；完整产物、seeds、resolved config 和成功报告留在受保护的运行目录。
-
-## 手动代理规则
-
-代理配置采用“草稿 → 测试 → 固化 → 下一代生效”：
-
-1. 用户提交 `http`、`https` 或 `socks5` 类型、主机、端口和认证信息；先做格式、长度、地址类别和权限检查。
-2. 用户名/密码进入 Secret Store，Adapter 和日志只保留 `SecretRef`。草稿过期或测试失败时撤销临时引用。
-3. 探针在隔离网络中测试代理认证、TLS 主机名、DNS、出口和超时；禁止访问宿主机、metadata、私网和未批准管理地址。
-4. 通过后创建不可变 ProxyConfig/NetworkPolicy 修订，绑定到 Profile 的下一次 generation。运行中的代次不热切换。
-5. `proxy_required` 必须由 Guard/Relay 强制，代理失败时保持阻断；不能退回 VPS 直连。
-6. 代理地区与语言、时区、地理位置和一致性策略存在冲突时，拒绝启动或要求选择兼容的环境槽位。
-
-“测试通过”只代表代理链路符合本项目探针门槛，不代表所有目标网站可用；实际出口和一致性报告仍按原规格单独记录。
-
-## 手动关闭与状态
-
-界面把下列操作分开：
-
-| 操作 | 效果 | 权限 |
-| --- | --- | --- |
-| 关闭运行环境 | 撤销显示、写入停止意图、正常关闭浏览器并清理当前资源；Home 保留 | Profile `stop` |
-| 停用环境槽位 | 保留配置和 Home，禁止新的启动/复用 | 管理员或拥有 `manage` |
-| 删除环境 | 删除前必须经过独立备份、无运行代次和显式管理员流程 | 管理员；本提案不实现 |
-
-停止失败、响应不明确或资源清单不完整时，状态保持 `STOPPING`/`UNKNOWN`，显示访问阻断，允许重试或对账。按钮不能执行 `docker rm`、删除 Home 或跳过生命周期所有权检查。
+所有写操作要求登录、精确 Origin、CSRF、幂等键，产生审计事件；响应与日志不含密码、Cookie、Session URL、完整指纹或后端能力。
 
 ## 安全与验收门槛
 
-- 未授权账号不能列出、启动、查看健康状态或关闭其他 Profile；错误返回不能泄漏 Profile 存在性。
-- 登录密码限速、短期 Cookie、CSRF、精确 Origin、显示 Cookie 和 Session 绑定继续有效；账号或权限变更撤销现有显示访问。
-- 代理秘密不出现在客户端、Worker、镜像、Home、URL、普通日志或公开报告。
-- 任意代理不可绕过 Guard/Relay；直连探测、私网/metadata/宿主机访问和协议不支持时必须拒绝。
-- 指纹选择只能落到已通过验收的 Artifact 摘要；运行中变更必须拒绝，新的组合必须产生新的修订和 generation。
-- 关闭后确认 Worker、显示、Guard、Relay、网络和占用清理；Home 数据、journal、修订和审计保留。
-- launch plan 过期、重复使用、跨账号、跨 Profile 或修订漂移必须拒绝；所有修改具备幂等键和审计事件。
-- 固定 Profile URL、现有 Trilium 使用方式和生产 Work 会话保持兼容。
+- 未授权账号不能列出、创建、修改、删除、启动、查看健康或关闭其他浏览器；错误返回不泄漏存在性；`user` 角色没有任何写配置能力。
+- 指纹只能落到目录中 `accepted` 的产物；自定义作业失败不发布；运行中变更拒绝；新的组合产生新的应用/策略/Profile 修订与新代次。
+- 任意代理不可绕过 Guard/Relay；无代理即受管理 DIRECT；私网/metadata/宿主机访问、协议不支持时拒绝；代理凭据不出现在客户端、Worker、镜像、Home、URL、普通日志或公开报告。
+- 删除前确认 Worker、显示、Guard、Relay、网络与占用清理；Home 归档而非清除；journal、修订与审计保留。
+- launch plan 过期、重复使用、跨账号、跨浏览器或修订漂移拒绝；所有修改具备幂等键和审计事件。
+- 固定入口 URL、现有 Trilium 使用方式和生产 Work 会话保持兼容；现有静态配置的 Profile 在首次启用目录时原样导入。
 
 ## 实施顺序
 
-该设计归入 R6，实施时分为独立可验收的子项：
+该设计归入 R6，实施时分为独立可验收的子项；每个子项都保留固定入口 URL、Home 独占、Guard/Relay 无直连和现有生命周期所有权：
 
-1. 先做授权 Profile 列表和只读环境摘要，验证权限边界。
-2. 复用现有 Stop 增加管理页面关闭按钮，完成显示撤销、失败保留和清理验收。
-3. 增加已批准指纹环境的选择和 launch plan，完成 Home/Artifact/能力绑定验收。
-4. 增加代理草稿、Secret Store、隔离探针和下一代绑定，完成无直连回退验收。
-5. 在独立 QA 完成组合测试、备份/恢复、日志脱敏、客户端实机和回退后，再准备生产候选。
+1. **R6A 只读列表**（已完成候选代码与 Go 测试，2026-09-17）。
+2. **R6B 目录与角色**：Profile 目录（导入现有配置、修订、乐观锁、热更新）、账号 `role`、`stop` 能力与面板关闭按钮；修改 `label`/`start_url`/账号分配/`enabled`。
+3. **R6C 新增与删除（固化指纹 + DIRECT/现有代理修订）**：管理员 SealSkin 客户端、应用安装/删除、Home 创建与归档、launch plan；DIRECT 生产前置（主机 IPv4 证据、网关镜像、控制器能力）作为本步的部署条件。
+4. **R6D 代理草稿、探针与修订**：Secret Store 导入、隔离探针、`proxy_required` 修订与下一代次绑定。
+5. **R6E 自定义指纹作业**：环境目录、隔离生成/验收作业、失败保留与发布。
+6. **R6F 组合 QA 与生产候选**：独立 QA、真实客户端（Trilium/Mac）、备份/恢复、日志脱敏、回退演练后，才准备生产候选与部署。
 
-R4B、R2 和 R5D 的生产条件未因这份设计提案而完成；本文件不授权部署或改变现有 Profile。
+第 1 版中“关闭入口”作为第 2 步、“指纹选择”作为第 3 步的顺序已被上述顺序取代；R6A 的实现不受影响。R2 的退出登录与 Debian 13 仍待外部条件；本文件不授权部署或改变现有 Profile，R6A 候选也未部署。

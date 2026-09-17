@@ -86,6 +86,22 @@ type requestLogin struct {
 
 type contextKey struct{}
 
+// Grant is one Profile the current login may see on management pages. The
+// only capabilities today are "view" (list and read summaries) and "start"
+// (the existing fixed entry); stop and configuration are not granted here.
+type Grant struct {
+	Profile      string   `json:"profile_id"`
+	Capabilities []string `json:"capabilities"`
+}
+
+type grantsKey struct{}
+
+// ManagePath reports whether a request path belongs to the read-only
+// management surface served behind the login. Only GET is ever allowed there.
+func ManagePath(path string) bool {
+	return path == "/manage/" || path == "/manage/environments"
+}
+
 // BindingCheck must only inspect the current business binding. It must not
 // start, probe, resume or stop a generation in response to a display request.
 type BindingCheck func(context.Context, string, string) error
@@ -349,6 +365,46 @@ func (g *Gateway) allowed(actor, id string) bool {
 	return false
 }
 
+// grants lists the login's Profiles in a stable order. It only consults the
+// account table and the configured Profile set, never business state.
+func (g *Gateway) grants(actor string) []Grant {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	user := g.users[actor]
+	if !g.accountsReady || user.Disabled {
+		return nil
+	}
+	var result []Grant
+	for _, id := range user.Profiles {
+		if g.profiles[id] {
+			result = append(result, Grant{Profile: id, Capabilities: []string{"view", "start"}})
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Profile < result[j].Profile })
+	return result
+}
+
+// Grants returns the management grants the gateway attached to a request.
+// Without a gateway, or outside the management surface, there are none.
+func Grants(r *http.Request) ([]Grant, bool) {
+	grants, ok := r.Context().Value(grantsKey{}).([]Grant)
+	return grants, ok
+}
+
+// ContextWithGrants attaches a subject and grants exactly as the gateway does
+// for the management surface. It exists for handler tests and carries no
+// cookie, ticket or backend capability.
+func ContextWithGrants(ctx context.Context, subject string, grants []Grant) context.Context {
+	ctx = context.WithValue(ctx, contextKey{}, requestLogin{Data: login{Actor: subject, Audience: "entry"}})
+	return context.WithValue(ctx, grantsKey{}, grants)
+}
+
+// Subject returns the authenticated account ID, or "" without a login.
+func Subject(r *http.Request) string {
+	identity, _ := r.Context().Value(contextKey{}).(requestLogin)
+	return identity.Data.Actor
+}
+
 func safeHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
@@ -429,6 +485,17 @@ func (g *Gateway) serveEntry(w http.ResponseWriter, r *http.Request, next http.H
 			Profiles []string
 			CSRF     string
 		}{links, identity.Data.CSRF})
+		return
+	}
+	if ManagePath(r.URL.Path) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		ctx := context.WithValue(r.Context(), contextKey{}, identity)
+		ctx = context.WithValue(ctx, grantsKey{}, g.grants(identity.Data.Actor))
+		next.ServeHTTP(w, r.WithContext(ctx))
 		return
 	}
 	id := profilePath(r.URL.Path)
@@ -699,6 +766,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
 <html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>浏览器</title><style>body{font:16px system-ui;margin:2rem}li{margin:1rem 0}button{font:inherit;padding:.5rem 1rem}</style>
 <h1>浏览器</h1><ul>{{range .Profiles}}<li><a href="/browser/{{.}}/">{{.}}</a></li>{{end}}</ul>
+<p><a href="/manage/">环境列表与状态</a></p>
 <form method="post" action="/auth/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button>退出登录</button></form></html>`))
 
 // Keep format errors independent of request contents in proxy callbacks.

@@ -23,6 +23,7 @@ type profileService interface {
 	Ensure(context.Context, string) (sealskin.Session, error)
 	BootstrapTarget(string, string) (string, error)
 	Health(context.Context, string, profile.HealthOptions) (profile.HealthReport, error)
+	Environment(context.Context, string) (profile.EnvironmentSummary, error)
 }
 
 // HealthUI controls the entry page's read-only pre-check. EntryWait bounds how
@@ -64,6 +65,10 @@ func New(profiles profileService, listSessions func(context.Context) ([]sealskin
 	mux.HandleFunc("GET /browser/{profile}/health", server.profileHealth)
 	mux.HandleFunc("POST /browser/{profile}/start", server.start)
 	mux.HandleFunc("GET /bootstrap/{profile}/{operation}", server.bootstrap)
+	// Management pages exist only behind the access gateway, which attaches
+	// the login's grants; without them both handlers answer 404.
+	mux.HandleFunc("GET /manage/{$}", server.managePage)
+	mux.HandleFunc("GET /manage/environments", server.manageEnvironments)
 	server.handler = securityHeaders(mux)
 	if server.access != nil {
 		server.handler = server.access.Wrap(server.handler)

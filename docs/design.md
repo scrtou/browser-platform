@@ -142,17 +142,18 @@ Trilium Core 保持原样。主动原生 copy/paste 事件与 Selkies 面板支�
 
 远程→本机仅支持纯文本，未交付反向图片、HTML/RTF 或文件下载。Unicode 输入按 code point 处理；系统 `LC_ALL` 使用 POSIX UTF-8 locale，不能直接套用浏览器 BCP 47 标签。显示、组合输入、文件与重连的证据按平台分列于 [客户端矩阵](client-matrix.md)，CDP 事件不能替代 Mac 原生输入法/Finder 验收。
 
-## R6 管理面设计提案
+## R6 远程浏览器管理面
 
-新增的账号访问、手动代理、指纹选择和环境关闭统一放在 Adapter 管理面，具体契约见[环境管理面规格](specs/proxy-environment/management.md)。这部分目前是设计提案，尚未实现或部署。
+2026-09-17 用户需求：一个面板可以新增/删除/修改远程浏览器，为每个浏览器配置代理（不配置即直连）、指纹（固化或自定义）、浏览器页面的登录 URL 与账号密码。具体契约见[管理面规格第 2 版](specs/proxy-environment/management.md)；除第 1 步只读列表外尚未实现，均未部署。相对第 1 版提案的架构变化：
 
-- 访问继续使用 R5D 的 HTTPS 表单登录、短期 `__Host-` Cookie、CSRF、精确 Origin 和当前 Profile/Session 授权；增加 `view`、`start`、`stop`、`configure_proxy`、`select_environment` 等环境级能力。不把长期密码或 SealSkin 能力交给 Trilium 客户端。
-- 指纹只能从已经生成、验收和发布的 `EnvironmentArtifact` 中选择。第一版每个可选择组合使用独立 Profile/Home，避免同一组 Cookie 在运行中切换引擎、屏幕、语言、时区或其他指纹字段；客户端不提交任意 resolved config。
-- 手动代理采用草稿、隔离探针、Secret Store 引用和不可变 ProxyConfig/NetworkPolicy 修订的顺序。Worker 继续只经 Guard/Relay 出站，代理失败保持阻断；代理和指纹的变化在新的 generation 生效。
-- 关闭按钮复用现有 `profile.Stop`/`Reconcile`，先撤销显示访问、持久化停止意图并确认资源清理，保留 Home；关闭、停用和删除是三个不同的权限动作。
-- 启动前由服务端生成一次性 `launch_plan`，冻结账号、Profile、Home、Artifact、代理、网络策略和能力摘要。修订漂移、过期、跨账号或重复使用都拒绝，不能通过查询参数切换固定 Profile 的后端资源。
+- **Profile 定义从静态配置变为 Adapter 私有的可修订目录**（`profiles.json`）：运行中可增删改，写入沿用 journal 的 flock/fsync/原子替换与乐观锁；现有配置文件中的 Profile 首次启用时原样导入。Adapter 仍是业务授权与 Profile 状态所有者，SealSkin 仍是唯一的 Session/Docker 生命周期所有者。
+- **Adapter 增加只用于管理面的管理员 SealSkin 客户端**（独立密钥），负责按 Profile 修订安装/更新/删除应用定义与创建 Home；策略修订与 Secret Store 导入沿用控制器已有格式与授权模型，只追加不改历史。生命周期调用继续使用原用户身份。
+- **网络二选一**：受管理代理（http/https/socks5，草稿 → 隔离探针 → 不可变修订 → 下一代次）或受管理 DIRECT（R5C1）。“不配置代理”就是 DIRECT，不是无 Guard 的裸容器网络；DIRECT 的生产前置（主机 IPv4 证据、网关镜像、控制器能力）成为部署条件。
+- **指纹两种来源**：固化产物目录（`accepted` 且镜像摘要匹配）或自定义：用户只提交规格 46.2 的高层字段，服务端在隔离容器中生成、完整验收后发布到目录才可绑定；不接受低层字段，不允许运行中切换。
+- **访问**：账号表增加 `admin`/`user` 角色，面板可创建/重置/禁用账号并分配浏览器，展示每个浏览器的固定入口 URL；密码仍只存 PBKDF2 派生值。此处的“登录 URL 与账号密码”指平台入口，不含目标网站自动登录。
+- **删除 = 停止并确认资源为零 → Home 归档 → 撤销应用/策略/授权**；物理清除是要求加密备份的单独管理员命令。关闭复用 `profile.Stop`/`Reconcile`；启动前仍由服务端生成一次性 `launch_plan`。
 
-该提案归入 R6。实现前先完成 R4B/R2 的既有生产条件；实现顺序为只读环境列表、关闭入口、已验收指纹选择、代理草稿/探针，最后才准备生产候选和回退。
+实施顺序改为：R6A 只读列表（已完成候选）→ R6B 目录与角色/关闭 → R6C 新增与删除（固化指纹 + DIRECT/现有代理）→ R6D 代理草稿与探针 → R6E 自定义指纹作业 → R6F 组合 QA 与生产候选。R4B 收尾后用户决定不等待 R2 剩余条件；R6A 候选未部署。
 
 <a id="decisions"></a>
 ## 设计决策

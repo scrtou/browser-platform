@@ -9,9 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"browser-platform/adapter/internal/sealskin"
 	"browser-platform/adapter/internal/state"
@@ -24,7 +27,10 @@ var (
 )
 
 type Definition struct {
-	ID                  string  `json:"id"`
+	ID string `json:"id"`
+	// Label is an optional display name for management pages; it never
+	// replaces the ID used by entry paths, journals or authorization.
+	Label               string  `json:"label,omitempty"`
 	ApplicationID       string  `json:"application_id"`
 	HomeName            string  `json:"home_name"`
 	StartURL            string  `json:"start_url"`
@@ -503,9 +509,35 @@ func randomID() (string, error) {
 	return hex.EncodeToString(value), nil
 }
 
+// DisplayLabel returns the configured label or, when none is set, the ID.
+func (d Definition) DisplayLabel() string {
+	if d.Label == "" {
+		return d.ID
+	}
+	return d.Label
+}
+
+func validLabel(label string) bool {
+	if label == "" {
+		return true
+	}
+	if !utf8.ValidString(label) || utf8.RuneCountInString(label) > 64 || strings.TrimSpace(label) != label {
+		return false
+	}
+	for _, char := range label {
+		if !unicode.IsPrint(char) {
+			return false
+		}
+	}
+	return true
+}
+
 func validateDefinition(definition Definition) error {
 	if definition.ID == "" || definition.ApplicationID == "" || definition.HomeName == "" || definition.StartURL == "" {
 		return errors.New("id, application_id, home_name and start_url are required")
+	}
+	if !validLabel(definition.Label) {
+		return errors.New("label must be at most 64 printable characters without surrounding whitespace")
 	}
 	for name, version := range definition.RequiredRuntimeCapabilities {
 		if version != 1 || (name != "browser_shutdown_version" && name != "session_auth_version") {

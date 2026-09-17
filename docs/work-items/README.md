@@ -18,7 +18,8 @@
 | [R3 生命周期与数据保护](R3-2026-09-13-lifecycle-protection.md) | [R3](../roadmap.md#r3) | 已收尾 | 2026-09-13 上线 `0.3.2-lifecycle-v2`；9 项隔离演练与发布回归通过；生产未启用空闲回收/门槛（用户决定）。下一项 R4 可开始 |
 | [R4A 客户端边界与 Camoufox 隔离迁移](R4A-2026-09-13-client-migration-qa.md) | [R4](../roadmap.md#r4) | 已收尾 | 2026-09-14 Linux 矩阵、非文本评估、11 项 Camoufox 网络/停止重建与迁移候选完成；QA 清理，生产未切换；R4B 实机与维护条件保留 |
 | [R4B 目标客户端与实际迁移](R4B-2026-09-14-target-client-migration.md) | [R4](../roadmap.md#r4) | 已收尾 | 2026-09-17 共享控制器、账号入口、Work 兼容镜像和 r9/fill-r10 Personal 切换生产；服务器端、目标 Mac 生产验收及正式 Caddy/Docker/VPS 重启通过，DEV-040–044 已解决；退出登录/Debian 13 归 R2，下一项按进度/计划重新选取 |
-| [R6 账号、代理、指纹选择与环境关闭设计](R6-2026-09-16-environment-management.md) | [R6](../roadmap.md#r6) | 待启动 | 设计提案已登记；R4B 已收尾，R2 剩余退出登录/Debian 13 是否作为前置由用户决定，实现按账号、关闭、指纹槽位、代理草稿顺序推进，当前未改代码或生产 |
+| [R6 远程浏览器管理面（设计与父项）](R6-2026-09-16-environment-management.md) | [R6](../roadmap.md#r6) | 进行中（父项） | 2026-09-17 按用户需求修订为第 2 版设计（新增/删除/修改浏览器、代理/DIRECT、固化/自定义指纹、入口账号）；子项 R6A 已收尾（未部署），下一子项 R6B 未开始；生产未变 |
+| [R6A 授权环境列表与只读环境摘要](R6A-2026-09-17-environment-list.md) | [R6](../roadmap.md#r6) / 管理面第 1 步 | 已收尾 | 2026-09-17 网关 `view`/`start` 授权、只读摘要服务、`/manage/` 页面与 JSON；12 项新增测试、138 项全模块、vet、race 通过；候选未部署，账号表格式未变。下一子项 R6B 未开始 |
 | [R5A 上游代理协议与认证](R5A-2026-09-14-proxy-protocols.md) | [R5](../roadmap.md#r5) | 已收尾 | 六组/70 项网络检查、三种错误密码、181 项 Python 与 r6 正常退出修复通过；QA 清理和生产前后核对完成，未部署；可开始 R5B |
 | [R5B Secret Store、撤销与加密恢复](R5B-2026-09-14-secret-store.md) | [R5](../roadmap.md#r5) | 已收尾 | 226 项控制端、39 项备份/挂载测试、18 项运行检查、加密新环境恢复及扫描通过；QA/文档收尾、生产保留核对完成，未部署；可开始 R5C |
 | [R5C1 受管理 DIRECT 隔离](R5C1-2026-09-14-direct-isolation.md) | [R5](../roadmap.md#r5) / R5C | 已收尾 | 274 项控制端、25 项挂载/Guard、21 项核心运行检查、QA 清理及文档/构建静态核对通过，生产保持，未部署；下一项 R5C2 DNS/TTL，R5C3 一致性仍待后续 |
