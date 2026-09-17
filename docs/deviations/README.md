@@ -8,6 +8,7 @@
 
 | 编号 | 工作项 | 差异 | 处理方式 | 状态 |
 | --- | --- | --- | --- | --- |
+| [DEV-2026-09-17-045](DEV-2026-09-17-045-manage-list-role.md) | [R6A](../work-items/R6A-2026-09-17-environment-list.md) / [R6](../work-items/R6-2026-09-16-environment-management.md) | R6A 候选对任意登录账号放行 `/manage/`，用户 2026-09-17 补充要求管理面板仅管理员、浏览器入口用各自账号 | 修复实现，归入 R6B：账号表 v2 `role`、网关按角色放行、旧账号迁移为 `user`；候选修复前不发布 | 待处理 |
 | [DEV-2026-09-17-044](DEV-2026-09-17-044-production-maintenance-runner.md) | [R4B](../work-items/R4B-2026-09-14-target-client-migration.md) | 维护执行器错误复用 QA 管理端口，并误判控制 socket 配置、多 Cookie、根路径状态和 `embedded` 参数 | 保留两次维护失败，按生产端口/同配置指纹和精确授权契约续接；两个目标代次及公网认证通过 | 已解决（生产续接） |
 | [DEV-2026-09-17-043](DEV-2026-09-17-043-caddy-api-config-persistence.md) | [R4B](../work-items/R4B-2026-09-14-target-client-migration.md) | API 加载的入口候选会在 Caddy/主机重启后被旧磁盘直达路由覆盖 | `--resume`/autosave drop-in 已安装；正式 Caddy/Docker/VPS 重启后候选、认证边界与两 Profile 恢复通过 | 已解决 |
 | [DEV-2026-09-15-042](DEV-2026-09-15-042-work-wayland-shutdown.md) | [R4B](../work-items/R4B-2026-09-14-target-client-migration.md) | Work 原生 Wayland 无法使用现有 X11 正常退出层，阻止共享控制器后的兼容新建 | 固定 labwc/Firefox 原生关闭；控制器/s6、恢复、入口、五类错误材料、秘密边界和清理通过，兼容镜像已随 R4B 部署 | 已解决（已部署） |

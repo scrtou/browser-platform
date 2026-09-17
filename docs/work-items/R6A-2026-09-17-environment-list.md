@@ -2,6 +2,8 @@
 
 状态：已收尾（候选代码与 Go 隔离测试完成；未部署生产）。登记日期：2026-09-17。开始日期：2026-09-17。结束日期：2026-09-17。
 
+> 2026-09-17 收尾后用户补充：管理面板需要管理员账号密码，浏览器入口用各自账号密码。本项按第 1 版设计对任意登录账号放行 `/manage/`，与此不符，已登记 [DEV-045](../deviations/DEV-2026-09-17-045-manage-list-role.md)，由 R6B 修复；本候选在修复前不进入发布包。
+
 ## 目标与范围
 
 - 用户要求 / 对应计划：用户于 2026-09-17 在 R4B 收尾后要求“继续下一项计划”。对应 [R6 计划](../roadmap.md#r6) 与 [环境管理面规格](../specs/proxy-environment/management.md#实施顺序) 的第 1 个子项：“先做授权 Profile 列表和只读环境摘要，验证权限边界”。父项 [R6 设计工作项](R6-2026-09-16-environment-management.md) 保持其余三项（关闭入口、指纹选择、代理草稿）未完成。
@@ -49,7 +51,7 @@
 
 | 原要求 / 验收编号 | 实现位置 | 检查与证据 | 结果 / 未测范围 |
 | --- | --- | --- | --- |
-| 只列出授权 Profile，不泄漏存在性 | `access.serveEntry`、`grants()` | `access/manage_test.go`：未登录 303（页面）/401（JSON）、POST 405、其他路径 404、跨账号不出现、禁用/账号表缺失/注销后 401；`httpapi/manage_gateway_test.go` 真实网关端到端 alice/bob 分别只见自己的授权 | 通过（Go 测试）；真实浏览器/Trilium 未测 |
+| 只列出授权 Profile，不泄漏存在性（第 1 版；第 2 版要求仅管理员，见 DEV-045） | `access.serveEntry`、`grants()` | `access/manage_test.go`：未登录 303（页面）/401（JSON）、POST 405、其他路径 404、跨账号不出现、禁用/账号表缺失/注销后 401；`httpapi/manage_gateway_test.go` 真实网关端到端 alice/bob 分别只见自己的授权 | 通过（Go 测试）；真实浏览器/Trilium 未测 |
 | 有限摘要与脱敏 | `profile.Environment`、`httpapi/manage.go` | `environment_test.go` JSON 键/值扫描无 operation/session_id/bootstrap/idempotency/sha256/last_error；`manage_test.go` 摘要失败不输出错误文本、页面不显示完整产物摘要 | 通过 |
 | 只读、不触发采集 | `HealthOptions{CachedOnly: true}` | 假生命周期 observe/launch/stop/resume 计数不变；过期缓存不触发采集；端到端 Ensure/Health 调用为 0 | 通过 |
 | 无 access 不暴露 | `httpapi/manage.go` | 无网关时 `/manage/`、`/manage/environments`、`/manage/other` 404，`/manage` 仅 307 到 `/manage/` | 通过 |

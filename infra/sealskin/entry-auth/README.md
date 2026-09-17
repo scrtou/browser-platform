@@ -18,7 +18,7 @@ Cookie 使用 `__Host-` 前缀、Secure、HttpOnly、Path=/、SameSite=Lax，无
 
 Adapter 保存停止或恢复意图时也会撤销该 Session 的旧显示授权。正常恢复并取得新鲜的一致性报告后，从固定 Profile 入口重新交接；仍有效的登录可以继续使用。直接刷新旧 Session 地址可能返回 401，不能据此改写绑定或绕过门槛。[R5E](../release-combination-acceptance-2026-09-15.md) 曾在固定 r7 候选验证 tmpfs 丢失后的原代次恢复与重新交接；该候选没有单独部署，R4B 后续共享组合已上线，正式重启恢复仍须按 R2 留证。
 
-登录后另可访问 `GET /manage/` 与 `GET /manage/environments`：网关把账号表中该账号的 Profile 解释为 `view`/`start` 能力并交给只读环境列表（R6A，未部署生产），跨账号 Profile 不出现在列表中，POST 拒绝，其他 `/manage/*` 路径 404；账号禁用、账号表失效或注销后列表立即不可用。公开入口只豁免通用 `/healthz`、`/readyz` 和原 GET `/bootstrap/*` 对账入口。控制 Unix socket 保持本机私有。账号表缺失、权限异常或无效时撤销全部登录；修复后需重新登录。并发密码推导限制为 2，每来源和账号每分钟最多 8 次尝试。前置代理场景中来源为本机代理连接，因此该来源门槛同时限制全站登录尝试。
+登录后另可访问 `GET /manage/` 与 `GET /manage/environments`：网关把账号表中该账号的 Profile 解释为 `view`/`start` 能力并交给只读环境列表（R6A，未部署生产），跨账号 Profile 不出现在列表中，POST 拒绝，其他 `/manage/*` 路径 404；账号禁用、账号表失效或注销后列表立即不可用。按 2026-09-17 确认的两级访问设计，管理面板应只对管理员角色开放，该候选尚未收紧（[DEV-045](../../../docs/deviations/DEV-2026-09-17-045-manage-list-role.md)）。公开入口只豁免通用 `/healthz`、`/readyz` 和原 GET `/bootstrap/*` 对账入口。控制 Unix socket 保持本机私有。账号表缺失、权限异常或无效时撤销全部登录；修复后需重新登录。并发密码推导限制为 2，每来源和账号每分钟最多 8 次尝试。前置代理场景中来源为本机代理连接，因此该来源门槛同时限制全站登录尝试。
 
 ## 配置和管理
 

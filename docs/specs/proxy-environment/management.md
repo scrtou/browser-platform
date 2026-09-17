@@ -15,8 +15,9 @@
 | 代理是可选草稿，未说明“无代理”的网络形态 | 每个浏览器的网络二选一：受管理代理（http/https/socks5）或受管理 DIRECT；没有配置代理即 DIRECT，不是无 Guard 的裸容器网络 | 用户需求“不配置就直连”与无直连回退原则 |
 | 访问只沿用现有账号表，未在面板管理 | 面板显示每个浏览器的固定入口 URL，可创建/重置/禁用访问账号并分配浏览器 | 用户需求“登录 URL 和账号密码” |
 | 删除环境不实现 | 删除 = 停止并确认资源为零 → Home 归档（不立即物理删除）→ 撤销应用/策略/授权；物理清除是单独管理员动作 | 用户需求 + Home 删除保护 |
+| 任何登录账号都可进入管理列表（R6A 按此实现） | 两级访问：管理面板只对管理员账号开放；每个远程浏览器入口用各自分配的账号密码登录 | 用户 2026-09-17 补充确认；R6A 候选须在 R6B 收紧，见 [DEV-045](../../deviations/DEV-2026-09-17-045-manage-list-role.md) |
 
-本文对“浏览器页面登录 URL 和账号密码”的理解是：面板中每个远程浏览器展示其固定入口地址（供 Trilium 笔记保存），并可管理登录该入口所用的平台账号与密码。目标网站的账号密码自动填充不在本设计内；若用户实际指的是后者，须另建设计（涉及 Secret Store 注入与浏览器内自动登录，风险和验收都不同）。
+“浏览器页面登录 URL 和账号密码”指平台入口：面板中每个远程浏览器展示其固定入口地址（供 Trilium 笔记保存），并管理登录该入口所用的账号与密码。用户已于 2026-09-17 确认这一理解，并补充两级访问要求：登录管理面板需要管理员账号密码，登录单个远程浏览器入口也需要账号密码（见“访问账号与登录 URL”）。目标网站的账号密码自动填充不在本设计内。
 
 ## 目标与边界
 
@@ -136,11 +137,18 @@ admin 请求删除 → 必须已停止且 records/workers/resources 为 0（否�
 - 不接受 UA、Canvas/Audio seed、字体、WebGL、`resolvedConfig`、`firefoxUserPrefs` 等低层字段；不允许运行时切换。
 - 每个自定义作业消耗约 1.5 GiB 内存与 1.5 CPU（沿用验收容器限制），一次只运行一个；主机可用内存不足时排队并提示。
 
-### 访问账号与登录 URL
+### 访问账号与登录 URL（两级访问）
 
-- 面板对每个浏览器显示固定入口 URL：`{public_base_url}/browser/{id}/`，并提示登录页 `{public_base_url}/auth/login`。
-- `admin` 可创建账号（账号 ID、初始密码经一次性显示或由用户自设）、重置密码、禁用/启用、分配/取消浏览器；`user` 只能修改自己的密码。
+用户 2026-09-17 确认：登录管理面板需要管理员账号密码；登录单个远程浏览器入口也需要账号密码。
+
+- **管理员账号**（`role=admin`）：唯一可以进入 `/manage/*`（列表、新增/修改/删除、代理、指纹、账号）的角色。首个管理员由主机 CLI `profile-accounts put --role admin` 创建，面板不能自举管理员；管理员可再创建其他管理员，禁止禁用或删除最后一个启用的管理员。
+- **浏览器入口账号**（`role=user`）：只能登录被分配的浏览器固定入口 `/browser/{id}/`，根页只列出被分配的浏览器；访问 `/manage/*` 返回 403，不泄漏任何浏览器信息。新增浏览器时面板默认建议创建一个专属入口账号（账号 ID 默认等于浏览器 ID，密码由管理员设置或一次性显示），也可以把已有账号分配给多个浏览器。
+- 管理员账号也可以被分配浏览器，但面板提示在 Trilium 中应使用专属入口账号打开浏览器，避免把管理员登录 Cookie 留在 WebView。
+- 两级登录共用 `/auth/login` 表单、短期 `__Host-` Cookie、CSRF、精确 Origin 和限速；角色只决定网关放行范围。删除浏览器、重置他人密码、禁用管理员等敏感操作要求管理员在最近 5 分钟内通过 `/auth/reauth` 重新输入密码，否则 403。
+- 面板对每个浏览器显示固定入口 URL：`{public_base_url}/browser/{id}/`，并提示登录页 `{public_base_url}/auth/login`；入口 URL 不含账号或密码。
+- `admin` 可创建账号、重置密码、禁用/启用、分配/取消浏览器；`user` 只能通过 `/auth/password` 修改自己的密码。
 - 密码继续使用 PBKDF2-SHA256（600,000 次）派生值，表中不存明文；账号表变化撤销现有登录与显示（沿用 R5D 行为，因此修改账号会让当前用户重新登录）。
+- 现有 version 1 账号表升级到 version 2 时，原有账号一律视为 `user`；管理员必须显式创建。R6A 候选当前对任何登录账号放行 `/manage/`，须在 R6B 按本节收紧（[DEV-045](../../deviations/DEV-2026-09-17-045-manage-list-role.md)）。
 - 不提供长期 HTTP Basic、API token 或把凭据写入 Trilium 笔记的方式。
 
 ### 安全关闭
@@ -151,23 +159,25 @@ admin 请求删除 → 必须已停止且 records/workers/resources 为 0（否�
 
 | 接口 | 用途 | 必要约束 |
 | --- | --- | --- |
-| `GET /manage/`、`GET /manage/environments` | 列表与只读摘要（R6A） | `view`；不泄漏未授权浏览器 |
+| `GET /manage/`、`GET /manage/environments` | 列表与只读摘要（R6A） | `admin`（R6A 候选仍为任意登录，R6B 收紧）；不泄漏未授权浏览器 |
 | `POST /manage/browsers` | 新增浏览器 | `admin`、CSRF、幂等键；返回记录与固定入口 URL |
 | `GET /manage/browsers/{id}` | 单个浏览器详情（脱敏） | `view` |
 | `PATCH /manage/browsers/{id}` | 修改（按修订号乐观锁） | `admin`；指纹/代理变更要求已停止 |
 | `DELETE /manage/browsers/{id}` | 删除（归档 Home） | `admin`；要求已停止、资源为零 |
 | `POST /browser/{id}/start` | 启动或复用（现有） | `start`、CSRF、有效 launch plan |
 | `POST /browser/{id}/stop` | 安全关闭 | `stop`、CSRF、幂等键 |
-| `GET /manage/environments/catalog` | 固化指纹目录 | `admin`/`view` |
+| `GET /manage/environments/catalog` | 固化指纹目录 | `admin` |
 | `POST /manage/environment-jobs` / `GET …/{id}` | 自定义指纹生成作业 | `admin`；一次一个；结果只含摘要与状态 |
 | `POST /manage/proxy-drafts`、`POST …/{id}/probe`、`GET …/{id}` | 代理草稿与探针 | `admin`；只写 Secret Store 引用 |
-| `GET/POST /manage/accounts`、`PATCH /manage/accounts/{id}` | 账号管理 | `admin`；密码只经表单 POST，响应不回显 |
+| `GET/POST /manage/accounts`、`PATCH /manage/accounts/{id}` | 账号管理 | `admin`；密码只经表单 POST，响应不回显；重置他人密码/禁用管理员需近期重新认证 |
+| `POST /auth/reauth` | 管理员敏感操作前重新输入密码 | 登录中的 `admin`；5 分钟有效，不延长登录期限 |
+| `POST /auth/password` | 修改自己的密码 | 任意登录账号；需当前密码、CSRF；成功后撤销其他登录 |
 
 所有写操作要求登录、精确 Origin、CSRF、幂等键，产生审计事件；响应与日志不含密码、Cookie、Session URL、完整指纹或后端能力。
 
 ## 安全与验收门槛
 
-- 未授权账号不能列出、创建、修改、删除、启动、查看健康或关闭其他浏览器；错误返回不泄漏存在性；`user` 角色没有任何写配置能力。
+- 未授权账号不能列出、创建、修改、删除、启动、查看健康或关闭其他浏览器；错误返回不泄漏存在性；`user` 角色不能进入管理面板、没有任何写配置能力；管理员的敏感操作需要近期重新认证。
 - 指纹只能落到目录中 `accepted` 的产物；自定义作业失败不发布；运行中变更拒绝；新的组合产生新的应用/策略/Profile 修订与新代次。
 - 任意代理不可绕过 Guard/Relay；无代理即受管理 DIRECT；私网/metadata/宿主机访问、协议不支持时拒绝；代理凭据不出现在客户端、Worker、镜像、Home、URL、普通日志或公开报告。
 - 删除前确认 Worker、显示、Guard、Relay、网络与占用清理；Home 归档而非清除；journal、修订与审计保留。
@@ -179,7 +189,7 @@ admin 请求删除 → 必须已停止且 records/workers/resources 为 0（否�
 该设计归入 R6，实施时分为独立可验收的子项；每个子项都保留固定入口 URL、Home 独占、Guard/Relay 无直连和现有生命周期所有权：
 
 1. **R6A 只读列表**（已完成候选代码与 Go 测试，2026-09-17）。
-2. **R6B 目录与角色**：Profile 目录（导入现有配置、修订、乐观锁、热更新）、账号 `role`、`stop` 能力与面板关闭按钮；修改 `label`/`start_url`/账号分配/`enabled`。
+2. **R6B 目录与角色**：Profile 目录（导入现有配置、修订、乐观锁、热更新）、账号表 version 2 的 `role`、管理面板改为仅管理员（修复 [DEV-045](../../deviations/DEV-2026-09-17-045-manage-list-role.md)）、`/auth/reauth` 与 `/auth/password`、`stop` 能力与面板关闭按钮；修改 `label`/`start_url`/账号分配/`enabled`。
 3. **R6C 新增与删除（固化指纹 + DIRECT/现有代理修订）**：管理员 SealSkin 客户端、应用安装/删除、Home 创建与归档、launch plan；DIRECT 生产前置（主机 IPv4 证据、网关镜像、控制器能力）作为本步的部署条件。
 4. **R6D 代理草稿、探针与修订**：Secret Store 导入、隔离探针、`proxy_required` 修订与下一代次绑定。
 5. **R6E 自定义指纹作业**：环境目录、隔离生成/验收作业、失败保留与发布。
