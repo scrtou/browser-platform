@@ -11,18 +11,18 @@
 | Work | <https://mybrowser.azhen.de/browser/work/> |
 | Personal | <https://mybrowser.azhen.de/browser/personal/> |
 
-`https://mysession.azhen.de/` 承载 SealSkin 会话与显示通道。入口会自动跳转并授权，不把带 token 的 Session URL 保存到永久笔记。Work 继续使用旧 Firefox；Personal 在 R4B 迁移维护中，旧 Home 已加密备份并保留，正式入口暂时返回维护提示。新 r7 配置受能力检查保护，在匹配控制器发布前不会再次启动；部署范围见 [开发进度](progress.md#deployment)。
+`https://mysession.azhen.de/` 承载 SealSkin 会话与显示通道。入口会自动跳转并授权，不把 Session URL 保存到永久笔记。Work 现使用带正常退出和显示认证能力的兼容 Firefox/Wayland 代次；Personal 已切换到 r9/fill-r10、新 Home 与受管理代理。旧 Personal、r7 和 Work Home、加密备份及回退材料仍保留；部署范围见 [开发进度](progress.md#deployment)。
 
-待 [入口登录候选](../infra/sealskin/entry-auth/README.md) 发布后，仍保存上述固定地址；首次进入或登录到期时先登录，再进入获授权的 Profile。入口首页可退出登录，退出会断开该登录的画面，浏览器数据保留。再次登录后打开固定入口可重新连接；打开第二个完整画面会接管前一个画面的控制。此流程已在 Linux Chromium 验证，生产尚未启用，Mac/Trilium 实机仍待 R4B 验收。
+[入口登录](../infra/sealskin/entry-auth/README.md) 已随 R4B 上线。仍保存上述固定地址；首次进入或登录到期时先登录，再进入获授权的 Profile。入口首页可退出登录，退出会断开该登录的画面，浏览器数据保留。再次登录后打开固定入口可重新连接；打开第二个完整画面会接管前一个画面的控制。服务器端生产登录、交接与最终 Session 已通过；用户也已在目标 Mac/Trilium 确认正式登录、Personal 铺满/点击/图片预览和 Work 打开正常。
 
 ## 常用操作
 
 <a id="r4b-独立实机验收"></a>
 ### R4B 独立实机验收
 
-本轮临时入口为 <https://mybrowser.azhen.de/browser/network-qa-browser/>。在 Trilium WebView 打开后使用本机忽略目录 `infra/sealskin/runtime/r4b-production-migration-2026-09-15/mac-client-access.txt` 中的临时账号；公开文档不保存密码。该入口使用 r9 Camoufox 环境和 `fill-r10` 客户端，保留原独立 QA Home 和测试数据。远端浏览器仍为固定 1920×1080；客户端会把完整画面和输入层铺到 Trilium 当前视区。用户已确认视觉铺满且点击映射正常；未横向展开时会出现非等比拉伸，字体看起来细长，这是固定分辨率取舍。
+本轮临时入口曾为 <https://mybrowser.azhen.de/browser/network-qa-browser/>，使用 r9 Camoufox 环境和 `fill-r10` 客户端。用户已确认视觉铺满且点击映射正常；未横向展开时会出现非等比拉伸，字体看起来细长，这是固定分辨率取舍。实机确认结束后该入口的专用路由已删除、临时账号禁用、运行资源和明文访问材料清理；独立 QA Home 与验收证据保留。该地址当前不再提供本次测试服务。
 
-在验收页依次点击五个彩色按钮，输入中文/emoji/补充平面汉字，检查输入法候选和取消；再测试文字双向传递、截图粘贴、Files 选择/拖放、标签页/导航及断网后恢复重载。点击「复制验收资料（F9）」保存文字报告，按 [矩阵](client-matrix.md) 记录通过、失败和未测。QA 只开放该入口、登录路径及当前 QA Session 的显示路径，Work 路由保留；测试完成后由 R4B 清理专用路由、账号、浏览器和网络。
+验收时依次点击五个彩色按钮，输入中文/emoji/补充平面汉字，检查输入法候选和取消；再测试文字双向传递、截图粘贴、Files 选择/拖放、标签页/导航及断网后恢复重载。点击「复制验收资料（F9）」保存文字报告，按 [矩阵](client-matrix.md) 记录通过、失败和未测。QA 当时只开放该入口、登录路径及精确 QA Session 的显示路径，Work 路由保持；R4B 已完成专用路由、账号、浏览器、网络和显示材料清理。
 
 本次补测重点是固定画面铺满：用户已确认 fill-r10 在当前 Trilium 视区没有黑色留边并且彩色按钮点击正常，但观察到未横向展开时字体变细长；这是把固定 1920×1080 画面映射到非 16:9 视区的显示缩放。截图预览已经由用户在上一代次确认可见，Linux fill-r10 也已复验实际 320×160 图片像素。若再次核对截图，点击页面下方「截圖貼上區」再按 ⌘V，直接核对显示出的图片；只有右下角成功提示还不能确认页面已收到图片。请只用测试截图；F9 报告会增加实际图片的类型、尺寸和摘要，无需上传截图到项目记录。Linux 的窗口、坐标、上传、断线恢复和图片像素对照已通过，Mac 的 fill-r10 视觉和点击映射已确认。
 

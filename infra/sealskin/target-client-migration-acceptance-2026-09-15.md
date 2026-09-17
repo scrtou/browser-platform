@@ -1,8 +1,8 @@
 # R4B · 迁移能力修复与目标客户端阶段验收
 
-[工作项](../../docs/work-items/R4B-2026-09-14-target-client-migration.md) · [DEV-040](../../docs/deviations/DEV-2026-09-15-040-migration-controller-capabilities.md) · [DEV-041](../../docs/deviations/DEV-2026-09-15-041-camoufox-window-size.md) · [DEV-042](../../docs/deviations/DEV-2026-09-15-042-work-wayland-shutdown.md) · [客户端矩阵](../../docs/client-matrix.md) · [运维步骤](../../docs/operations.md#camoufox-入口切换与回退准备)
+[工作项](../../docs/work-items/R4B-2026-09-14-target-client-migration.md) · [DEV-040](../../docs/deviations/DEV-2026-09-15-040-migration-controller-capabilities.md) · [DEV-041](../../docs/deviations/DEV-2026-09-15-041-camoufox-window-size.md) · [DEV-042](../../docs/deviations/DEV-2026-09-15-042-work-wayland-shutdown.md) · [DEV-043](../../docs/deviations/DEV-2026-09-17-043-caddy-api-config-persistence.md) · [DEV-044](../../docs/deviations/DEV-2026-09-17-044-production-maintenance-runner.md) · [客户端矩阵](../../docs/client-matrix.md) · [运维步骤](../../docs/operations.md#camoufox-入口切换与回退准备)
 
-日期：2026-09-15–16，UTC。状态：**进行中**。迁移前能力检查、失败代次清理和生产启动保护已验证；用户确认 r7 Mac 基础分项，并提出窗口过小。r9 已通过完整产物、正常桌面、Linux 公网客户端及实际截图预览验收；用户随后确认 r9 按钮和页面图片预览，但仍看到固定画面上下留边。新的 `fill-r10` 客户端候选已在同一 r9 环境与 QA Home 上通过全视区缩放和坐标回归，用户已确认 Mac 视觉铺满且点击映射正常，但反馈 Trilium 未横向展开时字体细长、分辨率观感与 Work 不同；该非等比显示取舍已记录。Work Firefox/Wayland 的新建兼容候选已通过退出、显示、恢复和秘密边界组合验收并清理专用 QA。Personal 正式迁移、完整共享控制器发布及回退验收尚未完成。
+日期：2026-09-15–17，UTC。状态：**已收尾，生产切换、目标 Mac 与正式 Caddy/Docker/VPS 重启通过**。迁移前能力检查、失败代次清理和生产启动保护已验证；用户确认 r7 Mac 基础分项，并提出窗口过小。r9 已通过完整产物、正常桌面、Linux 公网客户端及实际截图预览验收；用户随后确认 r9 按钮和页面图片预览，但仍看到固定画面上下留边。新的 `fill-r10` 客户端候选已在同一 r9 环境与 QA Home 上通过全视区缩放和坐标回归，用户已确认 Mac 视觉铺满且点击映射正常，但反馈 Trilium 未横向展开时字体细长、分辨率观感与 Work 不同；该非等比显示取舍已记录。Work Firefox/Wayland 的新建兼容候选已通过退出、显示、恢复和秘密边界组合验收并清理专用 QA。`release-ready-2` 已部署共享控制器、账号入口、Work 兼容镜像和 r9/fill-r10 Personal；本机/公网认证、目标 Mac 生产入口及正式 Caddy/Docker/VPS 重启通过；R2 的退出全部登录与 Debian 13 仍待外部条件。
 
 ## 发现与实际处理
 
@@ -37,6 +37,8 @@
 | Work 组合与发布候选 | `work-compatibility-1/combination-1/`、`release-candidate-1/`；控制器/s6、入口/错误材料、恢复/秘密扫描通过，App 仅替换镜像，未部署 |
 | 版本与发布复核 | `final-review-1/versions-and-production.json`、`final-review-1/migration-release-audit.json`；旧 `release-review-1/` 只适用 r7，不能用于 r9；完整发布仍为 `REVIEW_ONLY_BLOCKED` |
 | 文档与静态检查 | `static-check-1/`–`static-check-10/` 保留前轮/中间结果；最终 `static-check-10/` 核对 51 个公开文件、23 份 Markdown/699 个链接、语法、格式与敏感扫描 |
+| 生产发布 | `release-ready-2/deployment-2/`；控制镜像 `sha256:9aac4402…`，Work `sha256:ec848635…`，Personal `sha256:10f6420a…`；两次维护失败与最终续接结果均保留 |
+| 正式重启 | `release-ready-2/after-caddy-restart-1/`、`after-docker-restart-1/`、`vps-reboot-1/`（`before.private.json`、`after.private.json`、`system-boot.log`、`adapter-boot.log`、`recovered-live-check/`、`health-result.json`、`authenticated-session-result.json`、`work-probe-after-expired/`）；`live-check-3/` 为重启后最终只读复核 |
 
 ## 已完成验证
 
@@ -56,8 +58,17 @@
 | Work 入口与材料 | 三个 Linux Chromium 入口客户端共 **44** 个真实显示帧，错误登录/无 Cookie/输入检查通过；缺失、错误 Session、权限过宽、符号链接、可写输入五类实际 `/init` 拒绝且无显示监听 |
 | Work 秘密与清理 | 密封 Session 和只读材料挂载通过；正确 Basic Auth 1 次、缺失/错误 3 次拒绝；扫描 55 个进程、218 个 Home 文件、共 342 面无泄漏。专用代次/固定容器/网络/卷/进程/socket/tmpfs/端口清理完成，生产 Work 与 Mac r9 三容器身份保持 |
 | 发布配置审查 | 旧 r7 审查包的两份 Caddy、临时账号配置和 Compose 合并通过。Work 新 App 私有候选只替换精确镜像且已核对；旧完整包仍不能用于 r9，须重新准备匹配 r9/Work 的组合配置，缺失前置保留，不套用 QA 账号 |
+| 完整生产包 | `release-ready-2/` 状态 `READY_FOR_MAINTENANCE`；在原 38 文件包上补 Caddy API autosave systemd drop-in，共 39 文件。r9/fill-r10 Personal、Work 兼容 App、两 Profile 能力门槛、账号表、私有 TLS、Caddy、Compose、tmpfiles/Docker/Caddy 顺序和回退步骤通过独立复核 |
+| 生产维护与入口 | 旧 Work 经生命周期停止且资源归零；候选控制器密封 Session 状态，两个 App 精确安装。登录 200、未登录 Profile 303、Session 根 404、两个精确 Session 无 Cookie 401；登录/交接/最终 Session 200，Caddy 运行 JSON 与候选一致 |
+| 生产代次 | Work 为 1 record/1 Worker、资源 0，能力 1/1；Personal 为 1 record/1 Worker、5 resources/1 Relay/1 Guard/2 networks，能力 1/1、network phase running。旧 Personal Home、r7 Home、新 r9 Home 和 Work Home 均保留 |
+| 上线后只读复核 | `check-r4b-production-live.py` 核对 Docker/Caddy/Adapter active+enabled、`Linger=yes`、Caddy autosave drop-in 与精确运行 JSON、两 Profile 数量/镜像/能力、静态 Relay 身份、四个 Home、秘密文件权限、本机/公网未登录边界和精确 Session 无 Cookie 401；`live-check-1` PASS，不输出或保存 Session 值 |
+| 目标 Mac 生产复测 | 用户在 macOS 15.1 / Trilium 0.105.0 打开正式固定入口，确认生产账号登录、Personal 画面铺满、点击映射、实际图片预览和 Work 打开全部正常；脱敏 `target-mac-production-1` 及随后 `live-check-2` PASS，不含凭据或 Session URL |
+| 正式 Caddy 重启 | 14:01 UTC 新 Invocation 使用 `--resume` 启动；autosave 运行 JSON 与候选精确一致，公网登录页/固定入口/Session 边界及 Work/Personal 运行态由 `after-caddy-restart-1` 全部复核通过 |
+| 正式 Docker 重启 | `live-restore=false`；14:05 UTC 新 daemon 后控制器/静态 Relay 自动恢复，Personal Worker/Guard/Relay 与 Work Worker 同 ID/镜像休眠；14:06 UTC Adapter 启动对账约 12 秒恢复。两 Profile healthy，Personal `PROXY_OK`，登录/交接/最终 Session 200，Caddy 候选保持；私有证据 `after-docker-restart-1/` |
+| 正式 VPS 重启 | 14:16 UTC `sudo reboot`；关机时两个 Worker `BROWSER_SHUTDOWN_CONFIRMED`、六个容器退出码 0。新 boot 14:16:44 UTC linger 启动用户管理器/Adapter（早于 14:16:55 UTC 首个 SSH 登录），Caddy `--resume`，Docker 14:16:45 UTC 自动拉起控制器与静态 Relay；Adapter 14:16:58 UTC 取得控制面后 Relay 14:16:59 → Guard 14:16:59（规则就绪）→ Personal Worker 14:17:02 → Work Worker 14:17:07，14:17:09 UTC 对账完成。boot id 变化，六个容器 ID/镜像与两 Session 不变，四个 Home 保留，策略/账号表/密封密钥摘要不变；14:21 UTC `recovered-live-check` PASS，登录/交接/Session 303/303/200，Personal healthy/`PROXY_OK`；Work 首份为 14:20:07 UTC 的过期缓存报告（`unknown`/`REPORT_EXPIRED`，其余分项通过），14:36:46 UTC 重采集 healthy/`REPORT_FRESH`。未采集启动窗口抓包/事件流，未读回浏览器存储 |
+| 重启后最终复核 | 15:15 UTC `live-check-3` PASS：Docker/Caddy/Adapter active+enabled、`Linger=yes`、Caddy `--resume` 与 tmpfiles/Docker 顺序 drop-in 生效、运行 JSON 与候选精确一致、两 Profile 数量/镜像/能力、静态 Relay 身份、四个 Home、秘密材料权限、公网/本机边界 200/303/303/404、精确 Session 无 Cookie 401；不记录敏感值 |
 
-生产只上线 Adapter 的能力门槛及 Personal 的维护提示；SealSkin 控制器、生产 Work 浏览器和静态 Relay 保持。新控制器和授权访问只用于独立 QA，不把这些结果扩为生产 R5D/R5E 已发布。
+生产现已使用共享认证控制器和 Adapter 网关；静态 `profile-relay-personal` 身份保持，Work 与 Personal 均为新代次。该事实只表示 R4B 组合已部署，不追写 R5D/R5E 当时的 QA 范围；目标 Mac 生产实测与正式 Caddy/Docker/VPS 重启均已单独记录。
 
 ## 窗口修订与目标客户端
 
@@ -70,7 +81,7 @@ r7 的远端 screen 为 1920×1080、DPR 1，但窗口 outer 1600×900、inner 1
 | 窗口准备器 | 3 项检查通过：原来源/设备保持、非法修订拒绝、位置与窗口一致 |
 | 完整产物 `all` | 结构检查、11 类启动拒绝、两个 Home 各 10 次重建及离线恢复通过；23 次环境/窗口观测一致，三类存储恢复通过 |
 | 正常 Openbox 桌面 | 原生客户区位于 (0, 0)，1920×1080，四侧 frame extents 均为 0；实际网页 outer 1920×1080 / inner 1920×1024，与重放一致 |
-| QA 升级与保留 | 原 QA generation 经生命周期正常 stop 后启动 r9，保留同一 Home；三类存储与用户 r7 报告一致。仅按专用 route ID 更新精确 QA Session 路径，生产文件和进程身份保持 |
+| QA 升级与清理 | 原 QA generation 经生命周期正常 stop 后启动 r9，保留同一 Home；三类存储与用户 r7 报告一致。实机确认结束后，fill-r10 代次再经生命周期 stop，records/Worker/Guard/Relay/网络及显示材料归零；临时账号禁用、两条 route ID 删除、Adapter 停止，生产文件和进程身份保持 |
 | 公网登录与坐标 | Linux Chromium 151 模拟 Mac 键位，1280×800 的 5 次和三组尺寸/DPR 的 15 次可信点击通过；干净交接、无 Cookie **401**、337 个显示帧及重载通过 |
 | 真实截图预览 | 客户端原生剪贴板/CDP paste → Selkies → 远端页面实际预览通过；320×160 PNG，可信 paste、尺寸及完整 RGBA 像素 SHA-256 与源图相同；画面已查看 |
 | 固定画面填充候选 | 用户反馈 r9 按钮和实际图片预览通过，但 1280×800 视区仍有上下留边。`fill-r10` 将 WebRTC/WebSocket 手动显示映射到客户端完整边界；1280×800 的 canvas/输入层均为 1280×800，三组尺寸/DPR 的 15 次可信点击和远端固定 screen/DPR 通过 |
@@ -82,7 +93,7 @@ r7 的远端 screen 为 1920×1080、DPR 1，但窗口 outer 1600×900、inner 1
 
 ## Work Firefox/Wayland 兼容候选
 
-生产 Work 仍运行 2026-09-15 14:05:15 UTC 启动的旧镜像 `sha256:7e3dbebd…`，本轮没有停止或替换。候选以该精确镜像为基础，先增加固定 labwc/Firefox 的 Wayland 原生关闭层，再增加 R5D 的显示认证层；层前缀、能力标签和 12 个源文件摘要逐项一致。适用范围仅为独立 Worker 中唯一已核对的 Firefox 主进程、可信 labwc socket 和 version 3 顶层协议下无 parent 的 `firefox` 窗口。
+生产 Work 原先运行 2026-09-15 14:05:15 UTC 启动的旧镜像 `sha256:7e3dbebd…`；2026-09-17 维护中经正常生命周期停止，随后用候选 `sha256:ec848635…` 新建。候选以旧镜像为基础，先增加固定 labwc/Firefox 的 Wayland 原生关闭层，再增加 R5D 的显示认证层；层前缀、能力标签和 12 个源文件摘要逐项一致。适用范围仅为独立 Worker 中唯一已核对的 Firefox 主进程、可信 labwc socket 和 version 3 顶层协议下无 parent 的 `firefox` 窗口。
 
 完整组合使用独立控制器、Adapter、临时 Home、账号、网络、入口和显示 tmpfs。实际关闭对话框使 stop 在约 12.5 秒后返回 503，Worker、浏览器身份和 Home 占用保留；取消对话框并移除页面处理器后，同一路径重试正常停止。随后新建代次、恢复三类存储，再以 `docker stop -t 30` 触发 s6 down，容器退出码为 0；控制器 `resume` 接回同一容器和 Session，并读回停止前即时写入的三类存储。首个重试仍保留页面处理器而再次失败，作为测试操作历史保留，没有改写为通过。
 
@@ -100,6 +111,8 @@ r7 的远端 screen 为 1920×1080、DPR 1，但窗口 outer 1600×900、inner 1
 
 r8 首轮重放引用已清理的旧 QA 网络，在浏览器启动前失败；第二轮新增窗口断言误复用存储期望变量，实际三类存储一致但比较对象错误；修复后第三轮完整重放通过，随后正常桌面揭示 1 像素边框问题。r9 桌面层首轮构建把裸 image ID 用作 BuildKit `FROM` 而失败，改用核对到同一 ID 的本地标签后构建成功。r8 staging 还修正了对合法 `embedded=true` 的过严断言和旧 published 元数据缺少 routes 的处理；已从实际 runtime/route 续接核对，没有重复创建或覆盖旧证据。上述失败均保留在各轮目录。
 
-用户已反馈 r9 五个按钮可点击、页面可见图片预览，但固定画面没有铺满，且 Work 页面显示正常。只读核对确认 r9 远端桌面/浏览器原生几何已经铺满，留边来自客户端 `contain` 缩放；`fill-r10` QA 已按同一 Home/环境重新启动并通过 Linux 画面边界、点击、截图和存储回归。用户已确认 fill-r10 在 Mac/Trilium 视觉铺满且点击映射正常，同时观察到窄视区的非等比缩放使字体细长；该结果完成 DEV-041 的客户端验收，固定分辨率取舍保留。账号、浏览器、Guard/Relay、私有控制器/Adapter、专用路由与显示 tmpfs 保留，临时客户端及产物重放代理/网络已清理。Mac 新修订反馈与其他未测边界分别登记，**不据此宣布 Mac 全矩阵或生产迁移通过**。
+用户已反馈 r9 五个按钮可点击、页面可见图片预览，但固定画面没有铺满，且 Work 页面显示正常。只读核对确认 r9 远端桌面/浏览器原生几何已经铺满，留边来自客户端 `contain` 缩放；`fill-r10` QA 已按同一 Home/环境重新启动并通过 Linux 画面边界、点击、截图和存储回归。用户已确认 fill-r10 在 Mac/Trilium 视觉铺满且点击映射正常，同时观察到窄视区的非等比缩放使字体细长；该结果完成 DEV-041 的客户端验收，固定分辨率取舍保留。确认结束后，账号已禁用，浏览器、Guard/Relay、网络和显示材料归零，私有 Adapter 停止，两条专用路由删除；QA Home、基础 QA 控制器和验收证据保留。生产文件及容器身份复核不变。Mac 新修订反馈与其他未测边界分别登记，**不据此宣布 Mac 全矩阵或生产迁移通过**。
 
-完整发布仍缺：生产账号、主机 tmpfs/开机配置、R2 退出登录/正式 VPS 重启结果、目标 Mac 分项、匹配 r9 与 Work 候选的完整生产配置包及实际切换/回退。Work 当前代次仍是没有两项能力的旧镜像；已验收候选只授权后续按维护计划新建，不能热替换当前容器。继续保持 Personal 维护和 Work 当前代次，R4B 未完成前不启动 R6。
+首个生产包准备和独立验证未改动生产；发现 API 加载的 Caddy 配置不能跨服务重启后，`release-ready-2` 增加 autosave drop-in 并重新完成 39 文件复核。管理员已安装 tmpfiles、Docker/Caddy systemd drop-in 和 0700 `/run/browser-platform/session-secrets`。维护过程的控制 socket 指纹、QA 管理端口、多 Cookie、根路径状态和 `embedded` 断言失败均保留，修复后从当前 journal/阶段续接，详见 DEV-043/044。
+
+当前发布仍缺 R2 的退出全部登录持续运行验证与 Debian 13；Caddy/Docker/VPS 正式重启已经通过。目标 Mac 已确认生产账号登录、Personal 画面/点击/图片预览和 Work 打开正常；回退材料已保留但没有为了验收而破坏当前成功代次执行回退。上述结果完成实际切换、本机/公网认证、生产实机、daemon 与整机恢复验证；R4B 已收尾，退出登录与 Debian 13 归 R2，本轮未启动 R6。

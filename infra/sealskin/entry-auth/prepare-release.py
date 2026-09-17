@@ -111,6 +111,16 @@ def main():
           "d /run/browser-platform 0711 root root -\n" +
           f"d /run/browser-platform/session-secrets 0700 {args.uid} {args.gid} -\n")
     write(output / "docker-tmpfiles-ordering.conf", "[Unit]\nRequires=systemd-tmpfiles-setup.service\nAfter=systemd-tmpfiles-setup.service\n")
+    # Production routes are loaded through Caddy's local admin API so that a
+    # failed candidate can remain on the exact maintenance JSON. The Debian
+    # service otherwise reloads /etc/caddy/Caddyfile after a service/host
+    # restart and silently discards that reviewed runtime configuration.
+    write(output / "caddy-api-resume.conf",
+          "[Service]\n"
+          "ExecStart=\n"
+          "ExecStart=/usr/bin/caddy run --environ --config /etc/caddy/Caddyfile --resume\n"
+          "ExecReload=\n"
+          "ExecReload=/usr/bin/caddy reload --config /var/lib/caddy/.config/caddy/autosave.json --force\n")
     checks = {}
     for name in ("caddy.candidate.json", "caddy.maintenance.json"):
         result = subprocess.run(["caddy", "validate", "--config", str(output / name)], capture_output=True)

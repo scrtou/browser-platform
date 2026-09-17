@@ -21,7 +21,7 @@
 
 | 材料 / 代码入口 | 当前结论 |
 | --- | --- |
-| `adapter/internal/access`、`infra/sealskin/entry-auth/` | 已有账号密码、Profile 授权、短期登录/显示 Cookie、CSRF、Origin 和日志边界候选；生产尚未部署 |
+| `adapter/internal/access`、`infra/sealskin/entry-auth/` | 已有账号密码、Profile 授权、短期登录/显示 Cookie、CSRF、Origin 和日志边界，并已随 R4B 组合部署生产 |
 | `adapter/internal/profile` | 已有 Ensure/Stop/Reconcile、Home 独占、持久化停止意图和 UNKNOWN 保留；关闭按钮应复用，不新增 Docker 路径 |
 | `adapter/internal/sealskin` | 已有 Session、Worker、Guard/Relay、环境身份和运行时能力快照 |
 | `docs/specs/proxy-environment/{types.go,schema.sql,specification.md}` | 已有 Profile、环境产物、代理、网络策略、运行绑定和审计的参考契约；修订不可变、停止后切换 |
@@ -44,7 +44,7 @@
 
 - [x] 架构设计、代理/环境规格和 R6 路线图已登记。
 - [x] 现有入口、状态所有权、凭据和生命周期边界已核对。
-- [ ] 创建实现子项并在 R4B/R2 依赖满足后开始代码工作。
+- [ ] 创建实现子项并开始代码工作；R4B 已于 2026-09-17 收尾，R2 剩余退出登录/Debian 13 是否作为前置由用户决定。
 - [ ] 完成独立 QA、客户端验收、生产候选、部署与回退。
 
-收尾结论：设计提案完成，工作项保持待启动。下一步：先完成 R4B 生产迁移条件，再按本文实施顺序建立 R6 实现子项。
+收尾结论：设计提案完成，工作项保持待启动。下一步：R4B 生产迁移条件已于 2026-09-17 完成；待用户决定是否等待 R2 剩余条件后，按本文实施顺序建立 R6 实现子项。

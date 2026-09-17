@@ -29,7 +29,7 @@ curl -fsS http://127.0.0.1:9100/readyz
 
 检查结果记录时间、发布版本和适用 Profile。避免把完整 Docker inspect、私有配置或原始授权响应贴入文档；它们可能包含不应公开的运行信息。
 
-R5D 的 [入口授权候选](../infra/sealskin/entry-auth/README.md) 已通过独立验收，尚未部署。启用后，两个公开域名都经过 Adapter；普通健康路径不提供 Profile 数据，`/browser/{profile}/health` 要求当前登录和 Profile 授权。账号表变更、注销、到期或业务绑定变化只撤销显示；查看/停止 Worker 仍通过原运维 socket。账号管理使用 `profile-accounts`，密码经标准输入，不放入命令参数。
+R5D 的 [入口授权](../infra/sealskin/entry-auth/README.md) 已通过独立验收，并随 R4B 共享组合部署。两个公开域名都经过 Adapter；普通健康路径不提供 Profile 数据，`/browser/{profile}/health` 要求当前登录和 Profile 授权。账号表变更、注销、到期或业务绑定变化只撤销显示；查看/停止 Worker 仍通过原运维 socket。账号管理使用 `profile-accounts`，密码经标准输入，不放入命令参数。R4B 上线或重启后可运行 `python3 infra/sealskin/checks/check-r4b-production-live.py --output <新的私有目录>` 做脱敏只读复核；输出目录必须不存在。
 
 R5C1 候选中的 DIRECT 报告增加 `network_mode=direct` 和必需的 `egress` 分项，`proxy` 为 `not_applicable / DIRECT_NO_UPSTREAM`。`DIRECT_OK` 只表示经专属网关的 HTTPS 探测通过；未执行探测、地址证据缺失或端点异常保持 unknown，不能据此声称地区/公开 DNS 一致性通过。候选未部署，生产旧 Work 不具有该隔离保证。
 
@@ -48,7 +48,7 @@ R5C2 候选的 `network_bootstrap_dns_version: 1` 表示支持 [批准引导 DNS
 
 开机顺序与恢复：`docker.service` 启动后控制器与静态 Relay（`unless-stopped`）自动启动；Profile 的 Worker、Guard、Relay 代次容器保持 `restart=no`。Adapter 启动时先等待控制面可读（`startup.control_wait_seconds`，默认 120 秒），再逐 Profile 对账；识别为休眠代次时由 SealSkin 按 **Relay → Guard 规则就绪 → 控制器接回内网 → 一次性探测 → Worker → 显示端点** 顺序恢复，任一步失败 Worker 不启动、占用保留。运维可用 `-resume-profile` 重试。详细顺序、管理员待办（linger 或系统服务）和维护窗口准备见 [管理员待办](../infra/sealskin/ADMIN-linger-and-boot.md)。
 
-只有 `0.3.2-resume-v1` 之后新建的代次具备上述可恢复性；旧 [DEV-002](deviations/DEV-2026-09-13-002-worker-auto-remove.md) 记录的是此前的自动删除容器。2026-09-15 R2C 已将 Work 恢复为非自动删除代次，Personal 当前停止；`Linger=yes` 已确认。退出全部登录、正式整机重启和 Debian 13 仍归 [R2](roadmap.md#r2) 验证。
+只有 `0.3.2-resume-v1` 之后新建的代次具备上述可恢复性；旧 [DEV-002](deviations/DEV-2026-09-13-002-worker-auto-remove.md) 记录的是此前的自动删除容器。2026-09-17 R4B 已新建非自动删除的 Work 兼容代次和 Personal r9 受管理代次；`Linger=yes` 已确认，正式 Caddy/Docker/VPS 重启已于 2026-09-17 以同一代次恢复通过。退出全部登录和 Debian 13 仍归 [R2](roadmap.md#r2) 验证。
 
 受管理 Personal 的恢复流程必须先确认状态与资源归属，再准备 Guard 规则、Relay 和探测，最后启动 Worker。规则或探测失败时保留阻断；不得先让浏览器联网后补规则。独立 daemon 验证所用的显式重启步骤不应直接应用到仍有存活 Worker 的生产 Guard。
 
@@ -75,9 +75,9 @@ R5C2 候选的 `network_bootstrap_dns_version: 1` 表示支持 [批准引导 DNS
 
 停止成功要求 Session 记录、Worker、Guard、Relay、网络和占用全部清理到预期状态；Home 数据继续保留。受管理模式禁止 `reset-profile`，不能以删除 journal 或切换旧配置代替实际资源确认。
 
-R5A 新 Worker 的正常退出能力要求匹配的控制 payload 和 `io.browser-platform.browser-shutdown=1` 镜像。遇到网页阻止关闭的对话框，显式停止返回失败并保留浏览器与 Home；在原桌面处理对话框后重试同一停止操作。不要用 `docker kill` 或删除占用绕过。维护中直接停止已核对的容器应提供 `docker stop -t 30`，但它不能提供显式 API 的失败保留保证；默认/整机停止窗口仍待 R2 验证。生产旧 Worker 尚未采用此能力，最近写入持久化的边界见 [DEV-008](deviations/DEV-2026-09-14-008-resume-storage-observation.md)。
+R5A 新 Worker 的正常退出能力要求匹配的控制 payload 和 `io.browser-platform.browser-shutdown=1` 镜像。遇到网页阻止关闭的对话框，显式停止返回失败并保留浏览器与 Home；在原桌面处理对话框后重试同一停止操作。不要用 `docker kill` 或删除占用绕过。维护中直接停止已核对的容器应提供 `docker stop -t 30`，但它不能提供显式 API 的失败保留保证；默认/整机停止窗口仍待 R2 验证。R4B 当前 Work 与 Personal Worker 已采用匹配的正常退出能力；最近写入持久化的历史边界见 [DEV-008](deviations/DEV-2026-09-14-008-resume-storage-observation.md)。
 
-Home 删除接口在删除前核对会话记录、挂载该 Home 的容器（含已退出）、网络占用与启动日志，任一存在返回 409 `HOME_RESERVED`，Docker 不可用返回 503；只有 Home 可证明为空时才删除。备份、删除或迁移 Home 前仍应先用 `inspect`/`health` 确认 Profile 已停止；日常重开浏览器和刷新页面都不需要删除 Home。
+R4B 当前 Work 与 Personal Worker 均采用上述正常退出能力；维护仍须通过 Adapter 生命周期停止并确认全部资源清空。Home 删除接口在删除前核对会话记录、挂载该 Home 的容器（含已退出）、网络占用与启动日志，任一存在返回 409 `HOME_RESERVED`，Docker 不可用返回 503；只有 Home 可证明为空时才删除。备份、删除或迁移 Home 前仍应先用 `inspect`/`health` 确认 Profile 已停止；日常重开浏览器和刷新页面都不需要删除 Home。
 
 空闲回收默认关闭。为某个 Profile 开启后（`idle_policy.mode=disconnected`），最后一个已认证显示连接断开达到超时后由后台采样触发已验证的 `stop`；`health` 的 `idle` 项显示倒计时，重新打开 Trilium 页面即取消。生产 Profile 是否启用及超时时长由用户决定。容量门槛（`limits`）超出时入口返回 503 且不写占用；已运行的 Profile 不受影响。
 
@@ -87,7 +87,7 @@ Home 删除接口在删除前核对会话记录、挂载该 Home 的容器（含
 
 含 Home 或密钥的备份使用 [Secret Store 与 age 加密恢复](../infra/sealskin/lifecycle/secret-store.md#加密备份与恢复)：先经 Adapter 确认停止和已落盘 journal，直接加密 Home、固定产物、配置和必要身份/解密材料；恢复只写新目录，先在 tmpfs 完整认证，再以恢复锁阻止旧凭据生效，离线合并当前撤销后才允许重绑。R5B 的 [新 QA 环境恢复](../infra/sealskin/secret-store-acceptance-2026-09-14.md) 已通过，真实 Home/整机演练仍待 R2。旧 `backup-home.py` 保留历史 QA 工具范围，不能把明文归档作为正式备份。
 
-当前生产无 Store/入口账号且 Session 未密封，采用 R2A 的 [旧部署加密步骤](../infra/sealskin/lifecycle/secret-store.md#旧部署的加密备份)。运行中只生成 `snapshot-legacy`，停机确认后才执行 `create-legacy`。一个包只含目标 Home；恢复回执为离线，不能直接激活其中引用其他 Profile 的控制 metadata。R2B 已完成相同旧镜像的三类浏览器存储恢复，R2C 已完成两个真实旧 Home 的 age 归档、verify 和离线 restore，Work 恢复运行。后续维护仍须重新核对备份时点和当前 journal；退出登录/整机重启等未测事项见 [管理员说明](../infra/sealskin/ADMIN-linger-and-boot.md)。
+R2A/R2C 的旧部署加密包仍是切换前 Personal/Work Home 的保留恢复点：两个真实旧 Home 已完成 age 归档、verify 和离线 restore。R4B 当前生产已经启用 Store、入口账号和密封 Session 状态；后续若对当前 r9/兼容 Work 执行破坏性维护，须按当前 [Secret Store 加密备份](../infra/sealskin/lifecycle/secret-store.md#加密备份与恢复) 范围重新生成匹配时点的包，并核对当前 journal、账号表、Session 密钥、策略和固定镜像。退出登录等未测事项见 [管理员说明](../infra/sealskin/ADMIN-linger-and-boot.md)。
 
 Camoufox 的现有离线恢复证据使用 QA Home 和同一固定版本。真实 Home 备份恢复、跨引擎迁移和跨版本回退依照 [R2](roadmap.md#r2)、[R4](roadmap.md#r4)、[R6](roadmap.md#r6) 分别验收。
 

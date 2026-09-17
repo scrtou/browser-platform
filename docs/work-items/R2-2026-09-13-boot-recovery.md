@@ -1,8 +1,10 @@
 # R2 · 开机持久运行与生产恢复
 
-状态：待外部条件（可离线部分已完成并上线）。开始日期：2026-09-13。可离线部分完成日期：2026-09-13。
+状态：待外部条件（可离线部分已上线；生产 Caddy/Docker/VPS 重启通过，待退出登录/Debian 13）。开始日期：2026-09-13。可离线部分完成日期：2026-09-13。
 
 2026-09-15 维护准备复核：主机仍 Debian 12、`Linger=no`，sudo 仍需密码。[R2A](R2A-2026-09-15-legacy-backup-preparation.md) 已补齐旧格式加密工具、只读运行快照和管理员说明，80 项备份检查、生产保持、QA 清理及静态核对通过并收尾，见 [验收](../../infra/sealskin/legacy-backup-acceptance-2026-09-15.md) 与 [DEV-037](../deviations/DEV-2026-09-15-037-legacy-encrypted-backup.md)。这只是维护准备，先前明文 QA 归档不能用作正式生产备份；真实 Home/浏览器恢复及正式维护条件保持。以下 2026-09-13 结果保留原版本/范围。
+
+2026-09-17 后续结果：R2C 已把 `Linger=yes`、两个真实旧 Home 的 age 归档/verify/离线 restore 完成；R4B 已把 Work 兼容代次和 Personal r9 受管理代次部署生产。正式 Caddy 重启通过后，生产 Docker 在 `live-restore=false` 下重启：控制器/静态 Relay 自动恢复，四个 Profile 容器以同一 ID/镜像保留为休眠；Adapter 新进程启动对账在约 12 秒内恢复同一代次。Personal 强制健康为 `healthy`/`PROXY_OK`，Work 为 `healthy`，登录/交接/最终 Session 200。私有证据为 `release-ready-2/after-docker-restart-1/`。14:16 UTC 管理员执行正式 VPS 重启：关机时两个 Worker 记录 `BROWSER_SHUTDOWN_CONFIRMED`，六个容器退出码 0；新 boot 中 linger 在首个 SSH 登录前启动 Adapter，Caddy 以 `--resume` 恢复候选，Docker 自动拉起控制器/静态 Relay，Adapter 取得控制面后按 Relay → Guard 规则就绪 → Personal Worker → Work Worker 顺序恢复，boot 后约 25 秒两 Profile 对账完成。六个容器 ID/镜像与两 Session 不变，四个 Home 保留，策略/账号表/密封密钥摘要不变；恢复后 live-check、登录/交接/Session 200、Personal healthy/`PROXY_OK` 通过，Work 首次返回过期缓存报告（`REPORT_EXPIRED`）后于 14:36 UTC 重新采集 healthy，15:15 UTC `live-check-3` PASS。证据 `release-ready-2/vps-reboot-1/`、`live-check-3/`；本次未采集启动窗口抓包/事件流，未读回浏览器存储。退出全部登录和 Debian 13 仍待验证。
 
 ## 目标与范围
 
@@ -20,7 +22,7 @@
 
 | 材料 / 代码入口 | 核对结论 |
 | --- | --- |
-| [进度：开机与重启恢复](../progress.md#startup)、[计划 R2](../roadmap.md#r2)、[运维说明](../operations.md) | Docker daemon 重启（有/无 live-restore）只在嵌套 daemon 与合成 Worker 上验证；生产 Worker/Guard/Relay 均 `restart=no`，控制器与静态 Relay `unless-stopped`；`Linger=no`，`loginctl enable-linger` 仍返回 Access denied（2026-09-13 复测），`sudo` 需密码 |
+| [进度：开机与重启恢复](../progress.md#startup)、[计划 R2](../roadmap.md#r2)、[运维说明](../operations.md) | 2026-09-13 时 Docker daemon 重启只在嵌套 daemon/合成 Worker 验证且 `Linger=no`；R2C 后已为 `Linger=yes`，R4B 新代次均 `restart=no`/非自动删除，2026-09-17 生产 Docker 与 VPS 重启的启动对账恢复均通过 |
 | [补丁 api.py `_remove_stale_sessions`](../../infra/sealskin/lifecycle/profile-lifecycle.patch) | API 启动时只删除容器**不存在**的会话；已退出容器的会话保留，因此重启后 Session 记录仍在 |
 | [补丁 network_runtime `restore_controller_attachment`](../../infra/sealskin/lifecycle/profile-lifecycle.patch) | 控制容器重建接回要求 Worker 处于 running；Worker 已退出时返回 `NETWORK_RECOVERY_WORKER_NOT_RUNNING` 并保留占用，不做任何启动 |
 | [Adapter `Reconcile`/`verifyBeforeEnsure`](../../adapter/internal/profile/lifecycle.go) | 本代次容器全部退出时 `liveRuntime` 为假 → 标为 `unknown` 并拒绝入口；没有“休眠代次”的识别与恢复路径。现状等于重启后两个 Profile 都需要运维 stop 再新建 |
@@ -51,16 +53,17 @@
 | --- | --- | --- | --- |
 | 备份在恢复环境可用 | `lifecycle/backup-home.py` | QA 场景 4：运行中拒绝、停止后备份 117 文件、verify、restore 到新 Home、新代次读到原数据 | 通过（QA Home）；真实生产 Home 未执行（需停止 Profile） |
 | 开机顺序与失败阻断（规则失败时浏览器不联网） | `profile_resume.py`、Adapter 对账/入口 | QA 场景 1（Docker 事件顺序 start relay → start guard → probe → start worker，创建 0）、场景 2（探测失败 Worker 不启动、入口 409） | 通过（隔离 QA） |
-| 退出登录与开机后入口/绑定/数据/网络策略符合预期 | 同上 + Adapter 开机等待 | QA 场景 1/3；线上发布后两个旧代次入口、复用、健康回归 | 隔离 QA 通过；生产整机重启未验收 |
-| 退出登录持续运行（linger） | [管理员待办](../../infra/sealskin/ADMIN-linger-and-boot.md)、系统服务模板 | `enable-linger` 复测 Access denied | 待管理员执行后验证 |
-| 正式 Docker/VPS 重启 | 同上 | — | 待维护窗口；现有代次需停止后新建才具备可恢复性 |
+| 退出登录与开机后入口/绑定/数据/网络策略符合预期 | 同上 + Adapter 开机等待 | QA 场景 1/3；R4B 新代次生产 Docker 与 VPS 重启后同容器恢复、绑定/Session 不变、健康/代理/入口/认证 Session 通过；Adapter 由 linger 在首个 SSH 登录前启动 | Docker/VPS 开机通过；退出全部登录后的持续运行待验收 |
+| 退出登录持续运行（linger） | [管理员待办](../../infra/sealskin/ADMIN-linger-and-boot.md)、系统服务模板 | R2C 与 R4B 只读检查确认 `Linger=yes`、用户服务 active+enabled | 配置通过；退出全部登录后的行为待验证 |
+| 正式 Docker 重启 | 同上 | `live-restore=false`；控制器/静态 Relay 自动启动，四个同 ID Profile 容器休眠；Adapter 启动对账恢复，Personal `PROXY_OK`，两 Profile healthy、认证 Session 200 | 通过（生产，2026-09-17） |
+| 正式 VPS 重启 | 同上 | 2026-09-17 14:16 UTC `sudo reboot`；关机正常退出（退出码 0、`BROWSER_SHUTDOWN_CONFIRMED`），开机 Relay → Guard 就绪 → Worker 顺序、同 ID/镜像/Session、Caddy `--resume` 候选、tmpfiles/Docker 顺序、认证 Session 200、两次上线后复核 PASS；Work 首份缓存报告过期后重采集 healthy | 通过（生产，2026-09-17）；未采集启动窗口抓包/事件流，未读回浏览器存储 |
 | Debian 13 | — | — | 未验证 |
 
 ## 文档与收尾
 
 - [x] 逐项回看原始任务、计划、设计和实际行为（上表）。
 - [x] 完成可离线验证：[开机恢复验收](../../infra/sealskin/boot-recovery-acceptance-2026-09-13.md)；私有证据在被忽略的 `runtime/boot-recovery-2026-09-13/`。
-- [x] 偏差 DEV-2026-09-13-002 已解决（实现侧）；旧代次切换、linger、整机重启、Debian 13 状态明确。
+- [x] 偏差 DEV-2026-09-13-002 已解决（实现侧）；新生产代次与 linger 已部署，正式 Caddy/Docker/VPS 重启通过，退出登录/Debian 13 状态明确。
 - [x] 更新 [架构](../design.md)、[规格 48.2](../specs/proxy-environment/specification.md)、[v2 验收范围说明](../../infra/sealskin/network-isolation-acceptance-2026-09-13.md)、[Adapter](../../adapter/README.md)、[生命周期](../../infra/sealskin/lifecycle/README.md)、[运维](../operations.md)、[管理员待办](../../infra/sealskin/ADMIN-linger-and-boot.md)。
 - [x] 更新 [验收索引](../acceptance/README.md)。
 - [x] 更新 [开发进度](../progress.md) 与生效范围。
@@ -68,4 +71,4 @@
 - [x] QA 清理（`qa-cleanup.json` PASS）、回滚材料、链接静态核对、工作区变更核对。
 - [x] 更新本记录与工作项索引。
 
-收尾结论：可离线部分已完成并上线；本项保持**待外部条件**——(1) 管理员启用 linger 或安装系统服务并验证；(2) 维护窗口执行正式 Docker/VPS 重启验收（建议先停止并新建两个生产代次使其具备可恢复性，并对已停止 Profile 做真实 Home 备份）；(3) Debian 13 平台验收。这些不阻塞下一项，R3 可以开始。
+当前结论：可离线部分、`Linger=yes`、真实旧 Home 备份/恢复、生产新代次和正式 Caddy/Docker/VPS 重启已完成。三次重启中同一 Worker/Guard/Relay 身份、入口、显示、代理与认证 Session 恢复通过；开机窗口只有容器启动顺序与 Guard 就绪日志，没有抓包级无直连证据。本项保持**待外部条件**——(1) 退出全部登录后持续运行（需管理员登出全部 SSH 会话后从另一台机器验证）；(2) Debian 13 平台验收。R4B 已于 2026-09-17 收尾。

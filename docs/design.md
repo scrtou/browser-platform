@@ -94,7 +94,7 @@ DIRECT 控制器与网关只读挂载固定宿主机 procfs 地址证据，冻�
 
 R5C2 候选把代理端点引导 DNS 独立配置为 `bootstrap_resolver_id` / `bootstrap_resolver_ip`。批准路径只查询固定数值端点，以有界 UDP/TCP、CNAME 和完整 IPv4 校验取得回答；数值上游不执行 DNS。回答、TTL 和接收时间绑定 Home/operation/策略，恢复和控制器重接核对冻结配置与挂载。TTL 到期不更换运行端点或释放 Home，新代次才重新解析。空字段保留旧策略 SHA 及 `legacy_system` 路径，该路径不能算批准解析器通过。依赖、记录和兼容边界见 [引导 DNS 契约](../infra/sealskin/lifecycle/bootstrap-dns.md)。公开委派、三条实际解析路径和真实 TTL 已在独立标准 Unbound 与受控公网端点完成验收；该结果不推论公共递归前端只有一个缓存期限，也不代替运行时新鲜一致性报告。
 
-[R5A](work-items/R5A-2026-09-14-proxy-protocols.md) 保留内部 SOCKS5，扩展上游 HTTP/HTTPS CONNECT 与明确认证矩阵；HTTPS 在冻结 IP 上验证原始代理主机名。旧策略的规范化摘要保持不变，新协议配置通过新修订采用。六组协议/认证及正常退出修复已完成隔离验收，尚未部署；内部协议映射和握手超时偏差分别见 [DEV-006](deviations/DEV-2026-09-14-006-internal-proxy-protocol.md)、[DEV-005](deviations/DEV-2026-09-14-005-relay-handshake-timeout.md)。
+[R5A](work-items/R5A-2026-09-14-proxy-protocols.md) 保留内部 SOCKS5，扩展上游 HTTP/HTTPS CONNECT 与明确认证矩阵；HTTPS 在冻结 IP 上验证原始代理主机名。旧策略的规范化摘要保持不变，新协议配置通过新修订采用。六组协议/认证及正常退出修复已完成隔离验收；该候选没有独立发布，R4B 后续组合已把当前固定 SOCKS5 策略和匹配正常退出能力部署生产，其他协议仍只引用 R5A 范围证据。内部协议映射和握手超时偏差分别见 [DEV-006](deviations/DEV-2026-09-14-006-internal-proxy-protocol.md)、[DEV-005](deviations/DEV-2026-09-14-005-relay-handshake-timeout.md)。
 
 ## 运行时一致性候选
 

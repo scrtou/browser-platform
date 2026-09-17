@@ -2,7 +2,7 @@
 
 [Adapter](../../../adapter/README.md) · [工作项](../../../docs/work-items/R5D-2026-09-14-entry-authentication.md) · [加密备份](../lifecycle/secret-store.md)
 
-R5D 候选 3 已完成本地账号、短期访问授权及独立 HTTPS/真实 Selkies 验收，尚未部署生产。两个公开 origin 的所有请求都经过 Adapter；SealSkin API 和原 Session 监听只在本机可达。示例见 [Caddyfile](Caddyfile.example)，范围和固定摘要见 [验收报告](../entry-authentication-acceptance-2026-09-15.md)。
+R5D 候选 3 在独立阶段完成本地账号、短期访问授权及 HTTPS/真实 Selkies 验收；其原候选当时没有部署。R4B 已把后续共享组合部署生产，两个公开 origin 的所有请求都经过 Adapter；SealSkin API 和原 Session 监听只在本机可达。示例见 [Caddyfile](Caddyfile.example)，阶段范围和固定摘要见 [验收报告](../entry-authentication-acceptance-2026-09-15.md)。
 
 候选 1 的 Worker 凭据环境和私有 TLS 名称问题已修复；兑换后的后端能力 URL 也已移除。旧候选与失败证据保留，不能作为发布版本。新 Worker 必须使用 [显示认证层](../../browser-access/README.md)；存量旧 Worker 的兼容恢复不代表通过新的 S02 边界。
 
@@ -16,7 +16,7 @@ R5D 候选 3 已完成本地账号、短期访问授权及独立 HTTPS/真实 Se
 
 Cookie 使用 `__Host-` 前缀、Secure、HttpOnly、Path=/、SameSite=Lax，无 Domain 属性。登录状态只保存于内存，重启即失效。注销、到期或账号表变化撤销显示访问并取消已有连接；绑定变化也会撤销显示。账号表和绑定后台约每秒检查，依赖服务与磁盘可用性，不提供主机停顿时的实时保证。这些操作不停止 Worker 或删除 Home；独立空闲策略仍按既有契约执行。
 
-Adapter 保存停止或恢复意图时也会撤销该 Session 的旧显示授权。正常恢复并取得新鲜的一致性报告后，从固定 Profile 入口重新交接；仍有效的登录可以继续使用。直接刷新旧 Session 地址可能返回 401，不能据此改写绑定或绕过门槛。[R5E](../release-combination-acceptance-2026-09-15.md) 已验证该组合路径，包含 tmpfs 丢失后的原代次恢复与重新交接，未部署生产。
+Adapter 保存停止或恢复意图时也会撤销该 Session 的旧显示授权。正常恢复并取得新鲜的一致性报告后，从固定 Profile 入口重新交接；仍有效的登录可以继续使用。直接刷新旧 Session 地址可能返回 401，不能据此改写绑定或绕过门槛。[R5E](../release-combination-acceptance-2026-09-15.md) 曾在固定 r7 候选验证 tmpfs 丢失后的原代次恢复与重新交接；该候选没有单独部署，R4B 后续共享组合已上线，正式重启恢复仍须按 R2 留证。
 
 公开入口只豁免通用 `/healthz`、`/readyz` 和原 GET `/bootstrap/*` 对账入口。控制 Unix socket 保持本机私有。账号表缺失、权限异常或无效时撤销全部登录；修复后需重新登录。并发密码推导限制为 2，每来源和账号每分钟最多 8 次尝试。前置代理场景中来源为本机代理连接，因此该来源门槛同时限制全站登录尝试。
 
@@ -73,6 +73,8 @@ python3 infra/sealskin/entry-auth/prepare-release.py \
 
 运行环境需有 Caddy、Python `cryptography` 和候选目录中的 `bin/profile-adapter`、`bin/profile-accounts`、`images.json`。`--uid` / `--gid` 必须对应控制器实际 PUID/PGID；默认使用执行者身份。最终本机材料为忽略目录 `infra/sealskin/runtime/r5d-entry-auth-2026-09-14/release-review-2/`，清单状态为 `REVIEW_ONLY_NOT_DEPLOYED`。
 
+R4B 的完整组合包由 [prepare-r4b-production-release.py](../checks/prepare-r4b-production-release.py) 生成，并用 [verify-r4b-production-release.py](../checks/verify-r4b-production-release.py) 独立复核。主机前置使用 [install-host-prerequisites.py](install-host-prerequisites.py)：不带 `--apply` 只读报告状态；`--apply` 必须由管理员运行，安装 tmpfiles、Docker 顺序和 Caddy API 配置恢复 drop-in，创建 `/run` 材料目录并 reload systemd，不重启 Caddy、Docker、VPS 或浏览器。Caddy drop-in 使服务/主机重启继续读取 API autosave，避免重新加载旧磁盘 Caddyfile 而绕过入口网关；正式 Caddy/Docker/VPS 重启已于 2026-09-17 通过 R2/R4B 验收（[DEV-043](../../../docs/deviations/DEV-2026-09-17-043-caddy-api-config-persistence.md)）。
+
 | 文件 | 用途与安装前核对 |
 | --- | --- |
 | `caddy.candidate.json` | 两个公开域名全部转发 Adapter，保留其他路由和原 80 端口站点；错误日志采用受控字段 |
@@ -80,7 +82,8 @@ python3 infra/sealskin/entry-auth/prepare-release.py \
 | `adapter.candidate.json` | 同一个私有 HTTPS 上游、明确 CA/SAN、账号文件及原状态/socket 路径；Profile/App/策略仍是准备时的生产引用 |
 | `private-tls/` | 精确 Session SAN 的证书和私钥；证书供 Adapter 信任，配对证书/私钥供 SealSkin 私有 Caddy 使用 |
 | `compose.entry-auth.yml` | 固定控制镜像和宿主 `/run/browser-platform/session-secrets` bind，禁止自动创建磁盘目录 |
-| `browser-platform-session-auth.tmpfiles.conf`、`docker-tmpfiles-ordering.conf` | 主机 tmpfs 内的目录权限及 Docker 在 tmpfiles 之后启动的顺序；实际开机仍须 R2 验收 |
+| `browser-platform-session-auth.tmpfiles.conf`、`docker-tmpfiles-ordering.conf` | 主机 tmpfs 内的目录权限及 Docker 在 tmpfiles 之后启动的顺序；2026-09-17 VPS 重启后由 `live-check-3` 确认生效 |
+| `caddy-api-resume.conf` | systemd 重启时优先恢复 Caddy API autosave，reload 同样读取该 JSON；安装时不重启现有 Caddy |
 | `*.before*`、`release-review.json` | 准备时配置、输入/二进制/文件摘要和剩余条件；不包含真实 Home 的恢复备份 |
 
 候选尚需与 R4B 的 r7 App/新 Home/策略迁移材料合并；当前 Profile 引用不能直接作为 r7 发布。采用 DIRECT、Secret Store 或一致性策略时，还需合并这些组件各自的挂载和配置。Compose 合并检查只验证配置结构，不证明主机 tmpfs、权限、开机顺序或生产部署可用。

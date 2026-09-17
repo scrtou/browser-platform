@@ -8,7 +8,7 @@
 
 | 日期 / 记录 | 验证内容 | 范围与后续关系 |
 | --- | --- | --- |
-| 2026-09-15–16 · [R4B 迁移能力修复与客户端阶段验收](../../infra/sealskin/target-client-migration-acceptance-2026-09-15.md) | 534 项控制/10 项准备、生产保护；r9 完整产物/桌面与 fill-r10 全视区/Linux 客户端；Work Wayland 控制器/s6、三类存储、入口、五类错误材料和 342 面扫描 | Work 兼容 QA 已清理，生产 Work/Mac QA 保持；Mac 已确认 r9 按钮/图片预览及 fill-r10 视觉铺满、点击正常，窄视区字体拉伸作为固定分辨率取舍保留；生产账号/主机配置、迁移/回退仍待完成，未部署 |
+| 2026-09-15–17 · [R4B 迁移能力修复与客户端阶段验收](../../infra/sealskin/target-client-migration-acceptance-2026-09-15.md) | 534 项控制/10 项准备；r9/fill-r10 与 Work Wayland/存储/入口/秘密边界；39 文件生产包、实际维护、目标 Mac 及 Caddy/Docker/VPS 重启检查 | 共享控制器、账号入口、Work 兼容镜像和 r9 Personal 已部署；公网认证、目标 Mac 和正式 Caddy/Docker/VPS 同代次恢复通过，旧 Home/备份保留。R2 的退出全部登录与 Debian 13 仍待外部条件 |
 | 2026-09-15 · [R2B 旧 Firefox 加密恢复](../../infra/sealskin/legacy-browser-recovery-acceptance-2026-09-15.md) | 固定旧 Firefox/Wayland 真实三类浏览器存储、正常关闭、旧格式 age 加密往返、新私有根读回、错误路径与 QA 清理 | 独立 QA；源代次先退出，生产四容器/五份配置保持；真实生产 Home、linger、主机重启、Debian 13 和 R4B 仍未测 |
 | 2026-09-15 · [R5E r7 组合](../../infra/sealskin/release-combination-acceptance-2026-09-15.md) | 23 项实际组合、101 项备份、r7 新私有根数据/资产恢复 | 代码/组合 QA/清理/文档已收尾；原失败保留，生产与目标客户端未迁移 |
 | 2026-09-15 · [R2A 旧部署加密备份准备](../../infra/sealskin/legacy-backup-acceptance-2026-09-15.md) | 原 37 项 + 新 43 项备份检查、真实 age/CLI/Unix socket 往返、两个生产只读快照与身份文件前置检查 | 工具与维护材料；未读取/复制真实 Home，未执行浏览器恢复或停机。旧格式仅离线准备，S05/整机维护条件保持 |
@@ -20,7 +20,7 @@
 | 2026-09-14 · [R5A 上游协议、认证与正常退出](../../infra/sealskin/proxy-protocols-acceptance-2026-09-14.md) | 六组/70 项网络检查、三种真实错误密码、有界握手/兼容性、181 项 Python、r6 完整产物与即时存储恢复 | 代码/隔离 QA/清理已收尾，生产未更新；Secret Store 后续见 R5B，DIRECT/公开 DNS 和入口鉴权仍属后续子项 |
 | 2026-09-14 · [R4A 客户端与 Camoufox 迁移准备](../../infra/sealskin/client-migration-acceptance-2026-09-14.md) | Linux 客户端矩阵、Unicode 修复、完整复制/截图回归、Electron 非文本权限探针、11 项 Camoufox 网络检查、停止重建与只读迁移准备 | 目标 Mac/Trilium 和实际入口切换仍属 R4B；新客户端包仅 QA 使用，生产原会话保留 |
 | 2026-09-13 · [生命周期与数据保护](../../infra/sealskin/lifecycle-protection-acceptance-2026-09-13.md) | Home 删除保护、create 前启动日志（崩溃/丢失响应/未创建三种对账）、显示连接观测与空闲回收（真实显示 WebSocket）、容量门槛 | 隔离 QA 与线上发布回归；生产空闲回收默认关闭，容器级资源限制未改动 |
-| 2026-09-13 · [开机恢复与离线备份](../../infra/sealskin/boot-recovery-acceptance-2026-09-13.md) | 休眠代次按序恢复（真实 Firefox 代次全容器停止 + 控制器/Adapter 重启）、探测失败阻断、旧代次恢复、停机备份/校验/恢复 | 隔离 QA；生产已发布 `0.3.2-resume-v1` 但现有代次仍为自动删除容器，需停止后新建；linger、正式 VPS 重启、Debian 13 待管理员/维护窗口 |
+| 2026-09-13 · [开机恢复与离线备份](../../infra/sealskin/boot-recovery-acceptance-2026-09-13.md) | 休眠代次按序恢复（真实 Firefox 代次全容器停止 + 控制器/Adapter 重启）、探测失败阻断、旧代次恢复、停机备份/校验/恢复 | 隔离 QA；R4B 已部署非自动删除生产代次并通过正式 Docker 同代次恢复，`Linger=yes`。退出全部登录、VPS 重启、Debian 13 待验证 |
 | 2026-09-13 · [运行健康与恢复提示](../../infra/sealskin/health-acceptance-2026-09-13.md) | 多维健康报告、缓存/节流/只读、浏览器退出/显示/Relay/上游/Guard 故障、停止与控制面故障、报告过期、入口恢复提示 | 当前控制服务发布依据（`0.3.2-health-v1`）；隔离 QA 使用进程模拟 Worker；线上仅验证无故障入口与两个旧代次的报告；Mac/Trilium 提示页待用户复测 |
 | 2026-09-13 · [网络隔离与恢复 v2](../../infra/sealskin/network-isolation-acceptance-2026-09-13.md) | Guard ACL、generation 生命周期、浏览器网络故障、控制容器重建、独立 Docker daemon | 当前控制服务发布依据；新 Personal 策略下次新建会话生效，旧 Work/Personal/Camoufox 未迁移；不覆盖生产 VPS 重启 |
 | 2026-09-13 · [网络生命周期 v1](../../infra/sealskin/network-lifecycle-acceptance-2026-09-13.md) | 独立网络/Relay、创建前占用、清理与故障续接 | 历史基线；同网段管理端口问题由 v2 修复，不能用 v1 证明管理网络隔离 |
