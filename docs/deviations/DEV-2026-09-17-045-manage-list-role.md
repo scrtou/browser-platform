@@ -1,6 +1,6 @@
 # DEV-2026-09-17-045 · R6A 管理列表对任意登录账号开放，与两级访问设计不符
 
-状态：待处理（归入 R6B 修复实现；R6A 候选在修复前不进入任何发布包）。发现日期：2026-09-17。关联工作项：[R6A](../work-items/R6A-2026-09-17-environment-list.md)、[R6](../work-items/R6-2026-09-16-environment-management.md)。
+状态：已解决（R6B 候选，2026-09-18；未部署生产）。发现日期：2026-09-17。关联工作项：[R6A](../work-items/R6A-2026-09-17-environment-list.md)、[R6](../work-items/R6-2026-09-16-environment-management.md)。
 
 ## 设计预期
 
@@ -22,11 +22,11 @@
 
 | 材料 | 更新 / 结果 |
 | --- | --- |
-| 实现 | 待 R6B：`access.Account.Role`、注册表 version 2 迁移、`ManagePath` 角色检查、`/auth/reauth`、`/auth/password` |
-| 验收与证据 | 未验证；R6B 须覆盖 admin 可见/user 403/迁移默认角色/最后管理员保护 |
+| 实现 | R6B：`access.Account.Role` 与 version 2 注册表（无角色仍写 version 1）、`AccountStore` 最后管理员保护、`serveEntry` 对 `/manage/*` 按 `admin` 放行且 `user` 得 403、`/auth/reauth`、`/auth/password`、按账号撤销 |
+| 验收与证据 | [R6B 验收](../../infra/sealskin/environment-directory-acceptance-2026-09-17.md)：`access/manage_test.go`、`accounts_test.go`、`httpapi/manage_gateway_test.go` 覆盖 user 403、admin 全量列表、version 1 默认 user、最后管理员保护；收尾修复 DEV-046 后共 147 项测试、vet、race 通过 |
 | 设计 / 规格 / 组件说明 | 规格第 2 版“访问账号与登录 URL（两级访问）”已更新；Adapter/入口登录说明已注明 R6A 候选的差异 |
-| 进度 / 计划 / 工作项 | R6/R6A 工作项、进度、计划已登记本偏差 |
+| 进度 / 计划 / 工作项 | R6/R6A/R6B 工作项、进度、计划、偏差索引已同步为已解决 |
 
 ## 最终复核
 
-待 R6B 完成后填写：最终行为、剩余边界、解决日期。
+2026-09-18：R6B 候选中入口账号访问 `/manage/*` 得到 403 页面且不含浏览器信息，管理员看到全部浏览器；R6A 的 `view`/`start` 双能力授权被管理员的 `view`/`manage`/`stop`（被分配另有 `start`）取代。剩余边界：候选未部署，真实客户端归 R6F；解决日期 2026-09-18。

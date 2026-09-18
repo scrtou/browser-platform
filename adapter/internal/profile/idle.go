@@ -87,7 +87,7 @@ type IdleDecision struct {
 // or clears the countdown; unknown observations do neither (H05). Reclaim
 // uses the verified Stop path and never releases anything by time alone.
 func (s *Service) ApplyIdle(ctx context.Context, report HealthReport, logger *slog.Logger) IdleDecision {
-	definition, ok := s.profiles[report.ProfileID]
+	definition, ok := s.directory.get(report.ProfileID)
 	decision := IdleDecision{ProfileID: report.ProfileID, Action: "off"}
 	if !ok || !definition.IdlePolicy.Enabled() {
 		return decision

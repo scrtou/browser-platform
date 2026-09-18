@@ -44,6 +44,9 @@ type Definition struct {
 	// RequiredRuntimeCapabilities binds a new Worker to its controller contract.
 	// Stop and reconciliation remain available when the controller is older.
 	RequiredRuntimeCapabilities map[string]int `json:"required_runtime_capabilities,omitempty"`
+	// Disabled refuses new launches and entry reuse; running generations,
+	// stop, reconciliation and health are unaffected.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // IdlePolicy follows the health specification's idlePolicy: only the
@@ -82,16 +85,17 @@ type Orchestrator interface {
 }
 
 type Service struct {
-	orchestrator Orchestrator
-	store        *state.Store
-	publicBase   *url.URL
-	profiles     map[string]Definition
-	runtime      RuntimeController
-	now          func() time.Time
-	health       healthCache
-	limits       Limits
-	launching    int32
-	stopHook     func(string) // test hook, called after an idle stop attempt
+	orchestrator  Orchestrator
+	store         *state.Store
+	publicBase    *url.URL
+	directory     *directory
+	directoryPath string
+	runtime       RuntimeController
+	now           func() time.Time
+	health        healthCache
+	limits        Limits
+	launching     int32
+	stopHook      func(string) // test hook, called after an idle stop attempt
 
 	locksMu sync.Mutex
 	locks   map[string]*sync.Mutex
@@ -111,33 +115,28 @@ func NewService(orchestrator Orchestrator, store *state.Store, publicBaseURL str
 	if publicBase.Path != "" && publicBase.Path != "/" {
 		return nil, errors.New("adapter public base URL must be an HTTPS origin without a path")
 	}
-	profiles := make(map[string]Definition, len(definitions))
-	homes := make(map[string]string, len(definitions))
-	for _, definition := range definitions {
-		if err := validateDefinition(definition); err != nil {
-			return nil, fmt.Errorf("profile %q: %w", definition.ID, err)
-		}
-		if _, exists := profiles[definition.ID]; exists {
-			return nil, fmt.Errorf("duplicate profile ID %q", definition.ID)
-		}
-		profiles[definition.ID] = definition
-		if previous, exists := homes[definition.HomeName]; exists {
-			return nil, fmt.Errorf("profiles %q and %q share one Home", previous, definition.ID)
-		}
-		homes[definition.HomeName] = definition.ID
-	}
-	if len(profiles) == 0 {
-		return nil, errors.New("at least one profile is required")
+	now := time.Now
+	catalog, err := newDirectory(definitions, now)
+	if err != nil {
+		return nil, err
 	}
 	service := &Service{
 		orchestrator: orchestrator, store: store, publicBase: publicBase,
-		profiles: profiles, locks: make(map[string]*sync.Mutex), now: time.Now,
+		directory: catalog, locks: make(map[string]*sync.Mutex), now: now,
 		health: healthCache{reports: make(map[string]HealthReport), inflight: make(map[string]*healthFlight), started: make(map[string]time.Time)},
 	}
 	for _, option := range options {
 		option(service)
 	}
-	for _, definition := range definitions {
+	service.directory.now = func() time.Time { return service.now() }
+	if service.directoryPath != "" {
+		if err := service.directory.open(service.directoryPath); err != nil {
+			return nil, err
+		}
+	} else if len(service.directory.records) == 0 {
+		return nil, errors.New("at least one profile is required")
+	}
+	for _, definition := range service.directory.definitions() {
 		if len(definition.RequiredRuntimeCapabilities) != 0 && service.runtime == nil {
 			return nil, errors.New("runtime capability requirements need verified lifecycle")
 		}
@@ -161,12 +160,41 @@ func WithLimits(limits Limits) Option {
 	}
 }
 
+// WithDirectory persists the browser definitions in a private file. An
+// existing file is authoritative; a missing one is created from the
+// configured profiles.
+func WithDirectory(path string) Option {
+	return func(s *Service) { s.directoryPath = path }
+}
+
+// Records lists every browser definition with its directory metadata.
+func (s *Service) Records() []Record { return s.directory.all() }
+
+// ProfileIDs lists the configured Profile IDs in a stable order.
+func (s *Service) ProfileIDs() []string { return s.directory.ids() }
+
+// KnownProfile reports whether a Profile ID is configured.
+func (s *Service) KnownProfile(id string) bool {
+	_, ok := s.directory.get(id)
+	return ok
+}
+
+// UpdateBrowser changes display fields or the enabled flag under optimistic
+// locking. It never touches a running generation: the next launch reads the
+// new start URL, and a disabled browser only refuses new launches and reuse.
+func (s *Service) UpdateBrowser(id string, expectedRevision int, actor string, patch BrowserPatch) (Record, error) {
+	return s.directory.update(id, expectedRevision, actor, patch)
+}
+
 // Ensure returns a live session for a Profile. It never launches while an
 // earlier operation has an unproven outcome.
 func (s *Service) Ensure(ctx context.Context, profileID string) (result sealskin.Session, resultErr error) {
-	definition, ok := s.profiles[profileID]
+	definition, ok := s.directory.get(profileID)
 	if !ok {
 		return sealskin.Session{}, ErrProfileNotFound
+	}
+	if definition.Disabled {
+		return sealskin.Session{}, ErrProfileDisabled
 	}
 	lock := s.profileLock(profileID)
 	lock.Lock()
@@ -320,7 +348,7 @@ func (s *Service) Ensure(ctx context.Context, profileID string) (result sealskin
 }
 
 func (s *Service) BootstrapTarget(profileID, operationID string) (string, error) {
-	definition, ok := s.profiles[profileID]
+	definition, ok := s.directory.get(profileID)
 	if !ok {
 		return "", ErrProfileNotFound
 	}
@@ -345,7 +373,7 @@ func (s *Service) ResetUnknown(profileID string) error {
 	if s.runtime != nil {
 		return errors.New("verified lifecycle is enabled; use reconcile-profile or stop-profile instead of an unchecked reset")
 	}
-	if _, ok := s.profiles[profileID]; !ok {
+	if _, ok := s.directory.get(profileID); !ok {
 		return ErrProfileNotFound
 	}
 	return s.store.Update(profileID, func(current *state.Binding) (*state.Binding, error) {
@@ -398,11 +426,12 @@ func (s *Service) prepareLaunch(profileID string) (state.Binding, error) {
 	bootstrap := *s.publicBase
 	bootstrap.Path = "/bootstrap/" + url.PathEscape(profileID) + "/" + operationID
 	bootstrap.RawPath = ""
+	definition, _ := s.directory.get(profileID)
 	binding := state.Binding{
 		Status: state.StatusLaunching, OperationID: operationID,
 		IdempotencyKey: idempotencyKey, BootstrapURL: bootstrap.String(),
-		HomeName: s.profiles[profileID].HomeName, ApplicationID: s.profiles[profileID].ApplicationID,
-		NetworkPolicyID: s.profiles[profileID].NetworkPolicyID, NetworkPolicySHA256: s.profiles[profileID].NetworkPolicySHA256,
+		HomeName: definition.HomeName, ApplicationID: definition.ApplicationID,
+		NetworkPolicyID: definition.NetworkPolicyID, NetworkPolicySHA256: definition.NetworkPolicySHA256,
 	}
 	err = s.store.Update(profileID, func(current *state.Binding) (*state.Binding, error) {
 		if current != nil && current.Status != state.StatusStopped && current.Status != state.StatusFailed {
@@ -414,7 +443,7 @@ func (s *Service) prepareLaunch(profileID string) (state.Binding, error) {
 }
 
 func (s *Service) reconcileExisting(profileID string, binding state.Binding, sessions []sealskin.Session) (sealskin.Session, error) {
-	definition := s.profiles[profileID]
+	definition, _ := s.directory.get(profileID)
 	matches := findByMarker(sessions, binding.BootstrapURL, definition.ApplicationID)
 	if len(matches) == 1 {
 		if err := s.bindRunning(profileID, binding.OperationID, matches[0].SessionID); err != nil {

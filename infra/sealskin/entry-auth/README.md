@@ -18,7 +18,7 @@ Cookie 使用 `__Host-` 前缀、Secure、HttpOnly、Path=/、SameSite=Lax，无
 
 Adapter 保存停止或恢复意图时也会撤销该 Session 的旧显示授权。正常恢复并取得新鲜的一致性报告后，从固定 Profile 入口重新交接；仍有效的登录可以继续使用。直接刷新旧 Session 地址可能返回 401，不能据此改写绑定或绕过门槛。[R5E](../release-combination-acceptance-2026-09-15.md) 曾在固定 r7 候选验证 tmpfs 丢失后的原代次恢复与重新交接；该候选没有单独部署，R4B 后续共享组合已上线，正式重启恢复仍须按 R2 留证。
 
-登录后另可访问 `GET /manage/` 与 `GET /manage/environments`：网关把账号表中该账号的 Profile 解释为 `view`/`start` 能力并交给只读环境列表（R6A，未部署生产），跨账号 Profile 不出现在列表中，POST 拒绝，其他 `/manage/*` 路径 404；账号禁用、账号表失效或注销后列表立即不可用。按 2026-09-17 确认的两级访问设计，管理面板应只对管理员角色开放，该候选尚未收紧（[DEV-045](../../../docs/deviations/DEV-2026-09-17-045-manage-list-role.md)）。公开入口只豁免通用 `/healthz`、`/readyz` 和原 GET `/bootstrap/*` 对账入口。控制 Unix socket 保持本机私有。账号表缺失、权限异常或无效时撤销全部登录；修复后需重新登录。并发密码推导限制为 2，每来源和账号每分钟最多 8 次尝试。前置代理场景中来源为本机代理连接，因此该来源门槛同时限制全站登录尝试。
+两级访问（R6A/R6B 候选，未部署生产）：账号表 version 2 的 `role` 为 `admin` 或 `user`（version 1 与空角色即 `user`）。只有管理员能进入 `/manage/*`，入口账号访问它得到 403 且不含任何浏览器信息；管理员在面板中看到全部浏览器、分配账号与固定入口 URL，可修改名称/起始页、停用/启用、安全关闭，创建/重置/禁用账号、分配浏览器、修改角色。面板 POST 要求精确 Origin 与表单 CSRF；创建管理员、禁用/启用、改角色和重置他人密码还要求 5 分钟内经 `/auth/reauth` 确认过密码。任意账号可经 `/auth/password` 修改自己的密码，成功后撤销该账号其他登录与显示。账号表变化只撤销记录变化或消失的账号的登录/显示（授权变化视为记录变化），其他账号保持；账号表缺失或无效仍撤销全部。不能禁用或降级最后一个启用的管理员；首个管理员由 CLI 创建。公开入口只豁免通用 `/healthz`、`/readyz` 和原 GET `/bootstrap/*` 对账入口。控制 Unix socket 保持本机私有。账号表缺失、权限异常或无效时撤销全部登录；修复后需重新登录。并发密码推导限制为 2，每来源和账号每分钟最多 8 次尝试。前置代理场景中来源为本机代理连接，因此该来源门槛同时限制全站登录尝试。
 
 ## 配置和管理
 
@@ -43,14 +43,17 @@ Adapter 的 `access` 配置包括：
 read -r -s -p 'New password: ' bp_entry_password
 printf '%s' "$bp_entry_password" | profile-accounts put --config /private/adapter-config.json \
   --user owner --profiles personal,work
-unset bp_entry_password
+printf '%s' "$bp_admin_password" | profile-accounts put --config /private/adapter-config.json \
+  --user admin --role admin
+unset bp_entry_password bp_admin_password
 profile-accounts check --config /private/adapter-config.json
 profile-accounts disable --config /private/adapter-config.json --user owner
+profile-accounts enable --config /private/adapter-config.json --user owner
 ```
 
-新增/修改表原子写入为 0600，并使用文件锁串行管理操作。替换现有账号需要 `put --replace`，会替换密码、Profile 授权并重新启用账号；命令不输出密码或派生值。所有账号表变化都会撤销已有登录。当前上限为 64 个账号、4096 个内存授权、256 个待交接地址、1024 个活动显示请求。
+新增/修改表原子写入为 0600，并使用文件锁串行管理操作。替换现有账号需要 `put --replace`，会替换密码、Profile 授权并重新启用账号，未指定 `--role` 时保留原角色；命令不输出密码或派生值。配置 `profile_directory` 后，CLI 只按该权威目录校验授权；目录缺失、损坏或不安全时拒绝操作，不回退到配置 `profiles` 种子。生产（candidate-4）仍按“任何账号表变化撤销全部登录”运行；R6B candidate-2 改为只撤销变化的账号。写入 version 2（出现角色）后旧 Adapter 无法读取该表，回退前须先降级角色或恢复旧表。当前上限为 64 个账号、4096 个内存授权、256 个待交接地址、1024 个活动显示请求。
 
-用户在 Trilium WebView 笔记中继续保存固定 Profile 地址；首次或到期后先登录。访问入口根路径可查看已授权 Profile 并退出登录；R6A 候选另提供 `/manage/` 只读环境列表（生产尚未部署）。登录表单使用 `Referrer-Policy: same-origin` 保留合法 POST Origin，交接和显示使用 `no-referrer`。目标 Mac/Trilium 实机仍归 R4B，不以 Linux 浏览器结果替代。
+用户在 Trilium WebView 笔记中继续保存固定 Profile 地址；首次或到期后先登录。访问入口根路径可查看已授权 Profile 并退出登录；R6B candidate-2 的 `/manage/` 只对管理员开放并提供目录与账号操作（生产尚未部署）。登录表单使用 `Referrer-Policy: same-origin` 保留合法 POST Origin，交接和显示使用 `no-referrer`。R6B 的目标 Mac/Trilium 与真实控制器组合验收归 R6F，不以 Go 隔离测试替代。
 
 ## 状态、日志和恢复
 

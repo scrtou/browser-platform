@@ -69,6 +69,9 @@ func New(profiles profileService, listSessions func(context.Context) ([]sealskin
 	// the login's grants; without them both handlers answer 404.
 	mux.HandleFunc("GET /manage/{$}", server.managePage)
 	mux.HandleFunc("GET /manage/environments", server.manageEnvironments)
+	mux.HandleFunc("POST /manage/browsers/{profile}", server.manageBrowser)
+	mux.HandleFunc("POST /manage/accounts", server.manageAccounts)
+	mux.HandleFunc("POST /manage/accounts/{account}", server.manageAccount)
 	server.handler = securityHeaders(mux)
 	if server.access != nil {
 		server.handler = server.access.Wrap(server.handler)
@@ -283,6 +286,8 @@ func (s *Server) writeProfileError(writer http.ResponseWriter, profileID string,
 		writer.Header().Set("Retry-After", "30")
 	case errors.Is(err, profile.ErrRuntimeUnsupported):
 		status, message = http.StatusServiceUnavailable, "浏览器暂时不可用，需完成维护后再试。"
+	case errors.Is(err, profile.ErrProfileDisabled):
+		status, message = http.StatusServiceUnavailable, "该浏览器已由管理员停用，暂不能启动或进入。"
 	}
 	s.logger.Error("profile entry failed", "profile", profileID, "status", status, "error", err)
 	http.Error(writer, message, status)

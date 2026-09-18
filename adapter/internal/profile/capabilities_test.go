@@ -10,9 +10,9 @@ import (
 )
 
 func requireR7(service *Service) {
-	definition := service.profiles["personal"]
+	definition, _ := service.directory.get("personal")
 	definition.RequiredRuntimeCapabilities = map[string]int{"browser_shutdown_version": 1, "session_auth_version": 1}
-	service.profiles["personal"] = definition
+	service.directory.records["personal"] = Record{Definition: definition, Revision: 1}
 }
 
 func TestIncompatibleControllerDoesNotCreateHomeOrLaunch(t *testing.T) {

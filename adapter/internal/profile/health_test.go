@@ -277,9 +277,9 @@ func TestManagedGenerationProbesUpstreamAndReportsRelayFailures(t *testing.T) {
 
 func TestLegacyGenerationUnderNewPolicyIsDegradedNotUnhealthy(t *testing.T) {
 	service, store, fake, _ := newHealthService(t)
-	definition := service.profiles["personal"]
+	definition, _ := service.directory.get("personal")
 	definition.NetworkPolicyID, definition.NetworkPolicySHA256 = "personal-socks5-r2", strings.Repeat("b", 64)
-	service.profiles["personal"] = definition
+	service.directory.records["personal"] = Record{Definition: definition, Revision: 1}
 	report, err := service.Health(context.Background(), "personal", HealthOptions{})
 	if err != nil {
 		t.Fatal(err)

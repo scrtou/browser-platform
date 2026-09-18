@@ -28,6 +28,9 @@ type Account struct {
 	PasswordHash string   `json:"password_hash"`
 	Profiles     []string `json:"profiles"`
 	Disabled     bool     `json:"disabled,omitempty"`
+	// Role is "admin" or "user"; absent (version 1) means "user". Only an
+	// administrator may use the management surface.
+	Role string `json:"role,omitempty"`
 }
 
 type Registry struct {
@@ -72,14 +75,34 @@ func checkPassword(encoded, password string) bool {
 	return err == nil && subtle.ConstantTimeCompare(actual, expected) == 1 && ok
 }
 
+// registryVersion is 2 as soon as any account carries a role; otherwise the
+// table stays at version 1 so an older Adapter can still load it.
+func registryVersion(registry Registry) int {
+	for _, user := range registry.Users {
+		if user.Role != "" {
+			return 2
+		}
+	}
+	return 1
+}
+
 func validateRegistry(registry Registry, profiles map[string]bool) error {
-	if registry.Version != 1 || len(registry.Users) == 0 || len(registry.Users) > 64 {
+	if (registry.Version != 1 && registry.Version != 2) || len(registry.Users) == 0 || len(registry.Users) > 64 {
 		return errors.New("invalid access account registry")
 	}
 	seen := make(map[string]bool)
 	for _, user := range registry.Users {
-		if !accountID.MatchString(user.ID) || seen[user.ID] || len(user.Profiles) == 0 || len(user.Profiles) > 128 {
+		if !accountID.MatchString(user.ID) || seen[user.ID] || len(user.Profiles) > 128 {
 			return errors.New("invalid or duplicate access account")
+		}
+		if user.Role != "" && user.Role != RoleAdmin && user.Role != RoleUser {
+			return errors.New("invalid access account role")
+		}
+		if registry.Version == 1 && user.Role != "" {
+			return errors.New("account roles require registry version 2")
+		}
+		if len(user.Profiles) == 0 && user.EffectiveRole() != RoleAdmin {
+			return errors.New("an entry account needs at least one Profile grant")
 		}
 		seen[user.ID] = true
 		if _, _, ok := decodePassword(user.PasswordHash); !ok {
@@ -135,6 +158,7 @@ func ReadRegistry(path string, profiles map[string]bool) (Registry, [32]byte, er
 // WriteRegistry atomically replaces only an explicitly chosen private file.
 // The command calling it is responsible for explicit account replacement.
 func WriteRegistry(path string, registry Registry) error {
+	registry.Version = registryVersion(registry)
 	if err := validateRegistry(registry, nil); err != nil {
 		return err
 	}

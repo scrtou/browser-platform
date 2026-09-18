@@ -29,6 +29,44 @@ type fakeProfiles struct {
 	environments     map[string]profile.EnvironmentSummary
 	environmentErr   error
 	environmentCalls []string
+	stopCalls        []string
+	stopResult       profile.LifecycleResult
+	stopErr          error
+	updates          []profile.BrowserPatch
+	updateErr        error
+	updateRevision   int
+}
+
+func (f *fakeProfiles) Stop(_ context.Context, id string) (profile.LifecycleResult, error) {
+	f.stopCalls = append(f.stopCalls, id)
+	return f.stopResult, f.stopErr
+}
+
+func (f *fakeProfiles) UpdateBrowser(id string, revision int, _ string, patch profile.BrowserPatch) (profile.Record, error) {
+	if f.updateErr != nil {
+		return profile.Record{}, f.updateErr
+	}
+	summary, ok := f.environments[id]
+	if !ok {
+		return profile.Record{}, profile.ErrProfileNotFound
+	}
+	if revision != summary.Revision {
+		return profile.Record{}, profile.ErrRevisionMismatch
+	}
+	f.updates = append(f.updates, patch)
+	if patch.Label != nil {
+		summary.Label = *patch.Label
+	}
+	if patch.StartURL != nil {
+		summary.StartURL = *patch.StartURL
+	}
+	if patch.Disabled != nil {
+		summary.Enabled = !*patch.Disabled
+	}
+	summary.Revision++
+	f.environments[id] = summary
+	f.updateRevision = summary.Revision
+	return profile.Record{Definition: profile.Definition{ID: id, Label: summary.Label, StartURL: summary.StartURL, Disabled: !summary.Enabled}, Revision: summary.Revision}, nil
 }
 
 func TestUnsupportedRuntimeReturnsUnavailableWithoutSessionAddress(t *testing.T) {

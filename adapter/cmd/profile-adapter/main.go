@@ -132,6 +132,9 @@ func run(configPath, action, target string, logger *slog.Logger) error {
 	if cfg.SealSkin.LifecycleEnabled {
 		options = append(options, profile.WithLifecycle(client))
 	}
+	if cfg.ProfileDirectory != "" {
+		options = append(options, profile.WithDirectory(cfg.ProfileDirectory))
+	}
 	profiles, err := profile.NewService(client, store, cfg.PublicBaseURL, cfg.Profiles, options...)
 	if err != nil {
 		return err
@@ -148,11 +151,7 @@ func run(configPath, action, target string, logger *slog.Logger) error {
 	defer stop()
 	var httpOptions []httpapi.Option
 	if cfg.Access != nil {
-		var ids []string
-		for _, definition := range cfg.Profiles {
-			ids = append(ids, definition.ID)
-		}
-		gateway, err := access.New(ctx, *cfg.Access, cfg.PublicBaseURL, cfg.SealSkin.PublicSessionBaseURL, ids, profiles.CheckDisplaySession, logger)
+		gateway, err := access.New(ctx, *cfg.Access, cfg.PublicBaseURL, cfg.SealSkin.PublicSessionBaseURL, profiles, profiles.CheckDisplaySession, logger)
 		if err != nil {
 			return err
 		}

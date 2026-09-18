@@ -379,7 +379,7 @@ func resumeCode(err error) string {
 // Resume is the explicit operator entry: it resumes a dormant generation for
 // a running/unknown binding without launching anything.
 func (s *Service) Resume(ctx context.Context, id string) (LifecycleResult, error) {
-	definition, ok := s.profiles[id]
+	definition, ok := s.directory.get(id)
 	if !ok {
 		return LifecycleResult{}, ErrProfileNotFound
 	}
@@ -465,7 +465,7 @@ func verifyRequiredCapabilities(definition Definition, snapshot sealskin.HomeRun
 
 // Inspect is read-only and uses the same per-Profile lock as Ensure and Stop.
 func (s *Service) Inspect(ctx context.Context, id string) (LifecycleResult, error) {
-	definition, ok := s.profiles[id]
+	definition, ok := s.directory.get(id)
 	if !ok {
 		return LifecycleResult{}, ErrProfileNotFound
 	}
@@ -490,7 +490,7 @@ func (s *Service) Inspect(ctx context.Context, id string) (LifecycleResult, erro
 // verifies its result. No timeout, HTTP success, or missing session record by
 // itself is sufficient to release the Profile.
 func (s *Service) Stop(ctx context.Context, id string) (LifecycleResult, error) {
-	if _, ok := s.profiles[id]; !ok {
+	if _, ok := s.directory.get(id); !ok {
 		return LifecycleResult{}, ErrProfileNotFound
 	}
 	lock := s.profileLock(id)
@@ -500,7 +500,7 @@ func (s *Service) Stop(ctx context.Context, id string) (LifecycleResult, error) 
 }
 
 func (s *Service) stopLocked(ctx context.Context, id string) (LifecycleResult, error) {
-	definition := s.profiles[id]
+	definition, _ := s.directory.get(id)
 	binding, found, err := s.store.Get(id)
 	if err != nil {
 		return LifecycleResult{}, err
@@ -597,7 +597,7 @@ func (s *Service) markStopped(id, operation string) error {
 // Reconcile resumes an already persisted stop intent. Otherwise it only
 // reconciles ownership; a labeled orphan is quarantined until explicit Stop.
 func (s *Service) Reconcile(ctx context.Context, id string) (LifecycleResult, error) {
-	definition, ok := s.profiles[id]
+	definition, ok := s.directory.get(id)
 	if !ok {
 		return LifecycleResult{}, ErrProfileNotFound
 	}

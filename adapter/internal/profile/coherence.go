@@ -81,7 +81,7 @@ func mergeCoherence(definition Definition, binding state.Binding, observed *seal
 // ProbeCoherence is an explicit private operation. It only samples the exact
 // occupied generation; stopped or unowned Homes are never launched or resumed.
 func (s *Service) ProbeCoherence(ctx context.Context, id string) (sealskin.CoherenceAccess, error) {
-	definition, found := s.profiles[id]
+	definition, found := s.directory.get(id)
 	if !found {
 		return sealskin.CoherenceAccess{}, ErrProfileNotFound
 	}

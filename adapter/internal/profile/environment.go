@@ -31,7 +31,10 @@ type EnvironmentHealth struct {
 // launches, resumes or stops a generation.
 type EnvironmentSummary struct {
 	ProfileID       string             `json:"profile_id"`
+	Enabled         bool               `json:"enabled"`
+	Revision        int                `json:"revision"`
 	Label           string             `json:"label"`
+	StartURL        string             `json:"start_url"`
 	EntryPath       string             `json:"entry_path"`
 	ApplicationID   string             `json:"application_id"`
 	HomeName        string             `json:"home_name"`
@@ -55,14 +58,16 @@ func (s *Service) Environment(ctx context.Context, id string) (EnvironmentSummar
 	if err := ctx.Err(); err != nil {
 		return EnvironmentSummary{}, err
 	}
-	definition, ok := s.profiles[id]
+	record, ok := s.record(id)
 	if !ok {
 		return EnvironmentSummary{}, ErrProfileNotFound
 	}
+	definition := record.Definition
 	summary := EnvironmentSummary{
-		ProfileID: definition.ID, Label: definition.DisplayLabel(), EntryPath: "/browser/" + definition.ID + "/",
+		ProfileID: definition.ID, Label: definition.DisplayLabel(), StartURL: definition.StartURL, EntryPath: "/browser/" + definition.ID + "/",
 		ApplicationID: definition.ApplicationID, HomeName: definition.HomeName,
 		DisplayMode: "x11", NetworkMode: "unmanaged", Status: state.StatusStopped,
+		Enabled: !definition.Disabled, Revision: record.Revision,
 	}
 	if definition.Language != nil {
 		summary.Language = *definition.Language

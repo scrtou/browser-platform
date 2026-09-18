@@ -177,7 +177,7 @@ type healthCache struct {
 // Health returns the Profile's report. It only reads the journal and calls the
 // read-only SealSkin observation endpoint; it never launches or stops anything.
 func (s *Service) Health(ctx context.Context, id string, opts HealthOptions) (HealthReport, error) {
-	if _, ok := s.profiles[id]; !ok {
+	if _, ok := s.directory.get(id); !ok {
 		return HealthReport{}, ErrProfileNotFound
 	}
 	if s.runtime == nil {
@@ -244,7 +244,8 @@ func (s *Service) boundHealth(report HealthReport, now time.Time) (HealthReport,
 		return HealthReport{}, err
 	}
 	if found != report.hasBinding || !sameHealthJournal(current, report.journalBinding) {
-		result := buildHealthReport(s.profiles[report.ProfileID], current, found, nil, errBindingChanged, now)
+		definition, _ := s.directory.get(report.ProfileID)
+		result := buildHealthReport(definition, current, found, nil, errBindingChanged, now)
 		result.Cached = report.Cached
 		return result.AsOf(now), nil
 	}
@@ -286,7 +287,7 @@ func (s *Service) SampleHealth(ctx context.Context, interval time.Duration, obse
 			return
 		case <-time.After(interval + jitter):
 		}
-		for id := range s.profiles {
+		for _, id := range s.directory.ids() {
 			report, err := s.Health(ctx, id, HealthOptions{})
 			if err == nil && observe != nil {
 				observe(report)
@@ -299,7 +300,7 @@ func (s *Service) SampleHealth(ctx context.Context, interval time.Duration, obse
 }
 
 func (s *Service) collectHealth(ctx context.Context, id string) (HealthReport, error) {
-	definition := s.profiles[id]
+	definition, _ := s.directory.get(id)
 	binding, found, err := s.store.Get(id)
 	if err != nil {
 		return HealthReport{}, err

@@ -75,6 +75,22 @@ func TestProfileLabelIsOptionalAndValidated(t *testing.T) {
 	}
 }
 
+func TestProfileDirectoryAllowsEmptySeedButNeedsLifecycle(t *testing.T) {
+	cfg := validConfig()
+	cfg.Profiles = nil
+	if cfg.Validate() == nil {
+		t.Fatal("no profiles and no directory accepted")
+	}
+	cfg.ProfileDirectory = "/private/profiles.json"
+	if cfg.Validate() == nil {
+		t.Fatal("directory without lifecycle accepted")
+	}
+	cfg.SealSkin.LifecycleEnabled = true
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("directory with lifecycle rejected: %v", err)
+	}
+}
+
 func validConfig() Config {
 	return Config{
 		ListenAddress: "127.0.0.1:8080", PublicBaseURL: "https://adapter.example",

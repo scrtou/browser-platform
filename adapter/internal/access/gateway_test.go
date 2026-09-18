@@ -89,9 +89,10 @@ func newFixture(t *testing.T, options ...func(*Config)) *fixture {
 		t.Fatal(err)
 	}
 	f.registry = filepath.Join(directory, "users.json")
-	users := Registry{Version: 1, Users: []Account{
+	users := Registry{Version: 2, Users: []Account{
 		{ID: "alice", PasswordHash: testVerifier(t), Profiles: []string{"personal"}},
 		{ID: "bob", PasswordHash: testVerifier(t), Profiles: []string{"work"}},
+		{ID: "root", PasswordHash: testVerifier(t), Profiles: []string{"personal"}, Role: RoleAdmin},
 	}}
 	if err := WriteRegistry(f.registry, users); err != nil {
 		t.Fatal(err)
@@ -108,7 +109,7 @@ func newFixture(t *testing.T, options ...func(*Config)) *fixture {
 		option(&cfg)
 	}
 	f.g, err = New(ctx, cfg,
-		"https://entry.test", "https://session.test", []string{"personal", "work"},
+		"https://entry.test", "https://session.test", StaticProfiles([]string{"personal", "work"}),
 		func(ctx context.Context, profile, session string) error {
 			f.bindings.Add(1)
 			if f.invalidBinding.Load() {
@@ -187,7 +188,7 @@ func (f *fixture) login(t *testing.T, actor string) (*http.Cookie, string) {
 	}
 	cookie := responseCookie(t, result, entryCookie)
 	profile := "personal"
-	if actor == "bob" {
+	if actor == "bob" || actor == "carol" {
 		profile = "work"
 	}
 	page := request(f.handler, "GET", "https://entry.test/browser/"+profile+"/", nil, cookie)

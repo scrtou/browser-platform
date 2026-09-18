@@ -2,7 +2,7 @@
 
 [文档导航](README.md) · [开发计划](roadmap.md) · [运维与恢复](operations.md) · [验收索引](acceptance/README.md)
 
-**整理日期：2026-09-17。** 当前事实以 R4B 生产切换后的运行态为准；R2C 和 2026-09-13 的发布记录保留其当时适用范围。
+**整理日期：2026-09-18。** 当前事实以 R4B 生产切换后的运行态为准；R2C 和 2026-09-13 的发布记录保留其当时适用范围。
 
 **R4B 已收尾（2026-09-17）：** `release-ready-2` 已完成生产切换。共享认证控制器和 Adapter 网关生效，Work 使用兼容 Firefox/Wayland 镜像，Personal 使用 r9/fill-r10、新 Home 和受管理代理；两者各 1 record/1 Worker、能力版本均为 1。Personal 为 5 resources/1 Relay/1 Guard/2 networks，network phase running。旧 Home、新 Home、两份加密备份、当前 journal 和回退材料均保留。入口/Session、目标 Mac、正式 Caddy、Docker 与 VPS 重启均通过（[DEV-043](deviations/DEV-2026-09-17-043-caddy-api-config-persistence.md)、[DEV-044](deviations/DEV-2026-09-17-044-production-maintenance-runner.md) 已解决）；R2 只剩退出全部登录后的持续运行验证与 Debian 13。
 
@@ -14,9 +14,9 @@ R4B 先完成共享发布所需的 Work 兼容候选：真实控制器关闭拒�
 
 当前已完成固定入口、Personal 代理与环境基线、独立 Camoufox 应用、Trilium 主要交互、可靠停止、受管理网络隔离、运行健康报告与恢复提示、重启后按序恢复与备份工具、Home 删除保护、启动日志、空闲回收与容量门槛；R4A 和 R5A–R5E 已分别完成各自代码、隔离验收和文档收尾，R4B 已完成实际生产切换、生产 Mac 分项及正式 Caddy/Docker/VPS 重启并收尾。R2C 已完成 `Linger=yes`、真实 Personal/Work Home 的 age 归档、verify 与离线 restore。退出全部登录后的持久运行和 Debian 13 仍未完成，未宣布 v0.1 / v0.5 整体通过。
 
-**R6 管理面：** 2026-09-17 用户提出完整需求（面板新增/删除/修改远程浏览器，每个浏览器的代理、固化或自定义指纹、固定入口 URL 与访问账号密码），[管理面规格](specs/proxy-environment/management.md)已修订为第 2 版：Profile 改为可修订目录、无代理即受管理 DIRECT、自定义指纹经隔离生成/验收作业、账号增加角色、删除为 Home 归档；实施顺序改为 R6A–R6F。除 R6A 外没有代码、QA 或生产部署。用户已确认“登录 URL 与账号密码”指平台入口，并补充两级访问：管理面板仅管理员账号，每个浏览器入口用各自账号密码；R6A 候选对任意登录放行列表的差异登记为 [DEV-045](deviations/DEV-2026-09-17-045-manage-list-role.md)，在 R6B 收紧。R4B 已收尾；用户于 2026-09-17 决定在 R2 剩余退出登录/Debian 13 之前继续，[R6A 授权环境列表](work-items/R6A-2026-09-17-environment-list.md) 已收尾：登录网关为 `/manage/` 与 `/manage/environments` 附加账号的 `view`/`start` 授权，Adapter 只从定义、journal 和缓存健康报告生成只读摘要；12 项新增 Go 测试、全模块 138 项测试、vet 与 checks 镜像 race 通过，候选二进制 `971012db…` 未部署生产，见 [R6A 验收](../infra/sealskin/environment-list-acceptance-2026-09-17.md)。下一子项为 R6B（Profile 目录、账号角色与关闭按钮），未开始。
+**R6 管理面：** [R6A 授权环境列表](work-items/R6A-2026-09-17-environment-list.md) 与 [R6B Profile 目录、账号角色、管理员面板与关闭按钮](work-items/R6B-2026-09-17-directory-roles-stop.md) 均已收尾，候选未部署。R6B 已把 Profile 定义改为可持久化、按修订号更新的目录，增加账号表 version 2 的 `admin`/`user` 角色、仅管理员可访问的管理面板、重新认证与改密、按账号撤销、标签/起始页/停用修改及安全关闭入口；[DEV-045](deviations/DEV-2026-09-17-045-manage-list-role.md)、收尾复核发现的 [DEV-046](deviations/DEV-2026-09-18-046-profile-directory-cli-grants.md) 与规格锁契约 [DEV-047](deviations/DEV-2026-09-18-047-profile-directory-lock-contract.md) 均已解决。最终 candidate-2 的全模块 147 项测试、vet、gofmt 与 checks 镜像 race 通过，生产 Adapter 仍为 candidate-4，配置、账号表、控制器、Caddy 与 Home 均未修改，见 [R6B 验收](../infra/sealskin/environment-directory-acceptance-2026-09-17.md)。下一子项为 R6C（新增/删除浏览器、应用安装/删除、Home 创建/归档、launch plan、固化指纹和 DIRECT/现有代理修订），尚未开始。
 
-本次 [工作流程落地](work-items/DOCS-2026-09-13-workflow.md) 已收尾。[R1 运行健康与浏览器恢复提示](work-items/R1-2026-09-13-runtime-health.md) 和 [R3 生命周期与数据保护](work-items/R3-2026-09-13-lifecycle-protection.md) 已于 2026-09-13 实施、隔离验收并上线收尾；Mac/Trilium 故障提示页仍待复测。[R2 开机持久运行与生产恢复](work-items/R2-2026-09-13-boot-recovery.md) 保留退出登录与 Debian 13 的外部条件，linger、真实旧 Home 恢复与正式 Caddy/Docker/VPS 重启已完成。[R4A](work-items/R4A-2026-09-13-client-migration-qa.md)、[R4B](work-items/R4B-2026-09-14-target-client-migration.md) 与 [R6A](work-items/R6A-2026-09-17-environment-list.md) 已收尾；R6 父项进行中（设计第 2 版已登记），下一子项 R6B 未开始。
+本次 [工作流程落地](work-items/DOCS-2026-09-13-workflow.md) 已收尾。[R1 运行健康与浏览器恢复提示](work-items/R1-2026-09-13-runtime-health.md) 和 [R3 生命周期与数据保护](work-items/R3-2026-09-13-lifecycle-protection.md) 已于 2026-09-13 实施、隔离验收并上线收尾；Mac/Trilium 故障提示页仍待复测。[R2 开机持久运行与生产恢复](work-items/R2-2026-09-13-boot-recovery.md) 保留退出登录与 Debian 13 的外部条件，linger、真实旧 Home 恢复与正式 Caddy/Docker/VPS 重启已完成。[R4A](work-items/R4A-2026-09-13-client-migration-qa.md)、[R4B](work-items/R4B-2026-09-14-target-client-migration.md)、[R6A](work-items/R6A-2026-09-17-environment-list.md) 与 [R6B](work-items/R6B-2026-09-17-directory-roles-stop.md) 已收尾；R6 父项进行中，下一子项 R6C 未开始。
 
 <a id="deployment"></a>
 [R5A 上游代理协议与认证](work-items/R5A-2026-09-14-proxy-protocols.md) 已收尾：六种组合的 70 项网络检查、三种真实错误密码与最终控制 payload 的 181 项测试通过。[R5B 受控 Secret Store](work-items/R5B-2026-09-14-secret-store.md) 已收尾：版本化授权、专属 tmpfs 注入、撤销和加密恢复完成代码及隔离验收，226 项控制端测试、39 项备份/挂载测试、18 项核心运行检查、加密新环境恢复及 6,472 文件扫描通过，QA 清理与文档静态检查完成；下一项为 R5C。两项均未部署生产；[R4B](work-items/R4B-2026-09-14-target-client-migration.md) 保留实机/维护前置条件。R5 在实施前拆为协议矩阵、Secret Store、网络/一致性剩余矩阵和入口鉴权四项，父发布条件不变。
@@ -61,6 +61,7 @@ R5A 的恢复检查发现并修复 TERM 丢失最近 localStorage 写入的问�
 | R5D 候选 | `0.3.2-entry-auth-v1-0e2bdae7d717825a-pkg-9a7e6b5738e3`、Adapter `b6c5cf21…`、r7 `env-tw-camoufox-r7` | 登录/当前 Session 授权、密封状态与专属显示材料通过真实 QA；发布配置已准备，未部署。r7 启用 coherence 的适用组合由下行 R5E 补充，其他原矩阵仍按各自版本引用 |
 | R5E 候选组合 | 沿用固定 C3/r7 与 R5C3 Guard/Relay；独立备份工具增加一致性资产校验 | 23 项实际组合与 101 项备份检查、新私有根恢复通过；全部 QA 清理，未部署生产 |
 | R4B 控制发布 | `0.3.2-entry-auth-v1-2ba57382ce75c8f9`，增加显示能力声明 | 534 项控制回归、QA、生产入口与目标 Mac 生产实机通过；共享生产控制器已升级 |
+| R6B 管理面 candidate-2 | Adapter `2571d4b3…`、账号 CLI `26f7f2ab…` | Profile 目录、账号角色、管理员面板、重新认证/改密、按账号撤销和关闭入口通过 147 项测试、vet 与 race；DEV-045–047 已解决；未部署，生产仍运行 candidate-4 |
 | 主机与客户端 | Debian 12、`Linger=yes`；Trilium 0.105.0 / macOS 15.1，1280×800、系统中文输入法 | 正式 Caddy/Docker/VPS 重启已通过；Debian 13 和退出全部登录未验证；Mac 系统缩放选项及本机 DPR 未测，远端报告不能代替 |
 
 历史线上核对（2026-09-13 23:00 UTC）中，三个公网入口和健康路径均为 200，当时 Work healthy、Personal degraded；该记录不能描述本日已停止的 Personal。发布摘要见 [生命周期保护](../infra/sealskin/lifecycle-protection-acceptance-2026-09-13.md#发布身份)、[开机恢复](../infra/sealskin/boot-recovery-acceptance-2026-09-13.md#发布身份)、[健康](../infra/sealskin/health-acceptance-2026-09-13.md#发布身份) 与 [v2 发布](../infra/sealskin/network-isolation-acceptance-2026-09-13.md#发布身份)。当前入口/绑定事实以 R4B 阶段验收为准。
@@ -119,7 +120,7 @@ R5A 的恢复检查发现并修复 TERM 丢失最近 localStorage 写入的问�
 | 生命周期 | 删除保护、启动日志、空闲回收与门槛已交付（隔离 QA）；生产未启用空闲回收与门槛，容器级资源限制与容量实测留待 R6 | [R6](roadmap.md#r6) |
 | 客户端与迁移 | r7 Mac 基础分项及 r9 按钮/实际图片预览已确认；fill-r10 全视区映射、Linux 分项、实际生产切换和目标 Mac 生产入口复测完成。固定远端画面在窄视区会非等比缩放；反向非文本当前不支持 | [R4](roadmap.md#r4)；R4B 已收尾，其余归父计划 |
 | 网络与密钥 | R5A–R5E 的对应候选 QA 已完成；R4B 组合已把兼容 Work、生产账号、显示 tmpfs、共享控制器、入口授权、Secret Store 与 Personal 网络策略部署生产。R2 正式重启已通过，退出登录验证待完成 | [R5](roadmap.md#r5) / [R2](roadmap.md#r2) |
-| 后续能力 | 跨版本升级/回退、容量与可观测性、灾备；远程浏览器管理面（新增/删除/修改、代理、固化/自定义指纹、入口账号）已有第 2 版设计，第 1 步只读列表有候选代码与测试，未部署；R6B–R6F 未开始 | [R6](roadmap.md#r6) |
+| 后续能力 | 跨版本升级/回退、容量与可观测性、灾备；远程浏览器管理面已有第 2 版设计，R6A 只读列表与 R6B Profile 目录/账号角色/管理员操作候选已收尾但未部署；R6C–R6F 未开始 | [R6](roadmap.md#r6) |
 
 R5C2 已补公开委派、真实 180 秒 TTL 及 DIRECT 网站、控制器引导、外部代理网站三条路径；通过范围是固定候选、独立 QA、受控公网端点和单独标准 Unbound 缓存，不保证公共前端只有一个缓存期限。旧 hosts/私有夹具证据不扩充为公网验证。公开浏览器代理路径使用认证 SOCKS5，其他协议矩阵仍引用 R5A；没有商业上游解析日志。UDP443 仅为拒绝探测，不是 HTTP/3 成功；关闭 WebRTC 的验收不覆盖未来启用 ICE/TURN。正式主机重启已通过但没有采集开机窗口抓包，N06 只有顺序证据，N01–N08 尚未整组通过。
 
@@ -146,4 +147,5 @@ R5C2 已补公开委派、真实 180 秒 TTL 及 DIRECT 网站、控制器引导
 | 2026-09-14 | R5C3 实际页面/出口/网络一致性、代次门槛及历史保留 | [R5C3 验收](../infra/sealskin/runtime-coherence-acceptance-2026-09-14.md)；候选 6 最终隔离回归、清理和文档检查完成，已收尾，生产保持，未部署；下一项 R5D |
 | 2026-09-15 | R5D 短期登录、Session 授权、密封状态及 r7 显示材料 | [R5D 验收](../infra/sealskin/entry-authentication-acceptance-2026-09-15.md)；真实客户端/恢复、凭据扫描、清理、发布候选及文档静态核对完成，已收尾，生产保持，未部署 |
 | 2026-09-17 | R4B 生产迁移、目标 Mac 生产复测与正式 Caddy/Docker/VPS 重启 | [R4B 验收](../infra/sealskin/target-client-migration-acceptance-2026-09-15.md)；控制服务 `0.3.2-entry-auth-v1`、Adapter candidate-4、Work 兼容镜像与 r9/fill-r10 Personal 已生效，已收尾；退出登录/Debian 13 归 R2 |
-| 2026-09-17 | R6A 授权环境列表与只读环境摘要（管理面第 1 步） | [R6A 验收](../infra/sealskin/environment-list-acceptance-2026-09-17.md)；候选代码、Go 隔离测试与 race 通过，未部署生产；下一子项关闭入口 |
+| 2026-09-17 | R6A 授权环境列表与只读环境摘要（管理面第 1 步） | [R6A 验收](../infra/sealskin/environment-list-acceptance-2026-09-17.md)；候选代码、Go 隔离测试与 race 通过，未部署生产；后续 R6B 已收尾 |
+| 2026-09-18 | R6B Profile 目录、账号角色、管理员面板与关闭按钮（管理面第 2 步） | [R6B 验收](../infra/sealskin/environment-directory-acceptance-2026-09-17.md)；candidate-2 的 147 项 Go 测试、vet、gofmt、race 与生产配置只读加载通过，DEV-045–047 已解决；候选未部署，下一子项 R6C 未开始 |

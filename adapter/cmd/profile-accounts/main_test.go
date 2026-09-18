@@ -80,6 +80,35 @@ func TestAccountChangesAreExplicitPrivateAndRetainOtherUsers(t *testing.T) {
 	if err := run([]string{"check", "--config", config}, strings.NewReader("")); err != nil {
 		t.Fatal(err)
 	}
+	// Roles: create an administrator, refuse to disable the last one, enable again.
+	if err := run([]string{"put", "--config", config, "--user", "root", "--role", "admin"}, strings.NewReader(password)); err != nil {
+		t.Fatalf("administrator without grants: %v", err)
+	}
+	if err := run([]string{"disable", "--config", config, "--user", "root"}, strings.NewReader("")); err == nil {
+		t.Fatal("last administrator disabled")
+	}
+	if err := run([]string{"put", "--config", config, "--user", "dave", "--role", "owner", "--profiles", "work"}, strings.NewReader(password)); err == nil {
+		t.Fatal("unknown role accepted")
+	}
+	if err := run([]string{"enable", "--config", config, "--user", "alice"}, strings.NewReader("")); err != nil {
+		t.Fatal(err)
+	}
+	registry, _, err = access.ReadRegistry(path, map[string]bool{"personal": true, "work": true})
+	if err != nil || registry.Version != 2 || len(registry.Users) != 4 {
+		t.Fatalf("registry after roles: %+v %v", registry, err)
+	}
+	for _, account := range registry.Users {
+		switch account.ID {
+		case "root":
+			if account.EffectiveRole() != access.RoleAdmin {
+				t.Fatal("role not persisted")
+			}
+		case "alice":
+			if account.Disabled || account.EffectiveRole() != access.RoleUser {
+				t.Fatal("enable or default role failed")
+			}
+		}
+	}
 }
 
 func TestInvalidGrantPasswordAndArgumentsDoNotCreateAccounts(t *testing.T) {
@@ -100,5 +129,52 @@ func TestInvalidGrantPasswordAndArgumentsDoNotCreateAccounts(t *testing.T) {
 		if _, err := os.Stat(users); !os.IsNotExist(err) {
 			t.Fatal("invalid input created accounts")
 		}
+	}
+}
+
+func TestPersistedDirectoryIsAuthoritativeForCLIGrants(t *testing.T) {
+	config, users := configuration(t)
+	directory := filepath.Join(filepath.Dir(config), "profiles.json")
+	directoryValue := map[string]any{
+		"version": 1, "revision": 1,
+		"browsers": []map[string]any{{
+			"id": "personal", "application_id": "firefox", "home_name": "personal",
+			"start_url": "https://example.test", "revision": 1,
+		}},
+	}
+	raw, _ := json.Marshal(directoryValue)
+	if err := os.WriteFile(directory, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = os.ReadFile(config)
+	var configValue map[string]any
+	if err := json.Unmarshal(raw, &configValue); err != nil {
+		t.Fatal(err)
+	}
+	configValue["profile_directory"] = directory
+	raw, _ = json.Marshal(configValue)
+	if err := os.WriteFile(config, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	password := "synthetic-directory-password-51e9"
+	if err := run([]string{"put", "--config", config, "--user", "alice", "--profiles", "work"}, strings.NewReader(password)); err == nil {
+		t.Fatal("static seed Profile accepted outside the authoritative directory")
+	}
+	if _, err := os.Stat(users); !os.IsNotExist(err) {
+		t.Fatal("rejected grant created the account registry")
+	}
+	if err := run([]string{"put", "--config", config, "--user", "alice", "--profiles", "personal"}, strings.NewReader(password)); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(users)
+	if err := os.WriteFile(directory, []byte("not-json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"enable", "--config", config, "--user", "alice"}, strings.NewReader("")); err == nil {
+		t.Fatal("unreadable authoritative directory fell back to static seeds")
+	}
+	after, _ := os.ReadFile(users)
+	if string(before) != string(after) {
+		t.Fatal("failed directory validation modified the account registry")
 	}
 }

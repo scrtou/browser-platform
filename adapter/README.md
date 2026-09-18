@@ -24,7 +24,8 @@
 - 本机 `0600` Unix socket 提供 inspect、stop、reconcile；服务全程持有独占状态文件锁，CLI 复用运行中的 Profile 锁。
 - Session URL 只能解析到配置的 SealSkin HTTPS origin；带 token 的重定向使用 `no-store` 和 `no-referrer`。
 - R5D 候选的 `access` 为入口、健康、Session HTTP/WebSocket 增加本地账号与 Profile 授权，使用短期 Cookie、CSRF 和一次性交接；账号/绑定失效会关闭显示连接，保留浏览器与 Home。两公开 origin 都必须路由到 Adapter，控制 API 使用同一受验证的私有 HTTPS 上游。管理、日志和恢复见 [入口登录说明](../infra/sealskin/entry-auth/README.md)；候选 3 的真实客户端、显示撤销与恢复已通过 [隔离验收](../infra/sealskin/entry-authentication-acceptance-2026-09-15.md)，生产未切换。
-- R6A 管理面第 1 步：启用 `access` 后，`GET /manage/`（无脚本页面）和 `GET /manage/environments`（JSON）列出当前登录账号获授权的 Profile 及只读环境摘要：`label`、固定入口路径、能力（当前为 `view`、`start`）、应用/Home、语言/时区/显示模式、网络模式与策略 ID、journal 状态，以及缓存健康报告的整体结果、采样时间、有效期、恢复提示代码和环境产物身份。列表只读缓存，不观测、不启动、不恢复、不停止；无缓存标为未观测，过期标为 stale 且整体 unknown。响应不含 operation、Session、bootstrap、幂等键、策略摘要、错误文本或 resolved config；未登录 303/401，POST 405，未启用 `access` 时 404。Profile 定义可选 `label`（≤ 64 个可打印字符）仅用于显示。未部署生产，见 [R6A 验收](../infra/sealskin/environment-list-acceptance-2026-09-17.md)；按第 2 版设计管理面板须改为仅管理员角色，候选尚未收紧（[DEV-045](../docs/deviations/DEV-2026-09-17-045-manage-list-role.md)）。
+- R6A 管理面第 1 步：启用 `access` 后，`GET /manage/`（无脚本页面）和 `GET /manage/environments`（JSON）列出当前登录账号获授权的 Profile 及只读环境摘要：`label`、固定入口路径、能力（当前为 `view`、`start`）、应用/Home、语言/时区/显示模式、网络模式与策略 ID、journal 状态，以及缓存健康报告的整体结果、采样时间、有效期、恢复提示代码和环境产物身份。列表只读缓存，不观测、不启动、不恢复、不停止；无缓存标为未观测，过期标为 stale 且整体 unknown。响应不含 operation、Session、bootstrap、幂等键、策略摘要、错误文本或 resolved config；未登录 303/401，POST 405，未启用 `access` 时 404。Profile 定义可选 `label`（≤ 64 个可打印字符）仅用于显示。未部署生产，见 [R6A 验收](../infra/sealskin/environment-list-acceptance-2026-09-17.md)。
+- R6B 管理面第 2 步：`profile_directory` 把 Profile 定义持久化为私有 `profiles.json`（首次从配置 `profiles` 导入，之后以文件为准；Adapter 服务锁保证单写者，进程内互斥、逐条 `revision`、乐观锁、0600/fsync/原子替换），管理员可在运行中修改 `label`、`start_url` 与 `disabled`；停用的浏览器在入口返回 503，已运行代次、显示、健康、停止不受影响。账号表 version 2 增加 `role`（`admin`/`user`，空即 `user`；无角色时仍写 version 1）。`/manage/*` 只对管理员放行（入口账号 403），GET/HEAD 直接放行、POST 经精确 Origin + CSRF；管理员看到全部浏览器（`view`/`manage`/`stop`，被分配的另有 `start`）、分配账号与固定入口 URL，可保存名称/起始页、停用/启用、安全关闭（复用 `profile.Stop`），并创建账号、重置密码、禁用/启用、分配浏览器、改角色。`POST /auth/reauth`（5 分钟）保护创建管理员、禁用/启用、改角色、重置他人密码；`/auth/password` 供任意账号改自己的密码并撤销其他登录。账号表变化只撤销记录变化的账号；最后一个启用的管理员不能被禁用或降级。DEV-045–047 已解决；未部署生产，见 [R6B 验收](../infra/sealskin/environment-directory-acceptance-2026-09-17.md)。
 - 入口 HTML 使用 `Referrer-Policy: same-origin`，让 Chromium/WebView 的自动表单 POST 保留正常 `Origin`；CSP 的 `form-action` 允许入口自身与配置的 Session origin，以支持后续 `303` 跳转。`Origin: null` 和异源启动请求仍被拒绝。
 - 运行健康报告：按 Profile 汇总入口、控制面、Session 记录、Worker、浏览器主进程、显示服务与代理状态，绑定 operation/Session/策略修订/环境产物与采样时间，60 秒有效；查询只读，不启动或重建实例。浏览器退出、显示不可用或代理故障时，入口页改为恢复提示并保留手动「继续进入会话」。
 - DIRECT 候选报告 `network_mode=direct`，`proxy` 为 `not_applicable / DIRECT_NO_UPSTREAM`，另有必需的 `egress` 分项；网关不可用为失败，公网探测未执行或证据不足为 unknown。没有外部代理不等于没有受管理网络。
@@ -118,8 +119,11 @@ go run ./cmd/sealskin-configure-proxy-app \
 GET /healthz                    只检查适配层进程
 GET /readyz                     执行一次 SealSkin 加密会话列表请求
 GET /browser/{profile}/health   该 Profile 的脱敏运行健康报告（读缓存或触发一次只读采集）
-GET /manage/environments        登录账号获授权 Profile 的只读环境摘要 JSON（仅读缓存；需要 access）
-GET /manage/                    同一内容的无脚本页面
+GET /manage/environments        全部 Profile 的只读环境摘要与分配账号 JSON（仅读缓存；需要 access 与管理员）
+GET /manage/                    管理面板：浏览器与账号（仅管理员）
+POST /manage/browsers/{id}      action=update|enable|disable|stop（表单 + CSRF）
+POST /manage/accounts, /manage/accounts/{id}   创建 / 重置密码 / 禁用启用 / 分配 / 改角色
+GET|POST /auth/reauth, /auth/password          确认密码（管理员敏感操作）/ 修改自己的密码
 ```
 
 `/browser/{profile}/health` 与入口页一样由 Adapter 检查当前登录和 Profile 授权；它不包含 operation、Session ID 或授权 URL。`?cached=1` 只读取上次报告，过期时 `stale=true` 且整体为 `unknown`。
@@ -135,6 +139,8 @@ GET /manage/                    同一内容的无脚本页面
 ```
 
 `sample_interval_seconds` 为后台采样间隔（0 关闭，10–3600），整体状态变化时记录日志；`entry_hint` 控制入口页是否在阻断级故障时显示恢复提示；`entry_wait_seconds` 是入口页等待报告的上限（1–30），超时或采集失败时保持原自动提交。
+
+`profile_directory`（可选，需 `sealskin.lifecycle_enabled`）：Profile 目录文件路径，相对配置文件所在目录；设置后配置中的 `profiles` 只用于首次导入，可为空。目录文件只由持有全局服务锁的运行中 Adapter 写入；`profile-accounts` 只读该目录校验授权，读取失败时拒绝账号操作，不回退到配置种子。
 
 `startup.control_wait_seconds`（默认 120，0–900）：开机时 Adapter 先等待 SealSkin 会话列表可读，再逐 Profile 对账；控制面在期限内不可用时仍继续启动，Profile 保持对账前状态，入口在后续请求时再次核对。
 

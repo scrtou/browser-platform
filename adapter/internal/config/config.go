@@ -73,17 +73,20 @@ func (s Startup) ControlWait() time.Duration {
 }
 
 type Config struct {
-	ListenAddress     string               `json:"listen_address"`
-	AllowRemoteListen bool                 `json:"allow_remote_listen"`
-	PublicBaseURL     string               `json:"public_base_url"`
-	StateFile         string               `json:"state_file"`
-	ControlSocket     string               `json:"control_socket,omitempty"`
-	SealSkin          SealSkin             `json:"sealskin"`
-	Health            Health               `json:"health"`
-	Startup           Startup              `json:"startup"`
-	Access            *access.Config       `json:"access,omitempty"`
-	Limits            profile.Limits       `json:"limits"`
-	Profiles          []profile.Definition `json:"profiles"`
+	ListenAddress     string `json:"listen_address"`
+	AllowRemoteListen bool   `json:"allow_remote_listen"`
+	PublicBaseURL     string `json:"public_base_url"`
+	StateFile         string `json:"state_file"`
+	ControlSocket     string `json:"control_socket,omitempty"`
+	// ProfileDirectory persists browser definitions so the management
+	// surface can change them; the configured profiles seed its first import.
+	ProfileDirectory string               `json:"profile_directory,omitempty"`
+	SealSkin         SealSkin             `json:"sealskin"`
+	Health           Health               `json:"health"`
+	Startup          Startup              `json:"startup"`
+	Access           *access.Config       `json:"access,omitempty"`
+	Limits           profile.Limits       `json:"limits"`
+	Profiles         []profile.Definition `json:"profiles"`
 }
 
 func Load(path string) (Config, error) {
@@ -111,6 +114,7 @@ func Load(path string) (Config, error) {
 	}
 	cfg.StateFile = resolvePath(baseDir, cfg.StateFile)
 	cfg.ControlSocket = resolvePath(baseDir, cfg.ControlSocket)
+	cfg.ProfileDirectory = resolvePath(baseDir, cfg.ProfileDirectory)
 	if cfg.SealSkin.LifecycleEnabled && cfg.ControlSocket == "" && cfg.StateFile != "" {
 		cfg.ControlSocket = cfg.StateFile + ".control.sock"
 	}
@@ -144,8 +148,11 @@ func (cfg Config) Validate() error {
 		cfg.SealSkin.ServerPublicKeyFile == "" || cfg.SealSkin.ClientPrivateKeyFile == "" {
 		return errors.New("SealSkin API URL, username and both key files are required")
 	}
-	if len(cfg.Profiles) == 0 {
+	if len(cfg.Profiles) == 0 && cfg.ProfileDirectory == "" {
 		return errors.New("at least one profile is required")
+	}
+	if cfg.ProfileDirectory != "" && !cfg.SealSkin.LifecycleEnabled {
+		return errors.New("profile_directory requires sealskin.lifecycle_enabled")
 	}
 	if cfg.Access != nil {
 		if err := cfg.Access.Validate(); err != nil {

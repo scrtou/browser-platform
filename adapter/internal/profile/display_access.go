@@ -12,7 +12,7 @@ func (s *Service) CheckDisplaySession(ctx context.Context, id, sessionID string)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	definition, ok := s.profiles[id]
+	definition, ok := s.directory.get(id)
 	if !ok {
 		return ErrProfileNotFound
 	}

@@ -1,6 +1,6 @@
 # 远程浏览器管理面设计：新增/修改/删除、代理、指纹与访问
 
-状态：**设计（2026-09-17 第 2 版，按用户需求修订）；第 1 步只读列表已完成候选代码与 Go 隔离测试，其余未实施，均未部署生产**。本文把远程浏览器的新增、修改、删除，每个浏览器的代理、指纹、起始页和访问账号，纳入现有 Adapter/SealSkin 生命周期；不表示任何生产入口已经启用这些操作。
+状态：**设计（2026-09-17 第 2 版，按用户需求修订）；第 1、2 步（只读列表；目录、角色、管理员面板、关闭）已完成候选代码与 Go 隔离测试，其余未实施，均未部署生产**。本文把远程浏览器的新增、修改、删除，每个浏览器的代理、指纹、起始页和访问账号，纳入现有 Adapter/SealSkin 生命周期；不表示任何生产入口已经启用这些操作。
 
 相关基础：[当前架构](../../design.md)、[代理与环境规格](specification.md)、[入口登录与 Session 访问](../../../infra/sealskin/entry-auth/README.md)、[Secret Store](../../../infra/sealskin/lifecycle/secret-store.md)、[按 generation 分配代理与网络](../../../infra/sealskin/lifecycle/README.md#按-generation-分配代理与网络)、[受管理 DIRECT](../../../infra/sealskin/lifecycle/direct-network.md)、[Camoufox 产物与验收](../../../infra/camoufox/README.md)、[R6 工作项](../../work-items/R6-2026-09-16-environment-management.md)。
 
@@ -15,7 +15,7 @@
 | 代理是可选草稿，未说明“无代理”的网络形态 | 每个浏览器的网络二选一：受管理代理（http/https/socks5）或受管理 DIRECT；没有配置代理即 DIRECT，不是无 Guard 的裸容器网络 | 用户需求“不配置就直连”与无直连回退原则 |
 | 访问只沿用现有账号表，未在面板管理 | 面板显示每个浏览器的固定入口 URL，可创建/重置/禁用访问账号并分配浏览器 | 用户需求“登录 URL 和账号密码” |
 | 删除环境不实现 | 删除 = 停止并确认资源为零 → Home 归档（不立即物理删除）→ 撤销应用/策略/授权；物理清除是单独管理员动作 | 用户需求 + Home 删除保护 |
-| 任何登录账号都可进入管理列表（R6A 按此实现） | 两级访问：管理面板只对管理员账号开放；每个远程浏览器入口用各自分配的账号密码登录 | 用户 2026-09-17 补充确认；R6A 候选须在 R6B 收紧，见 [DEV-045](../../deviations/DEV-2026-09-17-045-manage-list-role.md) |
+| 任何登录账号都可进入管理列表（R6A 按此实现） | 两级访问：管理面板只对管理员账号开放；每个远程浏览器入口用各自分配的账号密码登录 | 用户 2026-09-17 补充确认；R6B 已完成收紧，见 [DEV-045](../../deviations/DEV-2026-09-17-045-manage-list-role.md) |
 
 “浏览器页面登录 URL 和账号密码”指平台入口：面板中每个远程浏览器展示其固定入口地址（供 Trilium 笔记保存），并管理登录该入口所用的账号与密码。用户已于 2026-09-17 确认这一理解，并补充两级访问要求：登录管理面板需要管理员账号密码，登录单个远程浏览器入口也需要账号密码（见“访问账号与登录 URL”）。目标网站的账号密码自动填充不在本设计内。
 
@@ -38,7 +38,7 @@
 
 | 能力 | 现有基础（截至 2026-09-17） | 本设计的变化 |
 | --- | --- | --- |
-| Profile 定义 | Adapter 启动时从配置文件 `profiles` 数组静态加载，改动需改文件并重启 | 改为 Adapter 私有的 **Profile 目录**（`profiles.json`，version/revision，flock + fsync + 原子替换，同现有 journal 保护），运行中可增删改并按修订核对；配置文件中的 `profiles` 只作首次导入或只读兼容 |
+| Profile 定义 | Adapter 启动时从配置文件 `profiles` 数组静态加载，改动需改文件并重启 | 改为 Adapter 私有的 **Profile 目录**（`profiles.json`，version/revision；Adapter 全局服务锁保证单写者，进程内互斥串行更新，0600 + fsync + 原子替换），运行中可增删改并按修订核对；配置文件中的 `profiles` 只作首次导入或只读兼容 |
 | 账号 | `entry-users.json` version 1：账号、PBKDF2 派生值、Profile 列表、禁用；只有 CLI 管理 | 升级为 version 2：增加 `role`（`admin`/`user`）；面板由 admin 创建/重置/禁用账号并分配浏览器；CLI 继续可用；账号表变化仍撤销现有登录 |
 | 应用定义 | SealSkin `installed_apps.yml` 由离线工具（`sealskin-install-app`、`prepare-sealskin.py`）经管理员 API 安装，拒绝覆盖 | Adapter 新增仅用于管理面的 **管理员 SealSkin 客户端**（独立密钥，只调用应用安装/更新/删除），按 Profile 修订生成应用定义；生命周期 API 仍用原用户身份 |
 | 网络策略 | `profile-network-policies.json` 由管理员离线写入，策略 SHA 固定到应用与 Profile | 由 Adapter 管理面写入新修订（只追加，不改历史修订），SHA 计算沿用控制器规则；控制器已监视配置路径变化 |
@@ -148,7 +148,7 @@ admin 请求删除 → 必须已停止且 records/workers/resources 为 0（否�
 - 面板对每个浏览器显示固定入口 URL：`{public_base_url}/browser/{id}/`，并提示登录页 `{public_base_url}/auth/login`；入口 URL 不含账号或密码。
 - `admin` 可创建账号、重置密码、禁用/启用、分配/取消浏览器；`user` 只能通过 `/auth/password` 修改自己的密码。
 - 密码继续使用 PBKDF2-SHA256（600,000 次）派生值，表中不存明文；账号表变化撤销现有登录与显示（沿用 R5D 行为，因此修改账号会让当前用户重新登录）。
-- 现有 version 1 账号表升级到 version 2 时，原有账号一律视为 `user`；管理员必须显式创建。R6A 候选当前对任何登录账号放行 `/manage/`，须在 R6B 按本节收紧（[DEV-045](../../deviations/DEV-2026-09-17-045-manage-list-role.md)）。
+- 现有 version 1 账号表升级到 version 2 时，原有账号一律视为 `user`；管理员必须显式创建。R6A 候选曾对任何登录账号放行 `/manage/`，R6B 已按本节收紧并解决 [DEV-045](../../deviations/DEV-2026-09-17-045-manage-list-role.md)。
 - 不提供长期 HTTP Basic、API token 或把凭据写入 Trilium 笔记的方式。
 
 ### 安全关闭
@@ -159,17 +159,17 @@ admin 请求删除 → 必须已停止且 records/workers/resources 为 0（否�
 
 | 接口 | 用途 | 必要约束 |
 | --- | --- | --- |
-| `GET /manage/`、`GET /manage/environments` | 列表与只读摘要（R6A） | `admin`（R6A 候选仍为任意登录，R6B 收紧）；不泄漏未授权浏览器 |
+| `GET /manage/`、`GET /manage/environments` | 列表与只读摘要（R6A） | `admin`（R6B 已收紧）；不泄漏未授权浏览器 |
 | `POST /manage/browsers` | 新增浏览器 | `admin`、CSRF、幂等键；返回记录与固定入口 URL |
 | `GET /manage/browsers/{id}` | 单个浏览器详情（脱敏） | `view` |
-| `PATCH /manage/browsers/{id}` | 修改（按修订号乐观锁） | `admin`；指纹/代理变更要求已停止 |
+| `PATCH /manage/browsers/{id}` | 修改（按修订号乐观锁） | `admin`；指纹/代理变更要求已停止。页面无脚本，R6B 以表单 `POST /manage/browsers/{id}`（`action=update/enable/disable/stop`）实现，PATCH 留给脚本客户端 |
 | `DELETE /manage/browsers/{id}` | 删除（归档 Home） | `admin`；要求已停止、资源为零 |
 | `POST /browser/{id}/start` | 启动或复用（现有） | `start`、CSRF、有效 launch plan |
-| `POST /browser/{id}/stop` | 安全关闭 | `stop`、CSRF、幂等键 |
+| `POST /browser/{id}/stop` | 安全关闭 | `stop`、CSRF、幂等键。R6B 以面板表单 `action=stop` 实现，结果只以固定通知显示 |
 | `GET /manage/environments/catalog` | 固化指纹目录 | `admin` |
 | `POST /manage/environment-jobs` / `GET …/{id}` | 自定义指纹生成作业 | `admin`；一次一个；结果只含摘要与状态 |
 | `POST /manage/proxy-drafts`、`POST …/{id}/probe`、`GET …/{id}` | 代理草稿与探针 | `admin`；只写 Secret Store 引用 |
-| `GET/POST /manage/accounts`、`PATCH /manage/accounts/{id}` | 账号管理 | `admin`；密码只经表单 POST，响应不回显；重置他人密码/禁用管理员需近期重新认证 |
+| `GET/POST /manage/accounts`、`PATCH /manage/accounts/{id}` | 账号管理 | `admin`；密码只经表单 POST，响应不回显；创建管理员、禁用/启用、改角色、重置他人密码需近期重新认证。R6B 以 `POST /manage/accounts`（创建）与 `POST /manage/accounts/{id}`（`action=reset_password/enable/disable/grants/role`）实现 |
 | `POST /auth/reauth` | 管理员敏感操作前重新输入密码 | 登录中的 `admin`；5 分钟有效，不延长登录期限 |
 | `POST /auth/password` | 修改自己的密码 | 任意登录账号；需当前密码、CSRF；成功后撤销其他登录 |
 
@@ -189,10 +189,10 @@ admin 请求删除 → 必须已停止且 records/workers/resources 为 0（否�
 该设计归入 R6，实施时分为独立可验收的子项；每个子项都保留固定入口 URL、Home 独占、Guard/Relay 无直连和现有生命周期所有权：
 
 1. **R6A 只读列表**（已完成候选代码与 Go 测试，2026-09-17）。
-2. **R6B 目录与角色**：Profile 目录（导入现有配置、修订、乐观锁、热更新）、账号表 version 2 的 `role`、管理面板改为仅管理员（修复 [DEV-045](../../deviations/DEV-2026-09-17-045-manage-list-role.md)）、`/auth/reauth` 与 `/auth/password`、`stop` 能力与面板关闭按钮；修改 `label`/`start_url`/账号分配/`enabled`。
+2. **R6B 目录与角色**（candidate-2 已完成代码与 Go 测试，2026-09-18 收尾，未部署）：Profile 目录（导入现有配置、修订、乐观锁、热更新）、账号表 version 2 的 `role`、管理面板改为仅管理员（修复 [DEV-045](../../deviations/DEV-2026-09-17-045-manage-list-role.md)）、`/auth/reauth` 与 `/auth/password`、`stop` 能力与面板关闭按钮；修改 `label`/`start_url`/账号分配/`enabled`；账号表变化按账号撤销；账号 CLI 的目录权威边界与锁契约见 [DEV-046](../../deviations/DEV-2026-09-18-046-profile-directory-cli-grants.md)、[DEV-047](../../deviations/DEV-2026-09-18-047-profile-directory-lock-contract.md)。见 [R6B 验收](../../../infra/sealskin/environment-directory-acceptance-2026-09-17.md)。
 3. **R6C 新增与删除（固化指纹 + DIRECT/现有代理修订）**：管理员 SealSkin 客户端、应用安装/删除、Home 创建与归档、launch plan；DIRECT 生产前置（主机 IPv4 证据、网关镜像、控制器能力）作为本步的部署条件。
 4. **R6D 代理草稿、探针与修订**：Secret Store 导入、隔离探针、`proxy_required` 修订与下一代次绑定。
 5. **R6E 自定义指纹作业**：环境目录、隔离生成/验收作业、失败保留与发布。
 6. **R6F 组合 QA 与生产候选**：独立 QA、真实客户端（Trilium/Mac）、备份/恢复、日志脱敏、回退演练后，才准备生产候选与部署。
 
-第 1 版中“关闭入口”作为第 2 步、“指纹选择”作为第 3 步的顺序已被上述顺序取代；R6A 的实现不受影响。R2 的退出登录与 Debian 13 仍待外部条件；本文件不授权部署或改变现有 Profile，R6A 候选也未部署。
+第 1 版中“关闭入口”作为第 2 步、“指纹选择”作为第 3 步的顺序已被上述顺序取代；R6A 的实现不受影响。R2 的退出登录与 Debian 13 仍待外部条件；本文件不授权部署或改变现有 Profile，R6A、R6B 候选均未部署。

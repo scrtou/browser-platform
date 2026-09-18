@@ -494,9 +494,9 @@ func TestConcurrentStopsRemoveOnlyOnce(t *testing.T) {
 
 func TestConfigurationDriftAndUncheckedResetAreRejected(t *testing.T) {
 	service, _, fake := newLifecycleService(t)
-	definition := service.profiles["personal"]
+	definition, _ := service.directory.get("personal")
 	definition.HomeName = "another-home"
-	service.profiles["personal"] = definition
+	service.directory.records["personal"] = Record{Definition: definition, Revision: 1}
 	if _, err := service.Stop(context.Background(), "personal"); !errors.Is(err, ErrOwnershipUnknown) || fake.stopCalls != 0 {
 		t.Fatal("configuration drift was accepted")
 	}

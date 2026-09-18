@@ -222,9 +222,9 @@ func TestNetworkOwnershipRefusesForeignResourceBeforeStop(t *testing.T) {
 
 func TestActiveNetworkPolicyCannotDrift(t *testing.T) {
 	service, _, fake := newNetworkService(t, true)
-	definition := service.profiles["personal"]
+	definition, _ := service.directory.get("personal")
 	definition.NetworkPolicySHA256 = strings.Repeat("d", 64)
-	service.profiles["personal"] = definition
+	service.directory.records["personal"] = Record{Definition: definition, Revision: 1}
 	if _, err := service.Ensure(context.Background(), "personal"); !errors.Is(err, ErrOwnershipUnknown) || fake.launches != 1 {
 		t.Fatal("active network policy drift was accepted")
 	}
