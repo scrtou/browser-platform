@@ -2,8 +2,12 @@ package profile
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +25,26 @@ type managementAdmin struct {
 	lastApp      map[string]any
 	lastHome     string
 	lastArchive  string
+
+	patchCalls       int
+	patchErr         error
+	lastPatchApp     string
+	lastPatch        map[string]any
+	importCalls      int
+	importErr        error
+	lastImport       sealskin.ProxySecretImportRequest
+	lastImportKey    string
+	probeCalls       int
+	probeErr         error
+	probeResult      sealskin.ProxyProbeResult
+	lastProbe        sealskin.ProxyProbeRequest
+	appendCalls      int
+	appendErr        error
+	lastAppend       sealskin.NetworkPolicyAppendRequest
+	lastAppendKey    string
+	revoked          []string
+	revokeOperations []string
+	revokeErr        error
 }
 
 func (a *managementAdmin) InstallApp(_ context.Context, app map[string]any, _ string) error {
@@ -32,6 +56,54 @@ func (a *managementAdmin) InstallApp(_ context.Context, app map[string]any, _ st
 func (a *managementAdmin) DeleteInstalledApp(_ context.Context, _ string, _ string) error {
 	a.deleteCalls++
 	return nil
+}
+
+func (a *managementAdmin) PatchInstalledApp(_ context.Context, appID string, patch map[string]any, _ string) error {
+	a.patchCalls++
+	a.lastPatchApp, a.lastPatch = appID, patch
+	return a.patchErr
+}
+
+func (a *managementAdmin) ImportProxySecret(_ context.Context, request sealskin.ProxySecretImportRequest, key string) (sealskin.ProxySecretRefs, error) {
+	a.importCalls++
+	a.lastImport, a.lastImportKey = request, key
+	if a.importErr != nil {
+		return sealskin.ProxySecretRefs{}, a.importErr
+	}
+	version := strconv.Itoa(request.SecretVersion)
+	return sealskin.ProxySecretRefs{UsernameSecretRef: "secret://" + request.SecretID + "/username/" + version, PasswordSecretRef: "secret://" + request.SecretID + "/password/" + version}, nil
+}
+
+func (a *managementAdmin) ProbeProxyDraft(_ context.Context, request sealskin.ProxyProbeRequest) (sealskin.ProxyProbeResult, error) {
+	a.probeCalls++
+	a.lastProbe = request
+	if a.probeErr != nil {
+		return sealskin.ProxyProbeResult{}, a.probeErr
+	}
+	if a.probeResult.Status == "" {
+		return sealskin.ProxyProbeResult{Status: "passed", Code: "PROXY_PROBE_OK", UpstreamIP: "203.0.113.9", HTTPStatus: 204}, nil
+	}
+	return a.probeResult, nil
+}
+
+func (a *managementAdmin) AppendNetworkPolicy(_ context.Context, request sealskin.NetworkPolicyAppendRequest, key string) (sealskin.NetworkPolicyAppendResponse, error) {
+	a.appendCalls++
+	a.lastAppend, a.lastAppendKey = request, key
+	if a.appendErr != nil {
+		return sealskin.NetworkPolicyAppendResponse{}, a.appendErr
+	}
+	encoded, _ := json.Marshal(request.Policy)
+	digest := sha256.Sum256(encoded)
+	return sealskin.NetworkPolicyAppendResponse{PolicyID: request.PolicyID, PolicySHA256: hex.EncodeToString(digest[:]), Created: true}, nil
+}
+
+func (a *managementAdmin) RevokeProfileSecret(_ context.Context, reference, operationID string) (sealskin.RevokeSecretResult, error) {
+	a.revoked = append(a.revoked, reference)
+	a.revokeOperations = append(a.revokeOperations, operationID)
+	if a.revokeErr != nil {
+		return sealskin.RevokeSecretResult{}, a.revokeErr
+	}
+	return sealskin.RevokeSecretResult{Revoked: true, EgressBlocked: true, CleanupComplete: true}, nil
 }
 
 func (a *managementAdmin) ArchiveHomeDirectory(_ context.Context, home string, archive sealskin.ArchiveHomeRequest, _ string) error {
@@ -54,7 +126,7 @@ func managementService(t *testing.T, admin *managementAdmin) (*Service, *lifecyc
 		"env-r9": {ID: "env-r9", SHA256: strings.Repeat("a", 64), AcceptanceSHA256: strings.Repeat("d", 64), Image: "sha256:" + strings.Repeat("b", 64), Source: "frozen", Status: "accepted",
 			Application:                 map[string]any{"provider_config": map[string]any{"image": "sha256:" + strings.Repeat("b", 64), "docker_overrides": map[string]any{"labels": map[string]any{}}}},
 			RequiredRuntimeCapabilities: map[string]int{"browser_shutdown_version": 1, "session_auth_version": 1}},
-	}), WithHomeArchiver(admin))
+	}), WithHomeArchiver(admin), WithProxyTemplate(testProxyTemplate()))
 	if err != nil {
 		t.Fatal(err)
 	}

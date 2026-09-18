@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -50,6 +51,16 @@ type environmentCatalogService interface {
 	EnvironmentArtifacts(context.Context) ([]profile.EnvironmentArtifactSummary, error)
 }
 
+// proxyDraftService is the R6D write side: credentials travel once from the
+// form into CreateProxyDraft and are never stored by the HTTP layer.
+type proxyDraftService interface {
+	CreateProxyDraft(context.Context, string, string, profile.ProxyDraftRequest) (profile.ProxyDraftSummary, error)
+	ProbeProxyDraft(context.Context, string, string) (profile.ProxyDraftSummary, error)
+	ApplyProxyDraft(context.Context, string, int, string, string, string) (profile.Record, error)
+	SetBrowserDirect(context.Context, string, int, string, string, string, string) (profile.Record, error)
+	ProxyDraft(string) (profile.ProxyDraftSummary, bool)
+}
+
 // notices are the only strings the page echoes from a query parameter; any
 // other value renders nothing.
 var notices = map[string]string{
@@ -71,6 +82,14 @@ var notices = map[string]string{
 	"account_exists":  "账号已存在。",
 	"last_admin":      "不能禁用或降级最后一个启用的管理员。",
 	"reauth":          "该操作需要重新确认密码。",
+	"draft_created":   "代理草稿已创建，凭据只保存在控制器 Secret Store；请执行探针。",
+	"draft_probed":    "探针通过，可在浏览器停止后应用到下一代次。",
+	"draft_failed":    "探针未通过；草稿保留可重试或重新提交。",
+	"draft_missing":   "代理草稿不存在、已过期或已被替换。",
+	"draft_unprobed":  "草稿尚未通过探针，不能应用。",
+	"network_applied": "网络修订已固化；下一次启动使用新的代理或 DIRECT 策略。",
+	"network_busy":    "浏览器仍占用运行资源，网络修订未应用。",
+	"unmanaged":       "该浏览器不是受管理网络，不能配置代理。",
 }
 
 // environments reads one summary per grant. The gateway already restricted
@@ -162,9 +181,20 @@ func (s *Server) managePage(writer http.ResponseWriter, request *http.Request) {
 	defer cancel()
 	accounts := s.accounts()
 	entries := s.environments(ctx, grants, accounts)
+	drafts, hasDrafts := s.profiles.(proxyDraftService)
 	rows := make([]manageRow, 0, len(entries))
 	for _, entry := range entries {
-		rows = append(rows, manageRowFor(entry))
+		row := manageRowFor(entry)
+		if hasDrafts && row.Managed {
+			if draft, ok := drafts.ProxyDraft(entry.ProfileID); ok {
+				copied := draft
+				row.Draft = &copied
+				if draft.ProbedAt != nil {
+					row.DraftProbedAt = draft.ProbedAt.UTC().Format(time.RFC3339)
+				}
+			}
+		}
+		rows = append(rows, row)
 	}
 	profileIDs := make([]string, 0, len(entries))
 	for _, entry := range entries {
@@ -183,8 +213,9 @@ func (s *Server) managePage(writer http.ResponseWriter, request *http.Request) {
 		ProfileIDs  []string
 		EntryOrigin string
 		CSRF        string
+		ProxyDrafts bool
 	}{Subject: access.Subject(request), GeneratedAt: time.Now().UTC().Format(time.RFC3339), Notice: notices[request.URL.Query().Get("notice")],
-		Rows: rows, Accounts: accountRows(accounts, profileIDs), ProfileIDs: profileIDs, EntryOrigin: s.publicOrigin.String(), CSRF: access.CSRF(request)}
+		Rows: rows, Accounts: accountRows(accounts, profileIDs), ProfileIDs: profileIDs, EntryOrigin: s.publicOrigin.String(), CSRF: access.CSRF(request), ProxyDrafts: hasDrafts}
 	if err := manageTemplate.Execute(writer, data); err != nil {
 		s.logger.Error("render environment list", "error", err)
 	}
@@ -202,6 +233,10 @@ type manageRow struct {
 	Revision                                  int
 	StartURL                                  string
 	Accounts                                  string
+	Managed                                   bool
+	ConfiguredNetwork, ProxyUpstream          string
+	Draft                                     *profile.ProxyDraftSummary
+	DraftProbedAt                             string
 }
 
 type accountRow struct {
@@ -249,6 +284,8 @@ func manageRowFor(entry environmentEntry) manageRow {
 	row.Home = summary.ApplicationID + " / " + summary.HomeName
 	row.Observed = summary.Observed
 	row.Enabled, row.Revision, row.StartURL = summary.Enabled, summary.Revision, summary.StartURL
+	row.ConfiguredNetwork, row.ProxyUpstream = summary.ConfiguredNetworkMode, summary.ProxyUpstream
+	row.Managed = summary.ConfiguredNetworkMode == "direct" || summary.ConfiguredNetworkMode == "proxy_required"
 	row.Running = summary.Status == "running" || summary.Status == "launching" || summary.Status == "stopping" || summary.Status == "unknown"
 	if summary.Health != nil {
 		row.Health, row.HealthCode, row.HealthTitle = string(summary.Health.Overall), summary.Health.Code, summary.Health.Title
@@ -470,6 +507,13 @@ func (s *Server) manageBrowser(writer http.ResponseWriter, request *http.Request
 			s.redirectManage(writer, request, "stop_conflict")
 		}
 		return
+	case "proxy_draft", "proxy_probe", "proxy_apply", "network_direct":
+		if !hasCapability(grant, "manage") {
+			http.Error(writer, "Forbidden", http.StatusForbidden)
+			return
+		}
+		s.manageNetwork(writer, request, id, actor)
+		return
 	case "update", "enable", "disable":
 		if !hasCapability(grant, "manage") {
 			http.Error(writer, "Forbidden", http.StatusForbidden)
@@ -519,6 +563,86 @@ func (s *Server) manageBrowser(writer http.ResponseWriter, request *http.Request
 		return
 	default:
 		s.redirectManage(writer, request, "invalid")
+	}
+}
+
+// manageNetwork handles the R6D proxy draft and DIRECT switch actions. The
+// draft credentials are read from the form once, handed to the service and
+// cleared; the log lines never carry them. Applying a revision or switching
+// to DIRECT changes the next generation's network, so both require a recent
+// password confirmation like deletion.
+func (s *Server) manageNetwork(writer http.ResponseWriter, request *http.Request, id, actor string) {
+	drafts, ok := s.profiles.(proxyDraftService)
+	if !ok {
+		s.redirectManage(writer, request, "unavailable")
+		return
+	}
+	action := request.PostForm.Get("action")
+	if s.access != nil && (action == "proxy_apply" || action == "network_direct") && !s.access.Reauthenticated(request) {
+		s.redirectManage(writer, request, "reauth")
+		return
+	}
+	ctx, cancel := context.WithTimeout(request.Context(), sealskin.LongOperationTimeout)
+	defer cancel()
+	var err error
+	notice := "invalid"
+	switch action {
+	case "proxy_draft":
+		port, portErr := strconv.Atoi(strings.TrimSpace(request.PostForm.Get("port")))
+		if portErr != nil {
+			s.redirectManage(writer, request, "invalid")
+			return
+		}
+		draft := profile.ProxyDraftRequest{Protocol: strings.TrimSpace(request.PostForm.Get("protocol")), Auth: strings.TrimSpace(request.PostForm.Get("auth")),
+			Host: strings.TrimSpace(request.PostForm.Get("host")), Port: port, Username: request.PostForm.Get("username"), Password: request.PostForm.Get("password"),
+			UpstreamCAPEM: strings.TrimSpace(request.PostForm.Get("upstream_ca_pem"))}
+		request.PostForm.Del("password")
+		request.PostForm.Del("username")
+		_, err = drafts.CreateProxyDraft(ctx, id, actor, draft)
+		draft.Password, draft.Username = "", ""
+		notice = "draft_created"
+	case "proxy_probe":
+		var summary profile.ProxyDraftSummary
+		summary, err = drafts.ProbeProxyDraft(ctx, id, strings.TrimSpace(request.PostForm.Get("draft_id")))
+		notice = "draft_probed"
+		if err == nil && summary.ProbeStatus != "passed" {
+			notice = "draft_failed"
+		}
+	case "proxy_apply", "network_direct":
+		revision, ok := parseRevision(request.PostForm.Get("revision"))
+		idempotencyKey := strings.TrimSpace(request.PostForm.Get("idempotency_key"))
+		if !ok || idempotencyKey == "" || len(idempotencyKey) > 128 {
+			s.redirectManage(writer, request, "invalid")
+			return
+		}
+		if action == "proxy_apply" {
+			_, err = drafts.ApplyProxyDraft(ctx, id, revision, strings.TrimSpace(request.PostForm.Get("draft_id")), actor, idempotencyKey)
+		} else {
+			_, err = drafts.SetBrowserDirect(ctx, id, revision, strings.TrimSpace(request.PostForm.Get("network_policy_id")), strings.TrimSpace(request.PostForm.Get("network_policy_sha256")), actor, idempotencyKey)
+		}
+		notice = "network_applied"
+	}
+	switch {
+	case err == nil:
+		s.logger.Info("management action", "profile", id, "action", action, "status", notice)
+		s.redirectManage(writer, request, notice)
+	case errors.Is(err, profile.ErrProfileNotFound):
+		http.NotFound(writer, request)
+	case errors.Is(err, profile.ErrProxyDraftInvalid), errors.Is(err, profile.ErrManagedPolicyRequired):
+		s.redirectManage(writer, request, "invalid")
+	case errors.Is(err, profile.ErrProxyDraftNotFound):
+		s.redirectManage(writer, request, "draft_missing")
+	case errors.Is(err, profile.ErrProxyDraftNotProbed):
+		s.redirectManage(writer, request, "draft_unprobed")
+	case errors.Is(err, profile.ErrNetworkUnmanaged):
+		s.redirectManage(writer, request, "unmanaged")
+	case errors.Is(err, profile.ErrRevisionMismatch):
+		s.redirectManage(writer, request, "revision")
+	case errors.Is(err, profile.ErrBrowserBusy), errors.Is(err, profile.ErrStopUnconfirmed), errors.Is(err, profile.ErrOwnershipUnknown):
+		s.redirectManage(writer, request, "network_busy")
+	default:
+		s.logger.Warn("management action", "profile", id, "action", action, "status", "rejected", "error", err)
+		s.redirectManage(writer, request, "unavailable")
 	}
 }
 
@@ -643,7 +767,8 @@ var manageTemplate = template.Must(template.New("manage").Parse(strings.TrimSpac
     .stale, .blocking, .off { color: #b3261e; }
     .notice { background: #e8f0fe; padding: .6rem .8rem; border-radius: 4px; }
     form.inline { display: inline; margin: 0 .2rem 0 0; }
-    input[type=text], input[type=url], input[type=password] { font: inherit; padding: .25rem .4rem; width: 14rem; box-sizing: border-box; }
+    input[type=text], input[type=url], input[type=password], textarea, select { font: inherit; padding: .25rem .4rem; width: 14rem; box-sizing: border-box; }
+    details { margin-top: .3rem; } details form { margin: .3rem 0; }
     button { font: inherit; padding: .3rem .7rem; }
     .actions form { margin: .25rem 0; }
     label.chk { display: inline-block; margin-right: .6rem; }
@@ -673,7 +798,20 @@ var manageTemplate = template.Must(template.New("manage").Parse(strings.TrimSpac
       <td><a href="{{.EntryPath}}">{{$.EntryOrigin}}{{.EntryPath}}</a><div class="meta">账号：{{if .Accounts}}{{.Accounts}}{{else}}（未分配）{{end}}</div></td>
       {{if .Available}}<td>{{.Status}}</td>
       <td>{{if .Observed}}{{.Health}}{{if .Stale}} <span class="stale">已过期</span>{{end}}{{if .HealthCode}}<div class="meta{{if .Blocking}} blocking{{end}}">{{.HealthCode}}{{if .HealthTitle}} · {{.HealthTitle}}{{end}}</div>{{end}}<div class="meta">{{.Checked}}</div>{{else}}<span class="meta">未观测</span>{{end}}</td>
-      <td>{{.Network}}</td><td>{{.Display}}{{if .Locale}}<div class="meta">{{.Locale}}</div>{{end}}</td><td class="meta">{{.Home}}</td><td class="meta">{{if .Environment}}{{.Environment}}{{else}}—{{end}}</td>
+      <td>{{.Network}}{{if .ProxyUpstream}}<div class="meta">{{.ProxyUpstream}}</div>{{else if eq .ConfiguredNetwork "direct"}}<div class="meta">受管理 DIRECT</div>{{end}}
+        {{if and $.ProxyDrafts .Managed .Manage}}{{with .Draft}}<div class="meta">草稿 {{.Protocol}}://{{.Host}}:{{.Port}} · {{.Auth}} · {{if .Expired}}已过期{{else}}{{.ProbeStatus}}{{if .ProbeCode}} {{.ProbeCode}}{{end}}{{end}}</div>
+          {{if not .Expired}}<form method="post" action="/manage/browsers/{{.ProfileID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="proxy_probe"><input type="hidden" name="draft_id" value="{{.ID}}"><button>探针</button></form>{{end}}{{end}}
+          {{if and .Draft (not .Draft.Expired) (eq .Draft.ProbeStatus "passed")}}<form method="post" action="/manage/browsers/{{.ProfileID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="proxy_apply"><input type="hidden" name="draft_id" value="{{.Draft.ID}}"><input type="hidden" name="revision" value="{{.Revision}}"><input type="text" name="idempotency_key" maxlength="128" placeholder="幂等键" required><button>应用到下一代次</button></form>{{end}}
+          <details><summary class="meta">配置代理 / 切回 DIRECT</summary>
+          <form method="post" action="/manage/browsers/{{.ProfileID}}" autocomplete="off"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="proxy_draft">
+            <select name="protocol"><option value="socks5">socks5</option><option value="http">http</option><option value="https">https</option></select>
+            <select name="auth"><option value="username_password">用户名/密码 (socks5)</option><option value="basic">basic (http/https)</option><option value="none">无认证</option></select>
+            <input type="text" name="host" maxlength="253" placeholder="代理主机（公网）" required> <input type="text" name="port" maxlength="5" placeholder="端口" required>
+            <input type="text" name="username" maxlength="4096" placeholder="用户名" autocomplete="off"> <input type="password" name="password" maxlength="4096" placeholder="密码" autocomplete="new-password">
+            <textarea name="upstream_ca_pem" rows="2" placeholder="HTTPS 代理 CA（可选，PEM）"></textarea> <button>创建草稿</button></form>
+          <form method="post" action="/manage/browsers/{{.ProfileID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="network_direct"><input type="hidden" name="revision" value="{{.Revision}}">
+            <input type="text" name="network_policy_id" maxlength="128" placeholder="DIRECT 策略 ID" required> <input type="text" name="network_policy_sha256" maxlength="64" placeholder="策略 SHA-256" required> <input type="text" name="idempotency_key" maxlength="128" placeholder="幂等键" required><button>切回 DIRECT</button></form>
+          </details>{{end}}</td><td>{{.Display}}{{if .Locale}}<div class="meta">{{.Locale}}</div>{{end}}</td><td class="meta">{{.Home}}</td><td class="meta">{{if .Environment}}{{.Environment}}{{else}}—{{end}}</td>
       <td class="actions">
         {{if .Manage}}<form method="post" action="/manage/browsers/{{.ProfileID}}"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="update"><input type="hidden" name="revision" value="{{.Revision}}">
           <input type="text" name="label" value="{{.Label}}" maxlength="64" placeholder="名称"> <input type="url" name="start_url" value="{{.StartURL}}" maxlength="2048" placeholder="起始页 URL"> <button>保存</button></form>

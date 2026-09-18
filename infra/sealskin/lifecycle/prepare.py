@@ -59,7 +59,7 @@ def main():
         files = {}
         for name in sorted([*base_hashes, "profile_runtime.py", "profile_health.py", "profile_resume.py", "launch_journal.py", "network_runtime.py", "network_probe.py", "network_direct.py", "network_dns.py", "secret_store.py", "secret_runtime.py",
                             "coherence_policy.py", "coherence_geoip.py", "coherence_report.py", "coherence_runtime.py", "coherence_exec.py", "browser_observe.py",
-                            "session_secrets.py", "session_runtime.py", "safe_output.py"]):
+                            "session_secrets.py", "session_runtime.py", "safe_output.py", "environment_management.py", "proxy_probe.py"]):
             after = (work / "server/app" / name).read_bytes()
             target = payload / "app" / name
             target.parent.mkdir(parents=True, exist_ok=True)

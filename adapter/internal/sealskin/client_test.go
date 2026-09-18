@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -38,6 +39,14 @@ type fakeSealSkinServer struct {
 	archiveKey        string
 	archiveHome       string
 	archiveName       string
+	secretImport      ProxySecretImportRequest
+	secretImportKey   string
+	probeRequest      ProxyProbeRequest
+	probeResult       ProxyProbeResult
+	policyAppend      NetworkPolicyAppendRequest
+	policyAppendKey   string
+	revokeBody        RevokeSecretRequest
+	revokeKey         string
 	runtime           any
 	health            any
 	healthQueries     []string
@@ -179,6 +188,36 @@ func (f *fakeSealSkinServer) ServeHTTP(writer http.ResponseWriter, request *http
 		f.archiveHome = strings.TrimSuffix(strings.TrimPrefix(request.URL.Path, "/api/homedirs/"), "/archive")
 		f.archiveName, f.archiveKey = body.ArchiveName, request.Header.Get("X-Idempotency-Key")
 		writer.WriteHeader(http.StatusNoContent)
+	case request.Method == http.MethodPost && request.URL.Path == "/api/admin/environment-management/proxy-secrets":
+		if json.Unmarshal(plain, &f.secretImport) != nil || request.Header.Get("X-Idempotency-Key") == "" {
+			f.writeEncrypted(writer, http.StatusUnprocessableEntity, map[string]string{"detail": "SECRET_IMPORT_REQUEST_INVALID"})
+			return
+		}
+		f.secretImportKey = request.Header.Get("X-Idempotency-Key")
+		version := fmt.Sprint(f.secretImport.SecretVersion)
+		f.writeEncrypted(writer, http.StatusCreated, ProxySecretRefs{UsernameSecretRef: "secret://" + f.secretImport.SecretID + "/username/" + version,
+			PasswordSecretRef: "secret://" + f.secretImport.SecretID + "/password/" + version})
+	case request.Method == http.MethodPost && request.URL.Path == "/api/admin/environment-management/proxy-probe":
+		if json.Unmarshal(plain, &f.probeRequest) != nil {
+			f.writeEncrypted(writer, http.StatusUnprocessableEntity, map[string]string{"detail": "PROXY_PROBE_REQUEST_INVALID"})
+			return
+		}
+		f.writeEncrypted(writer, http.StatusOK, f.probeResult)
+	case request.Method == http.MethodPost && request.URL.Path == "/api/admin/environment-management/network-policies":
+		if json.Unmarshal(plain, &f.policyAppend) != nil || request.Header.Get("X-Idempotency-Key") == "" {
+			f.writeEncrypted(writer, http.StatusUnprocessableEntity, map[string]string{"detail": "NETWORK_POLICY_INVALID"})
+			return
+		}
+		f.policyAppendKey = request.Header.Get("X-Idempotency-Key")
+		digest := sha256.Sum256(plain)
+		f.writeEncrypted(writer, http.StatusCreated, NetworkPolicyAppendResponse{PolicyID: f.policyAppend.PolicyID, PolicySHA256: hex.EncodeToString(digest[:]), Created: true})
+	case request.Method == http.MethodPost && request.URL.Path == "/api/admin/profile-secrets/revoke":
+		if json.Unmarshal(plain, &f.revokeBody) != nil {
+			f.writeEncrypted(writer, http.StatusUnprocessableEntity, map[string]string{"detail": "SECRET_REVOKE_REQUEST_INVALID"})
+			return
+		}
+		f.revokeKey = request.Header.Get("X-Idempotency-Key")
+		f.writeEncrypted(writer, http.StatusOK, RevokeSecretResult{Revoked: true, EgressBlocked: true, CleanupComplete: true, SecretID: "proxy-a", SecretVersion: 1})
 	case request.Method == http.MethodGet && request.URL.Path == "/api/sessions":
 		f.writeEncrypted(writer, http.StatusOK, f.sessions)
 	case request.Method == http.MethodPost && request.URL.Path == "/api/launch/url":
@@ -328,6 +367,67 @@ func TestAdminClientDeletesApplicationAndArchivesHome(t *testing.T) {
 	defer fake.mu.Unlock()
 	if fake.deletedApp != "app-personal" || fake.deleteAppKey != "delete-app-1" || fake.archiveHome != "personal" || fake.archiveName != "archive-personal-1" || fake.archiveKey != "archive-home-1" {
 		t.Fatalf("admin mutations: app=%q appKey=%q home=%q archive=%q archiveKey=%q", fake.deletedApp, fake.deleteAppKey, fake.archiveHome, fake.archiveName, fake.archiveKey)
+	}
+}
+
+func TestAdminClientManagesProxyDrafts(t *testing.T) {
+	serverPrivate, clientPrivate := testKeys(t)
+	fake := &fakeSealSkinServer{serverPrivate: serverPrivate, clientPublic: &clientPrivate.PublicKey, probeResult: ProxyProbeResult{Status: "failed", Code: "PROXY_AUTH_REJECTED", UpstreamIP: "203.0.113.9"}}
+	server := httptest.NewServer(fake)
+	defer server.Close()
+	client := newTestClient(t, server.URL, serverPrivate, clientPrivate, server.Client())
+	grant := SecretGrant{Owner: "profile-adapter", Profile: "browser-a", Home: "browser-a-home", App: "app-a"}
+	if _, err := client.ImportProxySecret(context.Background(), ProxySecretImportRequest{SecretID: "proxy-browser-a", SecretVersion: 2, Grants: []SecretGrant{grant}, Username: "u", Password: "p"}, ""); err == nil {
+		t.Fatal("import without idempotency was accepted")
+	}
+	if _, err := client.ImportProxySecret(context.Background(), ProxySecretImportRequest{SecretID: "../x", SecretVersion: 2, Grants: []SecretGrant{grant}, Username: "u", Password: "p"}, "import-1"); err == nil {
+		t.Fatal("invalid secret ID was accepted")
+	}
+	refs, err := client.ImportProxySecret(context.Background(), ProxySecretImportRequest{SecretID: "proxy-browser-a", SecretVersion: 2, Grants: []SecretGrant{grant}, Username: "u", Password: "p"}, "import-1")
+	if err != nil || refs != (ProxySecretRefs{UsernameSecretRef: "secret://proxy-browser-a/username/2", PasswordSecretRef: "secret://proxy-browser-a/password/2"}) {
+		t.Fatalf("import: %+v %v", refs, err)
+	}
+	result, err := client.ProbeProxyDraft(context.Background(), ProxyProbeRequest{UpstreamHost: "proxy.example", UpstreamPort: 1080, UpstreamProtocol: "socks5", UpstreamAuth: "username_password",
+		UsernameSecretRef: refs.UsernameSecretRef, PasswordSecretRef: refs.PasswordSecretRef, Grant: &grant, ProbeURL: "https://probe.example/", ProbeTimeoutSeconds: 10})
+	if err != nil || result.Status != "failed" || result.Code != "PROXY_AUTH_REJECTED" {
+		t.Fatalf("probe: %+v %v", result, err)
+	}
+	fake.mu.Lock()
+	fake.probeResult = ProxyProbeResult{Status: "weird", Code: "X"}
+	fake.mu.Unlock()
+	if _, err := client.ProbeProxyDraft(context.Background(), ProxyProbeRequest{UpstreamHost: "proxy.example", UpstreamPort: 1080, UpstreamProtocol: "socks5", UpstreamAuth: "none", ProbeURL: "https://probe.example/", ProbeTimeoutSeconds: 10}); err == nil {
+		t.Fatal("invalid probe status was accepted")
+	}
+	appended, err := client.AppendNetworkPolicy(context.Background(), NetworkPolicyAppendRequest{PolicyID: "browser-a-proxy-r2", Policy: map[string]any{"mode": "proxy_required"}}, "policy-1")
+	if err != nil || appended.PolicyID != "browser-a-proxy-r2" || !ValidNetworkPolicyReference(appended.PolicyID, appended.PolicySHA256) || !appended.Created {
+		t.Fatalf("append: %+v %v", appended, err)
+	}
+	if _, err := client.RevokeProfileSecret(context.Background(), refs.PasswordSecretRef, "not-hex"); err == nil {
+		t.Fatal("revocation without a hex operation ID was accepted")
+	}
+	revoked, err := client.RevokeProfileSecret(context.Background(), refs.PasswordSecretRef, strings.Repeat("ab", 16))
+	if err != nil || !revoked.Revoked || !revoked.CleanupComplete {
+		t.Fatalf("revoke: %+v %v", revoked, err)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.secretImport.Password != "p" || fake.secretImportKey != "import-1" || fake.probeRequest.Grant == nil || fake.probeRequest.Grant.Home != "browser-a-home" ||
+		fake.policyAppendKey != "policy-1" || fake.revokeBody.SecretRef != refs.PasswordSecretRef || fake.revokeKey != strings.Repeat("ab", 16) {
+		t.Fatalf("recorded admin calls: import=%+v key=%q probe=%+v policyKey=%q revoke=%+v revokeKey=%q", fake.secretImport, fake.secretImportKey, fake.probeRequest, fake.policyAppendKey, fake.revokeBody, fake.revokeKey)
+	}
+	for _, reference := range []string{"secret://a/username/1", "secret://a-b_c/password/999999999"} {
+		field := "username"
+		if strings.Contains(reference, "/password/") {
+			field = "password"
+		}
+		if !ValidSecretReference(reference, field) {
+			t.Fatalf("valid reference rejected: %s", reference)
+		}
+	}
+	for _, reference := range []string{"secret://a/username/0", "secret://a/username/01", "secret://a/password/1", "secret://a/username/1/x", "https://a/username/1", "secret://a b/username/1", "secret://a/username/1234567890"} {
+		if ValidSecretReference(reference, "username") {
+			t.Fatalf("invalid reference accepted: %s", reference)
+		}
 	}
 }
 

@@ -155,6 +155,142 @@ func (f *fakeBrowserManager) EnvironmentArtifacts(context.Context) ([]profile.En
 	return []profile.EnvironmentArtifactSummary{{ID: "env-r9", SHA256: strings.Repeat("a", 64), Source: "frozen"}}, nil
 }
 
+type fakeProxyDrafts struct {
+	*fakeBrowserManager
+	drafts       map[string]profile.ProxyDraftSummary
+	lastDraft    profile.ProxyDraftRequest
+	lastActor    string
+	probeCalls   []string
+	applyCalls   []string
+	directCalls  []string
+	applyErr     error
+	probeStatus  string
+	createErr    error
+	appliedIDKey string
+}
+
+func (f *fakeProxyDrafts) CreateProxyDraft(_ context.Context, id, actor string, request profile.ProxyDraftRequest) (profile.ProxyDraftSummary, error) {
+	f.lastDraft, f.lastActor = request, actor
+	if f.createErr != nil {
+		return profile.ProxyDraftSummary{}, f.createErr
+	}
+	summary := profile.ProxyDraftSummary{ID: "draft-1", ProfileID: id, Protocol: request.Protocol, Auth: request.Auth, Host: request.Host, Port: request.Port, ProbeStatus: "pending", SecretVersion: 1}
+	f.drafts[id] = summary
+	return summary, nil
+}
+
+func (f *fakeProxyDrafts) ProbeProxyDraft(_ context.Context, id, draftID string) (profile.ProxyDraftSummary, error) {
+	f.probeCalls = append(f.probeCalls, id+"/"+draftID)
+	summary, ok := f.drafts[id]
+	if !ok || summary.ID != draftID {
+		return profile.ProxyDraftSummary{}, profile.ErrProxyDraftNotFound
+	}
+	summary.ProbeStatus, summary.ProbeCode = f.probeStatus, "PROXY_PROBE_OK"
+	f.drafts[id] = summary
+	return summary, nil
+}
+
+func (f *fakeProxyDrafts) ApplyProxyDraft(_ context.Context, id string, revision int, draftID, actor, key string) (profile.Record, error) {
+	f.applyCalls = append(f.applyCalls, id+"/"+draftID+"/"+key)
+	f.appliedIDKey = key
+	if f.applyErr != nil {
+		return profile.Record{}, f.applyErr
+	}
+	return profile.Record{Definition: profile.Definition{ID: id, NetworkMode: "proxy_required"}, Revision: revision + 1}, nil
+}
+
+func (f *fakeProxyDrafts) SetBrowserDirect(_ context.Context, id string, revision int, policyID, sha, actor, key string) (profile.Record, error) {
+	f.directCalls = append(f.directCalls, id+"/"+policyID+"/"+key)
+	return profile.Record{Definition: profile.Definition{ID: id, NetworkMode: "direct"}, Revision: revision + 1}, nil
+}
+
+func (f *fakeProxyDrafts) ProxyDraft(id string) (profile.ProxyDraftSummary, bool) {
+	summary, ok := f.drafts[id]
+	return summary, ok
+}
+
+func TestManagementProxyDraftFormsNeverEchoCredentials(t *testing.T) {
+	summary := sampleSummary("personal")
+	summary.ConfiguredNetworkMode = "direct"
+	base := &fakeProfiles{environments: map[string]profile.EnvironmentSummary{"personal": summary}, stopResult: profile.LifecycleResult{Status: state.StatusStopped}}
+	profiles := &fakeProxyDrafts{fakeBrowserManager: &fakeBrowserManager{fakeProfiles: base}, drafts: map[string]profile.ProxyDraftSummary{}, probeStatus: "passed"}
+	logs := &strings.Builder{}
+	server := New(profiles, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(logs, nil)), HealthUI{})
+	grants := []access.Grant{{Profile: "personal", Capabilities: []string{"view", "manage", "stop"}}}
+	target := "https://adapter.example/manage/browsers/personal"
+	page := httptest.NewRecorder()
+	server.ServeHTTP(page, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/", nil), "root", grants))
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), `name="action" value="proxy_draft"`) || !strings.Contains(page.Body.String(), "受管理 DIRECT") || strings.Contains(page.Body.String(), "proxy_probe") {
+		t.Fatalf("page before draft: %d %s", page.Code, page.Body.String())
+	}
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, manageForm(url.Values{"action": {"proxy_draft"}, "protocol": {"socks5"}, "auth": {"username_password"}, "host": {"proxy.example.net"}, "port": {"1080"},
+		"username": {"draft-user"}, "password": {"draft-secret-sentinel"}}, "root", grants, target))
+	if response.Header().Get("Location") != "/manage/?notice=draft_created" || profiles.lastDraft.Password != "draft-secret-sentinel" || profiles.lastDraft.Port != 1080 || profiles.lastActor != "root" {
+		t.Fatalf("draft: %s request=%+v", response.Header().Get("Location"), profiles.lastDraft)
+	}
+	page = httptest.NewRecorder()
+	server.ServeHTTP(page, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/?notice=draft_created", nil), "root", grants))
+	body := page.Body.String()
+	if !strings.Contains(body, "草稿 socks5://proxy.example.net:1080") || !strings.Contains(body, `name="draft_id" value="draft-1"`) || strings.Contains(body, "draft-secret-sentinel") || strings.Contains(body, "proxy_apply") {
+		t.Fatalf("page with pending draft: %s", body)
+	}
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, manageForm(url.Values{"action": {"proxy_probe"}, "draft_id": {"draft-1"}}, "root", grants, target))
+	if response.Header().Get("Location") != "/manage/?notice=draft_probed" || len(profiles.probeCalls) != 1 {
+		t.Fatalf("probe: %s", response.Header().Get("Location"))
+	}
+	page = httptest.NewRecorder()
+	server.ServeHTTP(page, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/", nil), "root", grants))
+	if !strings.Contains(page.Body.String(), `name="action" value="proxy_apply"`) {
+		t.Fatalf("page after probe lacks apply form: %s", page.Body.String())
+	}
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, manageForm(url.Values{"action": {"proxy_probe"}, "draft_id": {"other"}}, "root", grants, target))
+	if response.Header().Get("Location") != "/manage/?notice=draft_missing" {
+		t.Fatalf("unknown draft probe: %s", response.Header().Get("Location"))
+	}
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, manageForm(url.Values{"action": {"proxy_apply"}, "draft_id": {"draft-1"}, "revision": {"3"}}, "root", grants, target))
+	if response.Header().Get("Location") != "/manage/?notice=invalid" || len(profiles.applyCalls) != 0 {
+		t.Fatalf("apply without idempotency key: %s", response.Header().Get("Location"))
+	}
+	profiles.applyErr = profile.ErrBrowserBusy
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, manageForm(url.Values{"action": {"proxy_apply"}, "draft_id": {"draft-1"}, "revision": {"3"}, "idempotency_key": {"apply-1"}}, "root", grants, target))
+	if response.Header().Get("Location") != "/manage/?notice=network_busy" {
+		t.Fatalf("busy apply: %s", response.Header().Get("Location"))
+	}
+	profiles.applyErr = nil
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, manageForm(url.Values{"action": {"proxy_apply"}, "draft_id": {"draft-1"}, "revision": {"3"}, "idempotency_key": {"apply-1"}}, "root", grants, target))
+	if response.Header().Get("Location") != "/manage/?notice=network_applied" || strings.Join(profiles.applyCalls, ",") != "personal/draft-1/apply-1,personal/draft-1/apply-1" {
+		t.Fatalf("apply: %s calls=%v", response.Header().Get("Location"), profiles.applyCalls)
+	}
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, manageForm(url.Values{"action": {"network_direct"}, "network_policy_id": {"direct-r1"}, "network_policy_sha256": {strings.Repeat("c", 64)}, "revision": {"4"}, "idempotency_key": {"direct-1"}}, "root", grants, target))
+	if response.Header().Get("Location") != "/manage/?notice=network_applied" || strings.Join(profiles.directCalls, ",") != "personal/direct-r1/direct-1" {
+		t.Fatalf("direct: %s calls=%v", response.Header().Get("Location"), profiles.directCalls)
+	}
+	profiles.createErr = profile.ErrProxyDraftInvalid
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, manageForm(url.Values{"action": {"proxy_draft"}, "protocol": {"socks5"}, "auth": {"none"}, "host": {"10.0.0.1"}, "port": {"1080"}}, "root", grants, target))
+	if response.Header().Get("Location") != "/manage/?notice=invalid" {
+		t.Fatalf("invalid draft: %s", response.Header().Get("Location"))
+	}
+	viewOnly := []access.Grant{{Profile: "personal", Capabilities: []string{"view", "stop"}}}
+	for _, action := range []string{"proxy_draft", "proxy_probe", "proxy_apply", "network_direct"} {
+		response = httptest.NewRecorder()
+		server.ServeHTTP(response, manageForm(url.Values{"action": {action}, "password": {"draft-secret-sentinel"}}, "root", viewOnly, target))
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("%s without manage capability: %d", action, response.Code)
+		}
+	}
+	if strings.Contains(logs.String(), "draft-secret-sentinel") || strings.Contains(logs.String(), "draft-user") {
+		t.Fatalf("credentials reached the log: %s", logs.String())
+	}
+}
+
 func TestManagementCreatesDeletesAndListsFixedArtifacts(t *testing.T) {
 	base := &fakeProfiles{environments: map[string]profile.EnvironmentSummary{"personal": sampleSummary("personal")}, stopResult: profile.LifecycleResult{Status: state.StatusStopped}}
 	profiles := &fakeBrowserManager{fakeProfiles: base}

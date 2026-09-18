@@ -158,6 +158,9 @@ func run(configPath, action, target string, logger *slog.Logger) error {
 			return clientErr
 		}
 		options = append(options, profile.WithEnvironmentCatalog(catalog), profile.WithAdminOrchestrator(adminClient), profile.WithHomeArchiver(client))
+		if cfg.ProxyTemplate != nil {
+			options = append(options, profile.WithProxyTemplate(*cfg.ProxyTemplate))
+		}
 	}
 	profiles, err := profile.NewService(client, store, cfg.PublicBaseURL, cfg.Profiles, options...)
 	if err != nil {

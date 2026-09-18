@@ -8,6 +8,7 @@
 
 | 日期 / 记录 | 验证内容 | 范围与后续关系 |
 | --- | --- | --- |
+| 2026-09-18 · [R6D 代理草稿、隔离探针与 proxy_required 修订](../../infra/sealskin/proxy-drafts-acceptance-2026-09-18.md) | 9 个 Go 包 243 项测试、vet、gofmt、checks 镜像 race；控制器补丁 545 项 pytest（含本机 fake socks5/HTTP/HTTPS 代理探针、Store 导入、策略追加）；草稿版本/撤销/幂等与面板边界 | 候选代码与第二层控制器补丁只在隔离环境验证，生产仍为 candidate-4；真实上游代理、真实代次、R6E/R6F 未测，不得部署 |
 | 2026-09-18 · [R6C 新增/删除浏览器、Home 归档与 launch plan](../../infra/sealskin/environment-create-delete-acceptance-2026-09-18.md) | 9 个 Go 包 234 项测试、vet、gofmt、race；固定环境目录、管理员应用安装/删除、Home 创建/控制器归档、Stop/资源保护、删除审计状态和一次性 launch plan；控制器补丁 `pytest` 归档/幂等测试通过 | 候选代码与第二层控制器补丁只在隔离环境验证，生产仍为 candidate-4；DIRECT 主机前置、R6D/R6E/R6F 及真实 Home/客户端未测，不得部署 |
 | 2026-09-17–18 · [R6B Profile 目录、账号角色、管理员面板与关闭按钮](../../infra/sealskin/environment-directory-acceptance-2026-09-17.md) | Profile 目录/热更新、账号表 v2 角色、管理员边界、reauth/改密、按账号撤销与关闭入口；DEV-045–047；全模块 147 项测试、vet、gofmt、checks 镜像 race | candidate-2 代码与二进制未部署生产；生产 candidate-4、配置、账号表、控制器、Caddy 与 Home 未变；真实浏览器/Trilium、控制器组合与回退归 R6F；R6C 已有独立报告，R6D–R6E 未实现 |
 | 2026-09-17 · [R6A 授权环境列表与只读环境摘要](../../infra/sealskin/environment-list-acceptance-2026-09-17.md) | 12 项新增 Go 测试（网关权限边界、脱敏、只读、真实网关端到端）、全模块 138 项测试、vet、checks 镜像 race | 候选代码与二进制未部署生产；真实浏览器/Trilium、组合 QA 归管理面第 6 步；R2 退出登录/Debian 13 保持 |

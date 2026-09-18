@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -246,6 +247,116 @@ func (c *Client) ArchiveHomeDirectory(ctx context.Context, homeName string, arch
 		return errors.New("Home archive requires a durable idempotency key")
 	}
 	return c.secure(ctx, http.MethodPost, "/api/homedirs/"+url.PathEscape(homeName)+"/archive", archive, idempotencyKey, nil)
+}
+
+// ValidSecretReference accepts only the controller's secret://<id>/<field>/<version> form.
+func ValidSecretReference(reference, field string) bool {
+	parts := strings.Split(reference, "/")
+	if len(parts) != 5 || parts[0] != "secret:" || parts[1] != "" || parts[3] != field {
+		return false
+	}
+	if !validHomeName(parts[2]) {
+		return false
+	}
+	version := parts[4]
+	if len(version) == 0 || len(version) > 9 || version[0] == '0' {
+		return false
+	}
+	for _, char := range version {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// ImportProxySecret stores one credential version through the administrator
+// identity. Only the two references are returned; the request body is the
+// single place the values exist on the Adapter side.
+func (c *Client) ImportProxySecret(ctx context.Context, request ProxySecretImportRequest, idempotencyKey string) (ProxySecretRefs, error) {
+	if !validHomeName(request.SecretID) || request.SecretVersion < 1 || request.SecretVersion > 999999999 || len(request.Grants) == 0 ||
+		request.Username == "" || request.Password == "" || len(request.Username) > 4096 || len(request.Password) > 4096 {
+		return ProxySecretRefs{}, errors.New("invalid proxy secret import request")
+	}
+	for _, grant := range request.Grants {
+		if !validHomeName(grant.Owner) || !validHomeName(grant.Profile) || !validHomeName(grant.Home) || grant.App == "" {
+			return ProxySecretRefs{}, errors.New("invalid proxy secret grant")
+		}
+	}
+	if strings.TrimSpace(idempotencyKey) == "" {
+		return ProxySecretRefs{}, errors.New("proxy secret import requires a durable idempotency key")
+	}
+	var refs ProxySecretRefs
+	if err := c.secure(ctx, http.MethodPost, "/api/admin/environment-management/proxy-secrets", request, idempotencyKey, &refs); err != nil {
+		return ProxySecretRefs{}, err
+	}
+	if !ValidSecretReference(refs.UsernameSecretRef, "username") || !ValidSecretReference(refs.PasswordSecretRef, "password") {
+		return ProxySecretRefs{}, errors.New("controller returned invalid secret references")
+	}
+	return refs, nil
+}
+
+// ProbeProxyDraft runs the controller-side bounded probe. A failed probe is a
+// normal result, not an error; transport and authorization failures are errors.
+func (c *Client) ProbeProxyDraft(ctx context.Context, request ProxyProbeRequest) (ProxyProbeResult, error) {
+	if request.UpstreamHost == "" || request.UpstreamPort < 1 || request.UpstreamPort > 65535 || request.ProbeURL == "" ||
+		request.ProbeTimeoutSeconds < 1 || request.ProbeTimeoutSeconds > 20 {
+		return ProxyProbeResult{}, errors.New("invalid proxy probe request")
+	}
+	// Every probe is a fresh observation: a random key keeps the controller's
+	// per-session idempotency cache from replaying an earlier result.
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		return ProxyProbeResult{}, err
+	}
+	var result ProxyProbeResult
+	if err := c.secureWith(ctx, c.longClient, http.MethodPost, "/api/admin/environment-management/proxy-probe", request, "probe-"+hex.EncodeToString(nonce), &result); err != nil {
+		return ProxyProbeResult{}, err
+	}
+	if (result.Status != "passed" && result.Status != "failed") || result.Code == "" {
+		return ProxyProbeResult{}, errors.New("controller returned an invalid probe result")
+	}
+	return result, nil
+}
+
+// AppendNetworkPolicy appends an immutable policy revision. Retrying with the
+// same content returns the same digest; a different policy under the same ID
+// is rejected by the controller.
+func (c *Client) AppendNetworkPolicy(ctx context.Context, request NetworkPolicyAppendRequest, idempotencyKey string) (NetworkPolicyAppendResponse, error) {
+	if !validHomeName(request.PolicyID) || len(request.Policy) == 0 {
+		return NetworkPolicyAppendResponse{}, errors.New("invalid network policy append request")
+	}
+	if strings.TrimSpace(idempotencyKey) == "" {
+		return NetworkPolicyAppendResponse{}, errors.New("network policy append requires a durable idempotency key")
+	}
+	var response NetworkPolicyAppendResponse
+	if err := c.secure(ctx, http.MethodPost, "/api/admin/environment-management/network-policies", request, idempotencyKey, &response); err != nil {
+		return NetworkPolicyAppendResponse{}, err
+	}
+	if response.PolicyID != request.PolicyID || !ValidNetworkPolicyReference(response.PolicyID, response.PolicySHA256) {
+		return NetworkPolicyAppendResponse{}, errors.New("controller returned an invalid policy reference")
+	}
+	return response, nil
+}
+
+// RevokeProfileSecret permanently disables one credential version and lets the
+// controller stop any generation still using it.
+func (c *Client) RevokeProfileSecret(ctx context.Context, secretRef, operationID string) (RevokeSecretResult, error) {
+	if !ValidSecretReference(secretRef, "username") && !ValidSecretReference(secretRef, "password") {
+		return RevokeSecretResult{}, errors.New("invalid secret reference")
+	}
+	if len(operationID) != 32 {
+		return RevokeSecretResult{}, errors.New("secret revocation requires a 32 hex operation ID")
+	}
+	if _, err := hex.DecodeString(operationID); err != nil || strings.ToLower(operationID) != operationID {
+		return RevokeSecretResult{}, errors.New("secret revocation requires a 32 hex operation ID")
+	}
+	var result RevokeSecretResult
+	err := c.secureWith(ctx, c.longClient, http.MethodPost, "/api/admin/profile-secrets/revoke", RevokeSecretRequest{SecretRef: secretRef, OperationID: operationID}, operationID, &result)
+	if err != nil {
+		return RevokeSecretResult{}, err
+	}
+	return result, nil
 }
 
 func (c *Client) secure(ctx context.Context, method, path string, body any, idempotencyKey string, out any) error {

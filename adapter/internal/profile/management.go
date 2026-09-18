@@ -247,6 +247,13 @@ func (s *Service) DeleteBrowser(ctx context.Context, profileID, actor, idempoten
 	if err := s.homeArchiver.ArchiveHomeDirectory(ctx, record.HomeName, archive, idempotencyKey+"-home"); err != nil {
 		return fmt.Errorf("archive browser Home: %w", err)
 	}
+	// Revocation is idempotent and runs before the application definition is
+	// removed, so a retry after a partial failure never has to delete an
+	// application that is already gone.
+	if err := s.revokeProxySecrets(ctx, record.ID, record.ProxySecretVersion, 0); err != nil {
+		return fmt.Errorf("revoke browser proxy credentials: %w", err)
+	}
+	s.dropProxyDraft(record.ID)
 	if err := s.admin.DeleteInstalledApp(ctx, record.ApplicationID, idempotencyKey+"-app"); err != nil {
 		return fmt.Errorf("delete browser application: %w", err)
 	}

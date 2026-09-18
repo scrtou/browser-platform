@@ -55,6 +55,15 @@ type Definition struct {
 	// Disabled refuses new launches and entry reuse; running generations,
 	// stop, reconciliation and health are unaffected.
 	Disabled bool `json:"disabled,omitempty"`
+	// ProxySecretVersion is the last Secret Store version imported for this
+	// browser's proxy credentials (secret ID proxy-<id>); it only grows so a
+	// version is never reused. ProxyUpstream is a display-only
+	// protocol://host:port summary and the two references name the bound
+	// credential version; all three are empty for DIRECT and legacy browsers.
+	ProxySecretVersion     int    `json:"proxy_secret_version,omitempty"`
+	ProxyUpstream          string `json:"proxy_upstream,omitempty"`
+	ProxyUsernameSecretRef string `json:"proxy_username_secret_ref,omitempty"`
+	ProxyPasswordSecretRef string `json:"proxy_password_secret_ref,omitempty"`
 }
 
 // IdlePolicy follows the health specification's idlePolicy: only the
@@ -97,7 +106,12 @@ type Orchestrator interface {
 // separate administrator identity in the production process.
 type AdminOrchestrator interface {
 	InstallApp(context.Context, map[string]any, string) error
+	PatchInstalledApp(context.Context, string, map[string]any, string) error
 	DeleteInstalledApp(context.Context, string, string) error
+	ImportProxySecret(context.Context, sealskin.ProxySecretImportRequest, string) (sealskin.ProxySecretRefs, error)
+	ProbeProxyDraft(context.Context, sealskin.ProxyProbeRequest) (sealskin.ProxyProbeResult, error)
+	AppendNetworkPolicy(context.Context, sealskin.NetworkPolicyAppendRequest, string) (sealskin.NetworkPolicyAppendResponse, error)
+	RevokeProfileSecret(context.Context, string, string) (sealskin.RevokeSecretResult, error)
 }
 
 type HomeArchiver interface {
@@ -152,6 +166,10 @@ type Service struct {
 	locks   map[string]*sync.Mutex
 	plansMu sync.Mutex
 	plans   map[string]launchPlan
+
+	proxyTemplate *ProxyTemplate
+	draftsMu      sync.Mutex
+	drafts        map[string]*proxyDraft
 }
 
 func NewService(orchestrator Orchestrator, store *state.Store, publicBaseURL string, definitions []Definition, options ...Option) (*Service, error) {
@@ -230,6 +248,14 @@ func WithHomeArchiver(archiver HomeArchiver) Option {
 
 func WithEnvironmentCatalog(catalog EnvironmentCatalog) Option {
 	return func(s *Service) { s.catalog = catalog }
+}
+
+// WithProxyTemplate enables proxy drafts. The template fixes the operator
+// values every generated proxy_required revision shares: the launching
+// SealSkin identity, the Relay and probe image digests and the approved
+// probe target.
+func WithProxyTemplate(template ProxyTemplate) Option {
+	return func(s *Service) { copied := template; s.proxyTemplate = &copied }
 }
 
 // Records lists every browser definition with its directory metadata.
@@ -655,6 +681,23 @@ func validateDefinition(definition Definition) error {
 	}
 	if definition.NetworkMode != "" && definition.NetworkMode != "legacy" && definition.NetworkMode != "direct" && definition.NetworkMode != "proxy_required" {
 		return errors.New("network_mode must be legacy, direct or proxy_required")
+	}
+	if definition.ProxySecretVersion < 0 || definition.ProxySecretVersion > 999999999 {
+		return errors.New("proxy_secret_version is out of range")
+	}
+	if (definition.ProxyUsernameSecretRef == "") != (definition.ProxyPasswordSecretRef == "") {
+		return errors.New("proxy secret references must be paired")
+	}
+	if definition.ProxyUsernameSecretRef != "" {
+		if !sealskin.ValidSecretReference(definition.ProxyUsernameSecretRef, "username") || !sealskin.ValidSecretReference(definition.ProxyPasswordSecretRef, "password") {
+			return errors.New("proxy secret references are invalid")
+		}
+		if definition.NetworkMode != "proxy_required" {
+			return errors.New("proxy secret references require network_mode proxy_required")
+		}
+	}
+	if definition.ProxyUpstream != "" && (definition.NetworkMode != "proxy_required" || len(definition.ProxyUpstream) > 300 || strings.ContainsAny(definition.ProxyUpstream, "@ \t\n")) {
+		return errors.New("proxy_upstream must be a protocol://host:port summary of a proxy_required browser")
 	}
 	if definition.EnvironmentArtifactID != "" {
 		if len(definition.EnvironmentArtifactSHA256) != 64 || strings.ToLower(definition.EnvironmentArtifactSHA256) != definition.EnvironmentArtifactSHA256 {

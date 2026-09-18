@@ -88,15 +88,18 @@ type Config struct {
 	ControlSocket     string `json:"control_socket,omitempty"`
 	// ProfileDirectory persists browser definitions so the management
 	// surface can change them; the configured profiles seed its first import.
-	ProfileDirectory   string               `json:"profile_directory,omitempty"`
-	EnvironmentCatalog string               `json:"environment_catalog,omitempty"`
-	SealSkin           SealSkin             `json:"sealskin"`
-	SealSkinAdmin      *SealSkinAdmin       `json:"sealskin_admin,omitempty"`
-	Health             Health               `json:"health"`
-	Startup            Startup              `json:"startup"`
-	Access             *access.Config       `json:"access,omitempty"`
-	Limits             profile.Limits       `json:"limits"`
-	Profiles           []profile.Definition `json:"profiles"`
+	ProfileDirectory   string `json:"profile_directory,omitempty"`
+	EnvironmentCatalog string `json:"environment_catalog,omitempty"`
+	// ProxyTemplate enables R6D proxy drafts: the fixed owner, Relay/probe
+	// image digests and approved probe URL every generated policy shares.
+	ProxyTemplate *profile.ProxyTemplate `json:"proxy_template,omitempty"`
+	SealSkin      SealSkin               `json:"sealskin"`
+	SealSkinAdmin *SealSkinAdmin         `json:"sealskin_admin,omitempty"`
+	Health        Health                 `json:"health"`
+	Startup       Startup                `json:"startup"`
+	Access        *access.Config         `json:"access,omitempty"`
+	Limits        profile.Limits         `json:"limits"`
+	Profiles      []profile.Definition   `json:"profiles"`
 }
 
 func Load(path string) (Config, error) {
@@ -173,6 +176,17 @@ func (cfg Config) Validate() error {
 	}
 	if cfg.EnvironmentCatalog != "" && (cfg.SealSkinAdmin == nil || cfg.SealSkinAdmin.Username == "" || cfg.SealSkinAdmin.ClientPrivateKeyFile == "") {
 		return errors.New("environment_catalog requires a separate sealskin_admin identity")
+	}
+	if cfg.ProxyTemplate != nil {
+		if cfg.EnvironmentCatalog == "" {
+			return errors.New("proxy_template requires environment_catalog and sealskin_admin")
+		}
+		if cfg.ProxyTemplate.Owner != cfg.SealSkin.Username {
+			return errors.New("proxy_template.owner must equal sealskin.username")
+		}
+		if err := cfg.ProxyTemplate.Validate(); err != nil {
+			return err
+		}
 	}
 	if cfg.Access != nil {
 		if err := cfg.Access.Validate(); err != nil {

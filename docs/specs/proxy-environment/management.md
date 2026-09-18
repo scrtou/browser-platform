@@ -1,6 +1,6 @@
 # 远程浏览器管理面设计：新增/修改/删除、代理、指纹与访问
 
-状态：**设计（2026-09-17 第 2 版，按用户需求修订）；第 1、2 步（只读列表；目录、角色、管理员面板、关闭）已完成候选代码与 Go 隔离测试，其余未实施，均未部署生产**。本文把远程浏览器的新增、修改、删除，每个浏览器的代理、指纹、起始页和访问账号，纳入现有 Adapter/SealSkin 生命周期；不表示任何生产入口已经启用这些操作。
+状态：**设计（2026-09-17 第 2 版，按用户需求修订）；第 1–4 步（只读列表；目录、角色、管理员面板、关闭；新增/删除与 launch plan；代理草稿、探针与修订）已完成候选代码与隔离测试，第 5–6 步未实施，均未部署生产**。本文把远程浏览器的新增、修改、删除，每个浏览器的代理、指纹、起始页和访问账号，纳入现有 Adapter/SealSkin 生命周期；不表示任何生产入口已经启用这些操作。
 
 相关基础：[当前架构](../../design.md)、[代理与环境规格](specification.md)、[入口登录与 Session 访问](../../../infra/sealskin/entry-auth/README.md)、[Secret Store](../../../infra/sealskin/lifecycle/secret-store.md)、[按 generation 分配代理与网络](../../../infra/sealskin/lifecycle/README.md#按-generation-分配代理与网络)、[受管理 DIRECT](../../../infra/sealskin/lifecycle/direct-network.md)、[Camoufox 产物与验收](../../../infra/camoufox/README.md)、[R6 工作项](../../work-items/R6-2026-09-16-environment-management.md)。
 
@@ -125,6 +125,8 @@ admin 请求删除 → 必须已停止且 records/workers/resources 为 0（否�
 4. 通过后创建不可变 ProxyConfig 与 `proxy_required` NetworkPolicy 修订；运行中的代次不热切换。
 5. 没有代理 = `mode=direct` 的受管理 DIRECT：Guard/网关仍强制、无 VPS 裸直连；主机缺少 IPv4 证据时创建拒绝并提示，不退回无 Guard 网络。
 
+R6D 实现（2026-09-18，候选）：Adapter 不持有 Secret Store、主密钥或策略注册表，凭据导入、草稿探针与修订追加都经控制器第二层补丁的管理员加密接口 `/api/admin/environment-management/{proxy-secrets,proxy-probe,network-policies}` 完成（[DEV-049](../../deviations/DEV-2026-09-18-049-proxy-secret-import-channel.md)）。草稿阶段没有 generation，探针在控制器进程内以冻结的公网 IPv4 完成协议握手与隧道内 TLS，只返回稳定代码；它不给出出口国家，也不替代启动时 Guard 命名空间探针与一致性门槛（[DEV-050](../../deviations/DEV-2026-09-18-050-proxy-draft-probe-scope.md)）。凭据版本为 `proxy-<browser id>` 下递增整数，每次草稿先在目录中保留版本号；应用修订按“追加策略 → 应用引用 → 撤销旧版本 → 目录修订”顺序执行，每步幂等，可用同一草稿与幂等键重试；切回 DIRECT 与删除浏览器撤销全部代理凭据版本。运行中的浏览器拒绝应用与切换。
+
 ### 指纹配置
 
 - **固化指纹**：从环境目录中状态为 `accepted`、镜像摘要与当前 Camoufox 镜像一致的产物中选择；面板只显示名称、引擎、locale/languages、timezone、screen/DPR、验收日期。
@@ -168,7 +170,7 @@ admin 请求删除 → 必须已停止且 records/workers/resources 为 0（否�
 | `POST /browser/{id}/stop` | 安全关闭 | `stop`、CSRF、幂等键。R6B 以面板表单 `action=stop` 实现，结果只以固定通知显示 |
 | `GET /manage/environments/catalog` | 固化指纹目录 | `admin` |
 | `POST /manage/environment-jobs` / `GET …/{id}` | 自定义指纹生成作业 | `admin`；一次一个；结果只含摘要与状态 |
-| `POST /manage/proxy-drafts`、`POST …/{id}/probe`、`GET …/{id}` | 代理草稿与探针 | `admin`；只写 Secret Store 引用 |
+| `POST /manage/proxy-drafts`、`POST …/{id}/probe`、`GET …/{id}` | 代理草稿与探针 | `admin`；只写 Secret Store 引用。R6D 以面板表单 `POST /manage/browsers/{id}`（`action=proxy_draft/proxy_probe/proxy_apply/network_direct`）实现，草稿摘要随 `/manage/` 页面显示；`proxy_apply` 与 `network_direct` 需近期重新认证、修订号与幂等键 |
 | `GET/POST /manage/accounts`、`PATCH /manage/accounts/{id}` | 账号管理 | `admin`；密码只经表单 POST，响应不回显；创建管理员、禁用/启用、改角色、重置他人密码需近期重新认证。R6B 以 `POST /manage/accounts`（创建）与 `POST /manage/accounts/{id}`（`action=reset_password/enable/disable/grants/role`）实现 |
 | `POST /auth/reauth` | 管理员敏感操作前重新输入密码 | 登录中的 `admin`；5 分钟有效，不延长登录期限 |
 | `POST /auth/password` | 修改自己的密码 | 任意登录账号；需当前密码、CSRF；成功后撤销其他登录 |
@@ -191,8 +193,8 @@ admin 请求删除 → 必须已停止且 records/workers/resources 为 0（否�
 1. **R6A 只读列表**（已完成候选代码与 Go 测试，2026-09-17）。
 2. **R6B 目录与角色**（candidate-2 已完成代码与 Go 测试，2026-09-18 收尾，未部署）：Profile 目录（导入现有配置、修订、乐观锁、热更新）、账号表 version 2 的 `role`、管理面板改为仅管理员（修复 [DEV-045](../../deviations/DEV-2026-09-17-045-manage-list-role.md)）、`/auth/reauth` 与 `/auth/password`、`stop` 能力与面板关闭按钮；修改 `label`/`start_url`/账号分配/`enabled`；账号表变化按账号撤销；账号 CLI 的目录权威边界与锁契约见 [DEV-046](../../deviations/DEV-2026-09-18-046-profile-directory-cli-grants.md)、[DEV-047](../../deviations/DEV-2026-09-18-047-profile-directory-lock-contract.md)。见 [R6B 验收](../../../infra/sealskin/environment-directory-acceptance-2026-09-17.md)。
 3. **R6C 新增与删除（固化指纹 + DIRECT/现有代理修订）**（候选代码已完成隔离验证，未部署）：管理员 SealSkin 客户端、应用安装/删除、Home 创建与控制器归档、launch plan；环境目录只接受已验收固化产物和完整应用模板，创建失败可重试，删除先 Stop 并确认资源为空。DIRECT 生产前置（主机 IPv4 证据、网关镜像、控制器能力）作为本步的部署条件；归档 API 的上游缺口与补丁见 [DEV-048](../../deviations/DEV-2026-09-18-048-home-archive-controller-api.md)。
-4. **R6D 代理草稿、探针与修订**：Secret Store 导入、隔离探针、`proxy_required` 修订与下一代次绑定。
+4. **R6D 代理草稿、探针与修订**（候选代码已完成隔离验证，未部署）：控制器管理员接口的 Secret Store 导入、有界探针、`proxy_required` 修订追加与下一代次绑定，切回 DIRECT 与删除时撤销凭据；见 [DEV-049](../../deviations/DEV-2026-09-18-049-proxy-secret-import-channel.md)、[DEV-050](../../deviations/DEV-2026-09-18-050-proxy-draft-probe-scope.md) 与 [R6D 验收](../../../infra/sealskin/proxy-drafts-acceptance-2026-09-18.md)。真实上游代理与生产验证归 R6F。
 5. **R6E 自定义指纹作业**：环境目录、隔离生成/验收作业、失败保留与发布。
 6. **R6F 组合 QA 与生产候选**：独立 QA、真实客户端（Trilium/Mac）、备份/恢复、日志脱敏、回退演练后，才准备生产候选与部署。
 
-第 1 版中“关闭入口”作为第 2 步、“指纹选择”作为第 3 步的顺序已被上述顺序取代；R6A/R6B/R6C 均只在候选或隔离环境验证，本文件不授权部署或改变现有 Profile。R2 的退出登录与 Debian 13 仍待外部条件。
+第 1 版中“关闭入口”作为第 2 步、“指纹选择”作为第 3 步的顺序已被上述顺序取代；R6A/R6B/R6C/R6D 均只在候选或隔离环境验证，本文件不授权部署或改变现有 Profile。R2 的退出登录与 Debian 13 仍待外部条件。

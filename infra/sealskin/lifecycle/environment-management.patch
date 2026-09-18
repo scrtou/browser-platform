@@ -1,3 +1,538 @@
+diff --git a/server/app/api.py b/server/app/api.py
+--- a/server/app/api.py
++++ b/server/app/api.py
+@@ -32,6 +32,7 @@ from .profile_resume import router as profile_resume_router
+ from .coherence_runtime import router as coherence_router, sampler as coherence_sampler
+ from .profile_runtime import router as profile_runtime_router
+ from .secret_runtime import router as secret_runtime_router
++from .environment_management import router as environment_management_router
+ from .routers import (
+     admin,
+     applications,
+@@ -265,6 +266,7 @@ def create_app() -> FastAPI:
+     app.include_router(profile_resume_router)
+     app.include_router(coherence_router)
+     app.include_router(secret_runtime_router)
++    app.include_router(environment_management_router)
+     app.include_router(uploads.router)
+     app.include_router(files.router)
+     app.include_router(shares.router)
+diff --git a/server/app/environment_management.py b/server/app/environment_management.py
+new file mode 100644
+--- /dev/null
++++ b/server/app/environment_management.py
+@@ -0,0 +1,256 @@
++"""Administrator-only management surface for proxy drafts.
++
++Three encrypted endpoints let the Adapter's separate administrator identity
++import proxy credentials into the controller-owned Secret Store, run a
++bounded proxy-draft probe, and append an immutable network policy revision.
++Every response carries references, digests and stable codes only. Docker
++lifecycle ownership, launch gating and the Guard-namespace launch probe are
++unchanged.
++"""
++
++from __future__ import annotations
++
++import asyncio
++import hashlib
++import logging
++import os
++import re
++import stat
++from typing import Any
++
++from fastapi import APIRouter, Depends, HTTPException
++from pydantic import BaseModel, ConfigDict, Field, ValidationError
++
++from . import network_runtime as network
++from . import proxy_probe
++from . import secret_runtime
++from .secret_store import SecretError, pair_references
++from .security import EncryptedRoute, get_decrypted_request_body, verify_admin
++
++logger = logging.getLogger("sealskin.environment-management")
++
++router = APIRouter(prefix="/api/admin/environment-management", route_class=EncryptedRoute,
++                   dependencies=[Depends(verify_admin)])
++
++_REGISTRY_LOCK = "network-policies:registry"
++NAME = network.NAME
++
++
++class Grant(BaseModel):
++    model_config = ConfigDict(extra="forbid", strict=True)
++    owner: str = Field(pattern=NAME)
++    profile: str = Field(pattern=NAME)
++    home: str = Field(pattern=NAME)
++    app: str = Field(min_length=1, max_length=256)
++
++
++class SecretImportRequest(BaseModel):
++    model_config = ConfigDict(extra="forbid", strict=True)
++    secret_id: str = Field(pattern=NAME)
++    secret_version: int = Field(ge=1, le=999999999)
++    grants: list[Grant] = Field(min_length=1, max_length=128)
++    username: str = Field(min_length=1, max_length=4096)
++    password: str = Field(min_length=1, max_length=4096)
++
++
++class ProbeRequest(BaseModel):
++    model_config = ConfigDict(extra="forbid", strict=True)
++    upstream_host: str = Field(min_length=1, max_length=253)
++    upstream_port: int = Field(ge=1, le=65535)
++    upstream_protocol: str = Field(pattern=r"^(socks5|http|https)$")
++    upstream_auth: str = Field(pattern=r"^(none|username_password|basic)$")
++    username_secret_ref: str = Field(default="", max_length=180)
++    password_secret_ref: str = Field(default="", max_length=180)
++    grant: Grant | None = None
++    upstream_tls_ca_pem: str = Field(default="", max_length=16384)
++    probe_url: str = Field(min_length=1, max_length=2048)
++    probe_ca_pem: str = Field(default="", max_length=16384)
++    probe_timeout_seconds: int = Field(default=10, ge=1, le=20)
++
++
++class PolicyAppendRequest(BaseModel):
++    model_config = ConfigDict(extra="forbid", strict=True)
++    policy_id: str = Field(pattern=NAME)
++    policy: dict[str, Any]
++    upstream_tls_ca_pem: str = Field(default="", max_length=16384)
++
++
++def _secret_status(code: str) -> int:
++    if code == "SECRET_VERSION_EXISTS":
++        return 409
++    if code.endswith("_INVALID"):
++        return 422
++    return 503
++
++
++def _auth_matches(protocol: str, auth: str, has_credentials: bool) -> bool:
++    allowed = {"socks5": {"none", "username_password"}, "http": {"none", "basic"}, "https": {"none", "basic"}}
++    return auth in allowed[protocol] and (auth == "none") == (not has_credentials)
++
++
++@router.post("/proxy-secrets", status_code=201)
++async def import_proxy_secret(decrypted_body: dict[str, Any] = Depends(get_decrypted_request_body)):
++    """Store one credential version; only the two references come back."""
++    try:
++        request = SecretImportRequest(**decrypted_body)
++    except ValidationError:
++        raise HTTPException(422, "SECRET_IMPORT_REQUEST_INVALID") from None
++    store, _ = secret_runtime.configuration()
++    grants = [grant.model_dump() for grant in request.grants]
++    try:
++        async with secret_runtime.credential_lock():
++            refs = await asyncio.to_thread(store.put, request.secret_id, request.secret_version, grants,
++                                           request.username, request.password)
++    except SecretError as exc:
++        raise HTTPException(_secret_status(exc.code), exc.code) from None
++    except Exception:
++        raise HTTPException(503, "SECRET_IMPORT_FAILED") from None
++    logger.info("PROXY_SECRET_IMPORTED secret_id=%s version=%s grants=%d", request.secret_id, request.secret_version, len(grants))
++    return {"username_secret_ref": refs["username"], "password_secret_ref": refs["password"]}
++
++
++@router.post("/proxy-probe")
++async def probe_proxy_draft(decrypted_body: dict[str, Any] = Depends(get_decrypted_request_body)):
++    """Verify one draft against a frozen public upstream address."""
++    try:
++        request = ProbeRequest(**decrypted_body)
++    except ValidationError:
++        raise HTTPException(422, "PROXY_PROBE_REQUEST_INVALID") from None
++    has_refs = bool(request.username_secret_ref or request.password_secret_ref)
++    if (not _auth_matches(request.upstream_protocol, request.upstream_auth, has_refs) or
++            (has_refs and request.grant is None) or
++            (request.upstream_tls_ca_pem and request.upstream_protocol != "https")):
++        raise HTTPException(422, "PROXY_PROBE_REQUEST_INVALID")
++    spec: dict[str, Any] = {
++        "upstream_host": request.upstream_host, "upstream_port": request.upstream_port,
++        "upstream_protocol": request.upstream_protocol, "upstream_auth": request.upstream_auth,
++        "upstream_tls_ca_pem": request.upstream_tls_ca_pem, "probe_url": request.probe_url,
++        "probe_ca_pem": request.probe_ca_pem, "timeout_seconds": request.probe_timeout_seconds,
++    }
++    if has_refs:
++        try:
++            pair_references(request.username_secret_ref, request.password_secret_ref)
++        except SecretError as exc:
++            raise HTTPException(422, exc.code) from None
++        store, _ = secret_runtime.configuration()
++        try:
++            resolved = await asyncio.to_thread(store.resolve, request.grant.model_dump(),
++                                               request.username_secret_ref, request.password_secret_ref)
++            spec["username"] = resolved["username"].decode("utf-8")
++            spec["password"] = resolved["password"].decode("utf-8")
++        except SecretError as exc:
++            secret_runtime.reject(exc)
++        except UnicodeError:
++            raise HTTPException(422, "SECRET_VALUE_INVALID") from None
++    try:
++        spec["upstream_ip"] = await asyncio.to_thread(proxy_probe.public_ipv4, request.upstream_host, request.upstream_port)
++    except proxy_probe.ProbeError as exc:
++        raise HTTPException(422, exc.code) from None
++    try:
++        result = await asyncio.wait_for(asyncio.to_thread(proxy_probe.run, spec), timeout=request.probe_timeout_seconds * 3 + 5)
++    except proxy_probe.ProbeError as exc:
++        result = {"status": "failed", "code": exc.code, "upstream_ip": spec["upstream_ip"]}
++    except asyncio.TimeoutError:
++        result = {"status": "failed", "code": "PROXY_PROBE_TIMEOUT", "upstream_ip": spec["upstream_ip"]}
++    except Exception:
++        result = {"status": "failed", "code": "PROXY_PROBE_FAILED", "upstream_ip": spec["upstream_ip"]}
++    finally:
++        spec.pop("username", None)
++        spec.pop("password", None)
++    logger.info("PROXY_DRAFT_PROBE host=%s protocol=%s auth=%s status=%s code=%s", request.upstream_host,
++                request.upstream_protocol, request.upstream_auth, result["status"], result["code"])
++    return result
++
++
++def _secrets_root():
++    root = network.base_dir() / "network-secrets"
++    if root.is_symlink():
++        network.reject("NETWORK_SECRET_PERMISSIONS", 503)
++    if not root.exists():
++        root.mkdir(mode=0o700)
++    return root
++
++
++def _write_ca(policy_id: str, pem: str) -> tuple[str, str]:
++    """Persist an upstream CA once, exclusively, as a private regular file."""
++    if "-----BEGIN CERTIFICATE-----" not in pem or "PRIVATE KEY" in pem:
++        network.reject("NETWORK_UPSTREAM_TLS_INVALID", 422)
++    raw = pem.encode("utf-8")
++    digest = hashlib.sha256(raw).hexdigest()
++    root = _secrets_root()
++    path = root / f"{policy_id}-upstream-ca.pem"
++    if path.is_symlink():
++        network.reject("NETWORK_SECRET_PERMISSIONS", 422)
++    if path.exists():
++        info = path.stat()
++        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
++            network.reject("NETWORK_UPSTREAM_TLS_INVALID", 409)
++        return str(path), digest
++    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
++    try:
++        with os.fdopen(fd, "wb") as handle:
++            handle.write(raw)
++            handle.flush()
++            os.fsync(handle.fileno())
++    except OSError:
++        raise HTTPException(503, "NETWORK_SECRET_UNAVAILABLE") from None
++    return str(path), digest
++
++
++def _registry() -> dict[str, Any]:
++    path = network.policy_path()
++    if not path.exists():
++        return {"version": 1, "policies": {}}
++    try:
++        raw = network.read_json(path)
++    except (OSError, ValueError):
++        network.reject("NETWORK_POLICY_REGISTRY_INVALID", 503)
++    if not isinstance(raw, dict) or set(raw) != {"version", "policies"} or raw["version"] != 1 or not isinstance(raw["policies"], dict):
++        network.reject("NETWORK_POLICY_REGISTRY_INVALID", 503)
++    return raw
++
++
++@router.post("/network-policies", status_code=201)
++async def append_network_policy(decrypted_body: dict[str, Any] = Depends(get_decrypted_request_body)):
++    """Append one immutable revision; identical retries return the same digest."""
++    from .profile_runtime import lifecycle_lock
++
++    try:
++        request = PolicyAppendRequest(**decrypted_body)
++    except ValidationError:
++        raise HTTPException(422, "NETWORK_POLICY_INVALID") from None
++    policy = dict(request.policy)
++    if policy.get("mode") not in ("proxy_required", "direct"):
++        raise HTTPException(422, "NETWORK_POLICY_INVALID")
++    async with lifecycle_lock(_REGISTRY_LOCK):
++        if request.upstream_tls_ca_pem:
++            if policy.get("upstream_protocol") != "https" or policy.get("upstream_tls_ca_file") or policy.get("upstream_tls_ca_sha256"):
++                raise HTTPException(422, "NETWORK_POLICY_INVALID")
++            policy["upstream_tls_ca_file"], policy["upstream_tls_ca_sha256"] = _write_ca(request.policy_id, request.upstream_tls_ca_pem)
++        try:
++            model = network.NetworkPolicy(**policy)
++        except (ValidationError, TypeError, ValueError):
++            raise HTTPException(422, "NETWORK_POLICY_INVALID") from None
++        snapshot = model.model_dump()
++        digest = network.digest(snapshot)
++        registry = _registry()
++        existing = registry["policies"].get(request.policy_id)
++        if existing is not None:
++            try:
++                if network.digest(network.NetworkPolicy(**existing).model_dump()) == digest:
++                    return {"policy_id": request.policy_id, "policy_sha256": digest, "created": False}
++            except (ValidationError, TypeError, ValueError):
++                network.reject("NETWORK_POLICY_REGISTRY_INVALID", 503)
++            raise HTTPException(409, "NETWORK_POLICY_EXISTS")
++        for key in registry["policies"]:
++            if not re.fullmatch(network.NAME, key):
++                network.reject("NETWORK_POLICY_REGISTRY_INVALID", 503)
++        registry["policies"][request.policy_id] = snapshot
++        try:
++            network.atomic_json(network.policy_path(), registry)
++        except HTTPException:
++            raise
++        except OSError:
++            raise HTTPException(503, "NETWORK_POLICY_REGISTRY_UNAVAILABLE") from None
++    logger.info("NETWORK_POLICY_APPENDED policy_id=%s policy_sha256=%s mode=%s", request.policy_id, digest, model.mode)
++    return {"policy_id": request.policy_id, "policy_sha256": digest, "created": True}
+diff --git a/server/app/proxy_probe.py b/server/app/proxy_probe.py
+new file mode 100644
+--- /dev/null
++++ b/server/app/proxy_probe.py
+@@ -0,0 +1,250 @@
++"""Bounded proxy-draft readiness check run from the controller process.
++
++The check freezes one public IPv4 address for the operator-supplied upstream,
++performs the selected SOCKS5 / HTTP CONNECT / HTTPS CONNECT handshake with the
++resolved credentials, then verifies TLS to the approved probe URL through the
++tunnel. It reports stable codes only: no credentials, response bodies or
++proxy banners cross the boundary. It does not replace the Guard-namespace
++probe that gates every managed launch.
++"""
++
++from __future__ import annotations
++
++import base64
++import ipaddress
++import socket
++import ssl
++import struct
++import time
++from urllib.parse import urlsplit
++
++MAX_HEADER = 8192
++
++
++class ProbeError(Exception):
++    """Only a stable, non-sensitive code may leave the probe."""
++
++    def __init__(self, code):
++        self.code = code
++        super().__init__(code)
++
++
++def _global_ipv4(value):
++    try:
++        address = ipaddress.IPv4Address(value)
++    except ValueError:
++        raise ProbeError("NETWORK_UPSTREAM_ADDRESS_INVALID") from None
++    if (str(address) != value or not address.is_global or address.is_multicast or address.is_reserved or
++            address.is_loopback or address.is_link_local or address.is_private or address.is_unspecified):
++        raise ProbeError("NETWORK_UPSTREAM_ADDRESS_INVALID")
++    return str(address)
++
++
++def public_ipv4(host, port):
++    """Resolve the upstream once and require every answer to be public IPv4."""
++    if not isinstance(host, str) or not 1 <= len(host) <= 253 or ":" in host or "/" in host or host != host.strip():
++        raise ProbeError("NETWORK_UPSTREAM_ADDRESS_INVALID")
++    try:
++        ipaddress.ip_address(host)
++        literal = True
++    except ValueError:
++        literal = False
++    if literal:
++        return _global_ipv4(host)
++    lowered = host.lower()
++    if lowered == "localhost" or lowered.endswith(".localhost") or lowered.endswith(".internal") or lowered.endswith(".local"):
++        raise ProbeError("NETWORK_UPSTREAM_ADDRESS_INVALID")
++    try:
++        values = socket.getaddrinfo(host, port, family=socket.AF_INET, type=socket.SOCK_STREAM)
++    except (socket.gaierror, UnicodeError, OSError):
++        raise ProbeError("NETWORK_UPSTREAM_UNRESOLVED") from None
++    addresses = list(dict.fromkeys(item[4][0] for item in values))
++    if not addresses:
++        raise ProbeError("NETWORK_UPSTREAM_UNRESOLVED")
++    return [_global_ipv4(value) for value in addresses][0]
++
++
++def _exact(connection, size):
++    data = b""
++    while len(data) < size:
++        chunk = connection.recv(size - len(data))
++        if not chunk:
++            raise ProbeError("PROXY_PROTOCOL_ERROR")
++        data += chunk
++    return data
++
++
++def _status_line(connection):
++    """Read HTTP headers up to a bound and return the status code."""
++    data = b""
++    while b"\r\n\r\n" not in data:
++        if len(data) > MAX_HEADER:
++            raise ProbeError("PROXY_PROTOCOL_ERROR")
++        chunk = connection.recv(1024)
++        if not chunk:
++            raise ProbeError("PROXY_PROTOCOL_ERROR")
++        data += chunk
++    parts = data.split(b"\r\n", 1)[0].split(b" ", 2)
++    if len(parts) < 2 or not parts[0].startswith(b"HTTP/1.") or not parts[1].isdigit():
++        raise ProbeError("PROXY_PROTOCOL_ERROR")
++    return int(parts[1])
++
++
++def _socks5(connection, host, port, username, password):
++    methods = b"\x02" if username is not None else b"\x00"
++    connection.sendall(b"\x05\x01" + methods)
++    reply = _exact(connection, 2)
++    if reply[0] != 5 or reply[1:] != methods:
++        raise ProbeError("PROXY_AUTH_REJECTED" if reply[1] == 0xFF else "PROXY_PROTOCOL_ERROR")
++    if username is not None:
++        user, secret = username.encode("utf-8"), password.encode("utf-8")
++        if not 1 <= len(user) <= 255 or not 1 <= len(secret) <= 255:
++            raise ProbeError("PROXY_AUTH_REJECTED")
++        connection.sendall(b"\x01" + bytes([len(user)]) + user + bytes([len(secret)]) + secret)
++        auth = _exact(connection, 2)
++        if auth[0] != 1 or auth[1] != 0:
++            raise ProbeError("PROXY_AUTH_REJECTED")
++    domain = host.encode("idna")
++    if len(domain) > 255:
++        raise ProbeError("PROBE_URL_INVALID")
++    connection.sendall(b"\x05\x01\x00\x03" + bytes([len(domain)]) + domain + struct.pack("!H", port))
++    header = _exact(connection, 4)
++    if header[0] != 5:
++        raise ProbeError("PROXY_PROTOCOL_ERROR")
++    if header[1] != 0:
++        raise ProbeError("PROXY_CONNECT_REJECTED")
++    size = {1: 4, 4: 16}.get(header[3])
++    if header[3] == 3:
++        size = _exact(connection, 1)[0]
++    if size is None:
++        raise ProbeError("PROXY_PROTOCOL_ERROR")
++    _exact(connection, size + 2)
++
++
++def _http_connect(connection, host, port, username, password):
++    authority = f"{host.encode('idna').decode('ascii')}:{port}"
++    request = f"CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\nUser-Agent: browser-platform-proxy-draft-probe/1\r\n"
++    if username is not None:
++        token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
++        request += f"Proxy-Authorization: Basic {token}\r\n"
++    request += "\r\n"
++    connection.sendall(request.encode("ascii"))
++    status = _status_line(connection)
++    if status in (401, 407):
++        raise ProbeError("PROXY_AUTH_REJECTED")
++    if not 200 <= status < 300:
++        raise ProbeError("PROXY_CONNECT_REJECTED")
++
++
++class _TLSStream:
++    """TLS over an existing (possibly already TLS) stream via memory BIOs."""
++
++    def __init__(self, transport, context, server_hostname):
++        self.transport = transport
++        self.incoming, self.outgoing = ssl.MemoryBIO(), ssl.MemoryBIO()
++        self.tls = context.wrap_bio(self.incoming, self.outgoing, server_side=False, server_hostname=server_hostname)
++        self._drive(self.tls.do_handshake)
++
++    def _flush(self):
++        data = self.outgoing.read()
++        if data:
++            self.transport.sendall(data)
++
++    def _drive(self, operation):
++        while True:
++            try:
++                result = operation()
++            except ssl.SSLWantReadError:
++                self._flush()
++                chunk = self.transport.recv(16384)
++                if not chunk:
++                    self.incoming.write_eof()
++                else:
++                    self.incoming.write(chunk)
++                continue
++            except ssl.SSLWantWriteError:
++                self._flush()
++                continue
++            self._flush()
++            return result
++
++    def sendall(self, data):
++        self._drive(lambda: self.tls.write(data))
++
++    def recv(self, size):
++        try:
++            return self._drive(lambda: self.tls.read(size))
++        except ssl.SSLEOFError:
++            return b""
++
++    def close(self):
++        try:
++            self._drive(self.tls.unwrap)
++        except (ssl.SSLError, OSError):
++            pass
++
++
++def _context(ca_pem):
++    context = ssl.create_default_context()
++    if ca_pem:
++        try:
++            context.load_verify_locations(cadata=ca_pem)
++        except (ssl.SSLError, ValueError):
++            raise ProbeError("PROXY_CA_INVALID") from None
++    return context
++
++
++def run(spec):
++    """Execute one bounded probe; ``spec`` never leaves this function."""
++    protocol, auth = spec["upstream_protocol"], spec["upstream_auth"]
++    username = spec.get("username") if auth != "none" else None
++    password = spec.get("password") if auth != "none" else None
++    if auth != "none" and (username is None or password is None):
++        raise ProbeError("PROXY_CREDENTIALS_MISSING")
++    parsed = urlsplit(spec["probe_url"])
++    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
++        raise ProbeError("PROBE_URL_INVALID")
++    target_host, target_port = parsed.hostname, parsed.port or 443
++    timeout = int(spec["timeout_seconds"])
++    started = time.monotonic()
++    try:
++        connection = socket.create_connection((spec["upstream_ip"], int(spec["upstream_port"])), timeout=timeout)
++    except socket.timeout:
++        raise ProbeError("PROXY_PROBE_TIMEOUT") from None
++    except OSError:
++        raise ProbeError("PROXY_UNREACHABLE") from None
++    try:
++        connection.settimeout(timeout)
++        if protocol == "https":
++            try:
++                connection = _context(spec.get("upstream_tls_ca_pem", "")).wrap_socket(connection, server_hostname=spec["upstream_host"])
++            except ssl.SSLError:
++                raise ProbeError("PROXY_TLS_FAILED") from None
++        if protocol == "socks5":
++            _socks5(connection, target_host, target_port, username, password)
++        else:
++            _http_connect(connection, target_host, target_port, username, password)
++        try:
++            secure = _TLSStream(connection, _context(spec.get("probe_ca_pem", "")), target_host)
++        except ssl.SSLError:
++            raise ProbeError("PROBE_TLS_FAILED") from None
++        path = (parsed.path or "/") + ("?" + parsed.query if parsed.query else "")
++        authority = target_host if target_port == 443 else f"{target_host}:{target_port}"
++        secure.sendall(f"HEAD {path} HTTP/1.1\r\nHost: {authority}\r\nUser-Agent: browser-platform-proxy-draft-probe/1\r\nConnection: close\r\n\r\n".encode("ascii"))
++        status = _status_line(secure)
++        secure.close()
++    except socket.timeout:
++        raise ProbeError("PROXY_PROBE_TIMEOUT") from None
++    except ProbeError:
++        raise
++    except (OSError, ValueError, UnicodeError):
++        raise ProbeError("PROXY_PROBE_FAILED") from None
++    finally:
++        try:
++            connection.close()
++        except OSError:
++            pass
++    if not 200 <= status < 400:
++        raise ProbeError("PROBE_HTTP_STATUS")
++    return {"status": "passed", "code": "PROXY_PROBE_OK", "upstream_ip": spec["upstream_ip"],
++            "http_status": status, "latency_ms": int((time.monotonic() - started) * 1000)}
 diff --git a/server/app/routers/homedirs.py b/server/app/routers/homedirs.py
 --- a/server/app/routers/homedirs.py
 +++ b/server/app/routers/homedirs.py
@@ -12,7 +547,7 @@ diff --git a/server/app/routers/homedirs.py b/server/app/routers/homedirs.py
  from typing import Any
  
  from fastapi import APIRouter, Depends, HTTPException, Response
-@@ -10,6 +14,8 @@
+@@ -10,6 +14,8 @@ from pydantic import ValidationError
  from .. import user_manager
  from ..models import HomeDirectoryCreate, HomeDirectoryList
  from ..security import EncryptedRoute, get_decrypted_request_body, verify_persistent_storage_enabled
@@ -21,7 +556,7 @@ diff --git a/server/app/routers/homedirs.py b/server/app/routers/homedirs.py
  
  router = APIRouter(
      prefix="/api/homedirs",
-@@ -67,3 +73,110 @@
+@@ -67,3 +73,110 @@ async def delete_my_home_dir(
              return Response(status_code=204)
          except ValueError as exc:
              raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -132,6 +667,402 @@ diff --git a/server/app/routers/homedirs.py b/server/app/routers/homedirs.py
 +                pass
 +            raise HTTPException(status_code=503, detail="HOME_ARCHIVE_FAILED") from exc
 +    return {"status": "archived", "archive_name": archive_name, "home_name": home_name}
+diff --git a/server/tests/test_environment_management.py b/server/tests/test_environment_management.py
+new file mode 100644
+--- /dev/null
++++ b/server/tests/test_environment_management.py
+@@ -0,0 +1,391 @@
++"""Proxy drafts: Secret Store import, bounded probe and immutable policy revisions."""
++
++from __future__ import annotations
++
++import base64
++import datetime as dt
++import hashlib
++import json
++import socket
++import ssl
++import struct
++import threading
++from pathlib import Path
++
++import pytest
++from cryptography import x509
++from cryptography.hazmat.primitives import hashes, serialization
++from cryptography.hazmat.primitives.asymmetric import rsa
++from cryptography.x509.oid import NameOID
++from fastapi import HTTPException
++
++from app import environment_management as management, network_runtime as network, proxy_probe
++from app.secret_store import FileSecretStore
++from tests.test_api_smoke import api_client, Client, _pem_pair  # noqa: F401 - fixtures by name
++from tests.test_network_runtime import PROBE_IMAGE, RELAY_IMAGE
++
++GRANT = {"owner": "profile-adapter", "profile": "browser-a", "home": "browser-a-home", "app": "app-a"}
++USER, PASSWORD = "draft user", "draft pässword sentinel"
++IMPORT = {"secret_id": "proxy-browser-a", "secret_version": 1, "grants": [GRANT], "username": USER, "password": PASSWORD}
++
++
++@pytest.fixture
++def secured(tmp_path):
++    base = network.base_dir()
++    base.mkdir(mode=0o700, parents=True, exist_ok=True)
++    base.chmod(0o700)
++    keys = tmp_path / "keys"
++    keys.mkdir(mode=0o700)
++    store = FileSecretStore.initialize(base / "proxy-secret-store", keys / "master.key")
++    network.atomic_json(base / "profile-secret-store.json", {"version": 1, "key_file": str(store.key_file), "runtime_dir": str(tmp_path / "runtime")})
++    return store
++
++
++def _cert(name, issuer_key=None, issuer_name=None, ca=False):
++    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
++    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)])
++    now = dt.datetime.now(dt.timezone.utc)
++    signer = issuer_key or key
++    builder = (x509.CertificateBuilder().subject_name(subject).issuer_name(issuer_name or subject)
++               .public_key(key.public_key()).serial_number(x509.random_serial_number())
++               .not_valid_before(now - dt.timedelta(minutes=5)).not_valid_after(now + dt.timedelta(days=1))
++               .add_extension(x509.BasicConstraints(ca=ca, path_length=None), critical=True)
++               .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
++               .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(signer.public_key()), critical=False))
++    if ca:
++        builder = builder.add_extension(x509.KeyUsage(digital_signature=True, content_commitment=False, key_encipherment=False,
++                                                      data_encipherment=False, key_agreement=False, key_cert_sign=True, crl_sign=True,
++                                                      encipher_only=False, decipher_only=False), critical=True)
++    else:
++        builder = (builder.add_extension(x509.SubjectAlternativeName([x509.DNSName(name)]), critical=False)
++                   .add_extension(x509.KeyUsage(digital_signature=True, content_commitment=False, key_encipherment=True,
++                                                data_encipherment=False, key_agreement=False, key_cert_sign=False, crl_sign=False,
++                                                encipher_only=False, decipher_only=False), critical=True)
++                   .add_extension(x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]), critical=False))
++    certificate = builder.sign(signer, hashes.SHA256())
++    return key, certificate
++
++
++def _pem(certificate):
++    return certificate.public_bytes(serialization.Encoding.PEM).decode()
++
++
++def _server_context(key, certificate, tmp_path, name):
++    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
++    cert_path, key_path = tmp_path / f"{name}.crt", tmp_path / f"{name}.key"
++    cert_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
++    key_path.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
++    context.load_cert_chain(str(cert_path), str(key_path))
++    return context
++
++
++def _exact(connection, size):
++    data = b""
++    while len(data) < size:
++        chunk = connection.recv(size - len(data))
++        if not chunk:
++            raise OSError("closed")
++        data += chunk
++    return data
++
++
++def _pump(client, upstream):
++    def copy(source, target):
++        try:
++            while True:
++                data = source.recv(4096)
++                if not data:
++                    break
++                target.sendall(data)
++        except OSError:
++            pass
++        finally:
++            try:
++                target.shutdown(socket.SHUT_WR)
++            except OSError:
++                pass
++    threads = [threading.Thread(target=copy, args=pair, daemon=True) for pair in ((client, upstream), (upstream, client))]
++    for thread in threads:
++        thread.start()
++    for thread in threads:
++        thread.join(5)
++
++
++class Fixture:
++    """A local TLS target plus SOCKS5 / HTTP CONNECT / HTTPS CONNECT proxies."""
++
++    def __init__(self, tmp_path):
++        self.tmp_path = tmp_path
++        ca_key, ca_cert = _cert("draft-test-ca", ca=True)
++        self.ca_pem = _pem(ca_cert)
++        target_key, target_cert = _cert("probe.test", ca_key, ca_cert.subject)
++        proxy_key, proxy_cert = _cert("proxy.test", ca_key, ca_cert.subject)
++        self.target_context = _server_context(target_key, target_cert, tmp_path, "target")
++        self.proxy_context = _server_context(proxy_key, proxy_cert, tmp_path, "proxy")
++        self.seen = []
++        self.target = self._listen(self._serve_target)
++        self.socks = self._listen(self._serve_socks)
++        self.http = self._listen(self._serve_http)
++        self.https = self._listen(lambda connection: self._serve_http(self.proxy_context.wrap_socket(connection, server_side=True)))
++
++    def _listen(self, handler):
++        listener = socket.socket()
++        listener.bind(("127.0.0.1", 0))
++        listener.listen(8)
++
++        def loop():
++            while True:
++                try:
++                    connection, _ = listener.accept()
++                except OSError:
++                    return
++                threading.Thread(target=self._guard, args=(handler, connection), daemon=True).start()
++
++        threading.Thread(target=loop, daemon=True).start()
++        return listener
++
++    @staticmethod
++    def _guard(handler, connection):
++        try:
++            handler(connection)
++        except Exception:
++            pass
++        finally:
++            try:
++                connection.close()
++            except OSError:
++                pass
++
++    def _serve_target(self, connection):
++        with self.target_context.wrap_socket(connection, server_side=True) as secure:
++            request = b""
++            while b"\r\n\r\n" not in request:
++                request += secure.recv(1024)
++            self.seen.append(("target", request.split(b"\r\n")[0].decode()))
++            secure.sendall(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
++
++    def _tunnel(self, connection):
++        upstream = socket.create_connection(("127.0.0.1", self.target.getsockname()[1]), timeout=5)
++        _pump(connection, upstream)
++
++    def _serve_socks(self, connection):
++        connection.settimeout(5)
++        header = _exact(connection, 2)
++        methods = _exact(connection, header[1])
++        if b"\x02" not in methods:
++            connection.sendall(b"\x05\xff")
++            return
++        connection.sendall(b"\x05\x02")
++        _exact(connection, 1)
++        user = _exact(connection, _exact(connection, 1)[0]).decode()
++        password = _exact(connection, _exact(connection, 1)[0]).decode()
++        self.seen.append(("socks-auth", user))
++        if (user, password) != (USER, PASSWORD):
++            connection.sendall(b"\x01\x01")
++            return
++        connection.sendall(b"\x01\x00")
++        request = _exact(connection, 4)
++        assert request[:4] == b"\x05\x01\x00\x03"
++        host = _exact(connection, _exact(connection, 1)[0]).decode()
++        port = struct.unpack("!H", _exact(connection, 2))[0]
++        self.seen.append(("socks-connect", host, port))
++        connection.sendall(b"\x05\x00\x00\x01" + socket.inet_aton("127.0.0.1") + struct.pack("!H", 0))
++        self._tunnel(connection)
++
++    def _serve_http(self, connection):
++        connection.settimeout(5)
++        request = b""
++        while b"\r\n\r\n" not in request:
++            request += connection.recv(1024)
++        head = request.decode().split("\r\n")
++        self.seen.append(("http", head[0]))
++        headers = {line.split(":", 1)[0].lower(): line.split(":", 1)[1].strip() for line in head[1:] if ":" in line}
++        expected = "Basic " + base64.b64encode(f"{USER}:{PASSWORD}".encode()).decode()
++        if headers.get("proxy-authorization") != expected:
++            connection.sendall(b"HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"draft\"\r\nContent-Length: 0\r\n\r\n")
++            return
++        assert head[0].startswith("CONNECT probe.test:")
++        connection.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
++        self._tunnel(connection)
++
++    def port(self, listener):
++        return listener.getsockname()[1]
++
++    def close(self):
++        for listener in (self.target, self.socks, self.http, self.https):
++            listener.close()
++
++
++@pytest.fixture
++def proxies(tmp_path, monkeypatch):
++    fixture = Fixture(tmp_path)
++    monkeypatch.setattr(proxy_probe, "public_ipv4", lambda host, port: "127.0.0.1")
++    yield fixture
++    fixture.close()
++
++
++def _probe_body(fixture, listener, protocol, auth, refs=None, **overrides):
++    body = {"upstream_host": "proxy.test", "upstream_port": fixture.port(listener), "upstream_protocol": protocol,
++            "upstream_auth": auth, "probe_url": f"https://probe.test:{fixture.port(fixture.target)}/draft-check",
++            "probe_ca_pem": fixture.ca_pem, "probe_timeout_seconds": 5}
++    if refs:
++        body.update({"username_secret_ref": refs["username_secret_ref"], "password_secret_ref": refs["password_secret_ref"], "grant": GRANT})
++    body.update(overrides)
++    return body
++
++
++def test_import_returns_references_and_stores_ciphertext_only(api_client, secured):
++    status, refs = api_client.call("POST", "/api/admin/environment-management/proxy-secrets", IMPORT)
++    assert status == 201 and refs == {"username_secret_ref": "secret://proxy-browser-a/username/1",
++                                      "password_secret_ref": "secret://proxy-browser-a/password/1"}
++    for path in secured.directory.rglob("*"):
++        if path.is_file():
++            assert USER.encode() not in path.read_bytes() and PASSWORD.encode() not in path.read_bytes()
++    assert secured.resolve(GRANT, refs["username_secret_ref"], refs["password_secret_ref"]) == {"username": USER.encode(), "password": PASSWORD.encode()}
++    status, data = api_client.call("POST", "/api/admin/environment-management/proxy-secrets", IMPORT)
++    assert status == 409 and data == {"detail": "SECRET_VERSION_EXISTS"}
++    status, data = api_client.call("POST", "/api/admin/environment-management/proxy-secrets", {**IMPORT, "secret_id": "../x"})
++    assert status == 422 and data == {"detail": "SECRET_IMPORT_REQUEST_INVALID"}
++    status, data = api_client.call("POST", "/api/admin/environment-management/proxy-secrets", {**IMPORT, "secret_version": 2, "grants": []})
++    assert status == 422
++
++
++def test_management_endpoints_require_an_administrator(api_client, secured, monkeypatch):
++    from app import user_manager
++    _, private, public = _pem_pair()
++    monkeypatch.setitem(user_manager.USER_DATA, "guest", {"username": "guest", "public_key": public, "is_admin": False, "settings": {"active": True}})
++    server_public = api_client.server_pub.public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode()
++    guest = Client(api_client.http, server_public, "guest", private)
++    guest.handshake()
++    for path, body in (("proxy-secrets", IMPORT), ("proxy-probe", {"upstream_host": "proxy.test", "upstream_port": 1080, "upstream_protocol": "socks5", "upstream_auth": "none", "probe_url": "https://probe.test/"}),
++                       ("network-policies", {"policy_id": "x", "policy": {}})):
++        status, _ = guest.call("POST", "/api/admin/environment-management/" + path, body)
++        assert status == 403
++    assert not list(secured.directory.glob("versions/*"))
++
++
++def _policy(**overrides):
++    policy = {"username": "profile-adapter", "profile_id": "browser-a", "home_name": "browser-a-home", "application_id": "app-a",
++              "mode": "proxy_required", "relay_image": RELAY_IMAGE, "probe_image": PROBE_IMAGE, "upstream_host": "proxy.test",
++              "upstream_port": 1080, "upstream_protocol": "socks5", "upstream_auth": "username_password",
++              "username_secret_ref": "secret://proxy-browser-a/username/1", "password_secret_ref": "secret://proxy-browser-a/password/1",
++              "probe_url": "https://probe.example/", "probe_timeout_seconds": 10}
++    policy.update(overrides)
++    return policy
++
++
++def test_policy_append_is_immutable_idempotent_and_matches_controller_digest(api_client, secured):
++    body = {"policy_id": "browser-a-proxy-r1", "policy": _policy()}
++    status, first = api_client.call("POST", "/api/admin/environment-management/network-policies", body)
++    assert status == 201 and first["created"] is True
++    expected = network.digest(network.NetworkPolicy(**_policy()).model_dump())
++    assert first["policy_sha256"] == expected
++    assert network.policy_path().stat().st_mode & 0o077 == 0
++    assert network.digest(network.policies()["browser-a-proxy-r1"].model_dump()) == expected
++    status, again = api_client.call("POST", "/api/admin/environment-management/network-policies", body)
++    assert status == 201 and again == {"policy_id": "browser-a-proxy-r1", "policy_sha256": expected, "created": False}
++    status, data = api_client.call("POST", "/api/admin/environment-management/network-policies", {"policy_id": "browser-a-proxy-r1", "policy": _policy(upstream_port=1081)})
++    assert status == 409 and data == {"detail": "NETWORK_POLICY_EXISTS"}
++    assert network.digest(network.policies()["browser-a-proxy-r1"].model_dump()) == expected
++    for bad in (_policy(mode="", upstream_protocol="", upstream_auth=""), _policy(upstream_auth="none"), _policy(upstream_host="", upstream_port=0),
++                {**_policy(), "unknown": 1}, _policy(upstream_tls_ca_file="/etc/passwd", upstream_tls_ca_sha256="a" * 64)):
++        status, data = api_client.call("POST", "/api/admin/environment-management/network-policies", {"policy_id": "browser-a-proxy-r2", "policy": bad})
++        assert status == 422 and data == {"detail": "NETWORK_POLICY_INVALID"}
++    assert set(network.policies()) == {"browser-a-proxy-r1"}
++
++
++def test_policy_append_writes_https_upstream_ca_privately(api_client, secured, tmp_path):
++    ca_pem = _pem(_cert("draft-ca", ca=True)[1])
++    body = {"policy_id": "browser-a-proxy-r3", "upstream_tls_ca_pem": ca_pem,
++            "policy": _policy(upstream_protocol="https", upstream_auth="basic", upstream_port=443)}
++    status, data = api_client.call("POST", "/api/admin/environment-management/network-policies", body)
++    assert status == 201, data
++    stored = network.policies()["browser-a-proxy-r3"]
++    path = Path(stored.upstream_tls_ca_file)
++    assert path.parent == network.base_dir() / "network-secrets" and path.read_text() == ca_pem
++    assert path.stat().st_mode & 0o077 == 0 and stored.upstream_tls_ca_sha256 == hashlib.sha256(ca_pem.encode()).hexdigest()
++    assert network.digest(stored.model_dump()) == data["policy_sha256"]
++    status, again = api_client.call("POST", "/api/admin/environment-management/network-policies", body)
++    assert status == 201 and again["created"] is False and again["policy_sha256"] == data["policy_sha256"]
++    status, data = api_client.call("POST", "/api/admin/environment-management/network-policies",
++                                   {**body, "policy": _policy(upstream_protocol="http", upstream_auth="basic")})
++    assert status == 422
++    status, data = api_client.call("POST", "/api/admin/environment-management/network-policies", {**body, "upstream_tls_ca_pem": "-----BEGIN PRIVATE KEY-----\nx\n-----END PRIVATE KEY-----\n"})
++    assert status == 422
++
++
++def _import(api_client):
++    status, refs = api_client.call("POST", "/api/admin/environment-management/proxy-secrets", IMPORT)
++    assert status == 201
++    return refs
++
++
++def test_probe_socks5_with_stored_credentials(api_client, secured, proxies):
++    refs = _import(api_client)
++    status, result = api_client.call("POST", "/api/admin/environment-management/proxy-probe", _probe_body(proxies, proxies.socks, "socks5", "username_password", refs))
++    assert status == 200, result
++    assert result["status"] == "passed" and result["code"] == "PROXY_PROBE_OK" and result["upstream_ip"] == "127.0.0.1" and result["http_status"] == 204
++    assert ("socks-auth", USER) in proxies.seen and ("socks-connect", "probe.test", proxies.port(proxies.target)) in proxies.seen
++    assert ("target", "HEAD /draft-check HTTP/1.1") in proxies.seen
++    encoded = json.dumps(result)
++    assert USER not in encoded and PASSWORD not in encoded
++
++
++def test_probe_reports_rejected_credentials_without_leaking_them(api_client, secured, proxies):
++    api_client.call("POST", "/api/admin/environment-management/proxy-secrets", {**IMPORT, "password": "wrong password"})
++    refs = {"username_secret_ref": "secret://proxy-browser-a/username/1", "password_secret_ref": "secret://proxy-browser-a/password/1"}
++    status, result = api_client.call("POST", "/api/admin/environment-management/proxy-probe", _probe_body(proxies, proxies.socks, "socks5", "username_password", refs))
++    assert status == 200 and result == {"status": "failed", "code": "PROXY_AUTH_REJECTED", "upstream_ip": "127.0.0.1"}
++    status, result = api_client.call("POST", "/api/admin/environment-management/proxy-probe", _probe_body(proxies, proxies.http, "http", "basic", refs))
++    assert status == 200 and result["code"] == "PROXY_AUTH_REJECTED"
++    other = {**refs, "grant": {**GRANT, "profile": "browser-b"}}
++    status, result = api_client.call("POST", "/api/admin/environment-management/proxy-probe", _probe_body(proxies, proxies.socks, "socks5", "username_password", refs, **other))
++    assert status == 403 and result == {"detail": "SECRET_ACCESS_DENIED"}
++    assert not any("wrong password" in str(item) for item in proxies.seen)
++
++
++def test_probe_http_and_https_connect(api_client, secured, proxies):
++    refs = _import(api_client)
++    status, result = api_client.call("POST", "/api/admin/environment-management/proxy-probe", _probe_body(proxies, proxies.http, "http", "basic", refs))
++    assert status == 200 and result["status"] == "passed", result
++    status, result = api_client.call("POST", "/api/admin/environment-management/proxy-probe",
++                                     _probe_body(proxies, proxies.https, "https", "basic", refs, upstream_tls_ca_pem=proxies.ca_pem))
++    assert status == 200 and result["status"] == "passed", result
++    status, result = api_client.call("POST", "/api/admin/environment-management/proxy-probe", _probe_body(proxies, proxies.https, "https", "basic", refs))
++    assert status == 200 and result == {"status": "failed", "code": "PROXY_TLS_FAILED", "upstream_ip": "127.0.0.1"}
++    status, result = api_client.call("POST", "/api/admin/environment-management/proxy-probe", _probe_body(proxies, proxies.http, "http", "basic", refs, probe_ca_pem=""))
++    assert status == 200 and result["code"] == "PROBE_TLS_FAILED"
++    status, result = api_client.call("POST", "/api/admin/environment-management/proxy-probe", _probe_body(proxies, proxies.http, "http", "none"))
++    assert status == 200 and result["code"] == "PROXY_AUTH_REJECTED"
++
++
++def test_probe_request_validation(api_client, secured, proxies):
++    refs = _import(api_client)
++    for body in (_probe_body(proxies, proxies.socks, "socks5", "basic", refs), _probe_body(proxies, proxies.socks, "socks5", "none", refs),
++                 _probe_body(proxies, proxies.socks, "socks5", "username_password"), _probe_body(proxies, proxies.http, "http", "basic", refs, upstream_tls_ca_pem=proxies.ca_pem),
++                 {**_probe_body(proxies, proxies.socks, "socks5", "username_password", refs), "grant": None},
++                 _probe_body(proxies, proxies.socks, "socks5", "username_password", refs, probe_url="http://probe.test/")):
++        status, data = api_client.call("POST", "/api/admin/environment-management/proxy-probe", body)
++        assert status in (200, 422), (body, data)
++        if status == 200:
++            assert data["status"] == "failed" and data["code"] == "PROBE_URL_INVALID"
++        else:
++            assert data == {"detail": "PROXY_PROBE_REQUEST_INVALID"}
++
++
++def test_upstream_addresses_must_be_public_ipv4(monkeypatch):
++    for value in ("127.0.0.1", "10.0.0.1", "192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "224.0.0.1", "::1", "localhost", "metadata.internal", "proxy.local"):
++        with pytest.raises(proxy_probe.ProbeError):
++            proxy_probe.public_ipv4(value, 1080)
++    assert proxy_probe.public_ipv4("1.1.1.1", 1080) == "1.1.1.1"
++    monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: [(None, None, None, None, ("10.1.2.3", 1080)), (None, None, None, None, ("8.8.8.8", 1080))])
++    with pytest.raises(proxy_probe.ProbeError, match="NETWORK_UPSTREAM_ADDRESS_INVALID"):
++        proxy_probe.public_ipv4("proxy.example", 1080)
++    monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: [(None, None, None, None, ("8.8.8.8", 1080)), (None, None, None, None, ("8.8.4.4", 1080))])
++    assert proxy_probe.public_ipv4("proxy.example", 1080) == "8.8.8.8"
++
++
++async def test_probe_endpoint_rejects_private_upstream(api_client, secured):
++    body = {"upstream_host": "10.0.0.1", "upstream_port": 1080, "upstream_protocol": "socks5", "upstream_auth": "none", "probe_url": "https://probe.test/"}
++    status, data = api_client.call("POST", "/api/admin/environment-management/proxy-probe", body)
++    assert status == 422 and data == {"detail": "NETWORK_UPSTREAM_ADDRESS_INVALID"}
 diff --git a/server/tests/test_home_archive.py b/server/tests/test_home_archive.py
 new file mode 100644
 --- /dev/null

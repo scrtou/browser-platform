@@ -31,6 +31,8 @@ python3 /private/build/payload/app/secret_store.py \
 
 输入文件须为 `0600`，父目录须为 `0700`；在 tmpfs 中准备，导入后删除。字段为 `secret_id`、`secret_version`、`grants`、`username`、`password`；`grants` 是由上述四项精确身份组成的列表。CLI 只返回引用，不接受命令行凭据值。其文件锁允许与控制进程安全地串行新增版本；紧急撤销必须调用下述控制 API。
 
+R6D 候选另提供管理员加密接口 `POST /api/admin/environment-management/proxy-secrets`（[第二层补丁](environment-management.patch)）：请求体为 `secret_id`、`secret_version`、`grants`、`username`、`password`，调用同一 `FileSecretStore.put`，在凭据锁内写入并只返回两个引用；重复版本 409、格式错误 422、非管理员 403。该接口只由 Adapter 的独立管理员身份在草稿创建时调用，凭据不落 Adapter 磁盘或日志；离线 CLI 导入继续可用。生产控制器未应用该补丁，见 [DEV-049](../../../docs/deviations/DEV-2026-09-18-049-proxy-secret-import-channel.md)。
+
 新增版本后生成新的策略 ID/摘要，绑定到应用和 Adapter Profile；旧 generation 的 reservation、引用和 tmpfs 内容保持不变。先验证新凭据，再正常停止旧 generation，然后发布绑定并启动。旧文件策略和其 SHA 继续兼容，但只有新引用路径获得本项存储与撤销保证。
 
 ## 生命周期与撤销

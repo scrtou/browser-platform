@@ -4,7 +4,7 @@
 
 该补丁基于 SealSkin commit `2b13a42483c1dc7d367d5c340437bdc8ecd84bb4`，基础镜像固定为 `0.3.2-ls58@sha256:d52c155eb78882b27c7780e77df335939d46cd06a514c9fa310039307542ee6a`。生产发布为 `0.3.2-lifecycle-v2`（网络 v2 + 健康观测 + 按序恢复 + 启动日志/删除保护/显示连接观测）；R5A 的 `0.3.2-proxy-v1` 增加上游协议/认证/CA 修订及支持新 Worker 的正常退出，隔离验收已通过，未部署生产。R5B 的 `0.3.2-secrets-v1` 增加加密版本存储、精确授权、tmpfs 租约撤销与加密恢复，已通过 [独立 QA](../secret-store-acceptance-2026-09-14.md)，同样未部署。线上安装版本以 [开发进度](../../../docs/progress.md#deployment) 为准。
 
-R6C 候选在上述生命周期补丁之后再应用 [environment-management.patch](environment-management.patch)，为受保护的命名 Home 增加控制器拥有的归档端点。端点只接受 Adapter 的加密请求，在 Home 锁内确认资源为空，写入脱敏清单后原子移动到归档命名空间；构建脚本会同时校验两层补丁并把摘要写入 manifest。该补丁只在隔离候选验证，生产控制器未替换。
+R6C/R6D 候选在上述生命周期补丁之后再应用 [environment-management.patch](environment-management.patch)。R6C 为受保护的命名 Home 增加控制器拥有的归档端点：只接受 Adapter 的加密请求，在 Home 锁内确认资源为空，写入脱敏清单后原子移动到归档命名空间。R6D 增加管理员加密路由 `/api/admin/environment-management/`：`proxy-secrets` 经同一 Secret Store 导入并只返回引用；`proxy-probe` 在控制器进程内把上游冻结为公网 IPv4 后做有界 socks5/HTTP/HTTPS CONNECT 与隧道内 TLS 检查（`proxy_probe.py`），不创建 Docker 资源、不替代启动时的 Guard 命名空间探针；`network-policies` 在注册表锁内用 `NetworkPolicy` 模型校验后只追加修订，摘要沿用本节规则，同内容重试返回相同摘要、同 ID 不同内容拒绝，HTTPS 上游 CA 作为 `network-secrets/<policy>-upstream-ca.pem` 0600 独占写入。构建脚本会同时校验两层补丁并把摘要写入 manifest，`environment_management.py`、`proxy_probe.py` 纳入安装文件清单。该补丁只在隔离候选验证，生产控制器未替换；见 [DEV-048](../../../docs/deviations/DEV-2026-09-18-048-home-archive-controller-api.md)、[DEV-049](../../../docs/deviations/DEV-2026-09-18-049-proxy-secret-import-channel.md)、[DEV-050](../../../docs/deviations/DEV-2026-09-18-050-proxy-draft-probe-scope.md)。
 
 SealSkin 继续独占 Docker 生命周期。Adapter 先持久化策略引用和停止意图，经鉴权、加密 API 操作，再独立查询 Home 的会话记录、Docker 容器和网络资源。全部为空才提交 `stopped`。停止错误、假成功和无法查询 Docker 均保留占用。
 

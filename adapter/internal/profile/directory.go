@@ -42,6 +42,18 @@ type directoryFile struct {
 	Browsers []Record `json:"browsers"`
 }
 
+// NetworkBinding is the immutable-per-revision network selection written by a
+// completed proxy draft or a DIRECT switch. Empty secret references mean the
+// revision carries no Secret Store credentials.
+type NetworkBinding struct {
+	Mode                   string
+	PolicyID               string
+	PolicySHA256           string
+	ProxyUpstream          string
+	ProxyUsernameSecretRef string
+	ProxyPasswordSecretRef string
+}
+
 // BrowserPatch is the set of fields an administrator may change while a
 // browser keeps its Home, application, network policy and identity. Nil means
 // "leave unchanged".
@@ -390,4 +402,81 @@ func (d *directory) status(id, status, actor string) (Record, error) {
 		return Record{}, err
 	}
 	return record, nil
+}
+
+// bumpProxySecretVersion reserves the next credential version for a browser
+// before anything is imported, so a failed or abandoned draft can never
+// reuse a version number.
+func (d *directory) bumpProxySecretVersion(id, actor string) (int, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.path == "" {
+		return 0, ErrDirectoryReadOnly
+	}
+	current, ok := d.records[id]
+	if !ok || current.Status == RecordDeleted {
+		return 0, ErrProfileNotFound
+	}
+	if current.Status != RecordReady {
+		return 0, fmt.Errorf("profile record is %s", current.Status)
+	}
+	next := current
+	next.RequiredRuntimeCapabilities = cloneCapabilities(current.RequiredRuntimeCapabilities)
+	next.ProxySecretVersion = current.ProxySecretVersion + 1
+	if err := validateDefinition(next.Definition); err != nil {
+		return 0, err
+	}
+	next.Revision = current.Revision + 1
+	next.UpdatedAt, next.UpdatedBy = d.now().UTC(), actor
+	previousRecord, previousRevision := current, d.revision
+	d.records[id], d.revision = next, d.revision+1
+	if err := d.writeLocked(); err != nil {
+		d.records[id], d.revision = previousRecord, previousRevision
+		return 0, err
+	}
+	return next.ProxySecretVersion, nil
+}
+
+// setNetwork switches a ready browser to another immutable network revision
+// under optimistic locking. Identity, Home, application and environment
+// fields stay unchanged; the caller has already confirmed the runtime is
+// empty and the application definition references the same revision.
+func (d *directory) setNetwork(id string, expectedRevision int, actor string, binding NetworkBinding) (Record, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.path == "" {
+		return Record{}, ErrDirectoryReadOnly
+	}
+	current, ok := d.records[id]
+	if !ok || current.Status == RecordDeleted {
+		return Record{}, ErrProfileNotFound
+	}
+	if current.Status != RecordReady {
+		return Record{}, fmt.Errorf("profile record is %s", current.Status)
+	}
+	if current.Revision != expectedRevision {
+		return Record{}, ErrRevisionMismatch
+	}
+	if binding.Mode != "direct" && binding.Mode != "proxy_required" {
+		return Record{}, ErrInvalidNetworkMode
+	}
+	next := current
+	next.RequiredRuntimeCapabilities = cloneCapabilities(current.RequiredRuntimeCapabilities)
+	next.NetworkMode, next.NetworkPolicyID, next.NetworkPolicySHA256 = binding.Mode, binding.PolicyID, binding.PolicySHA256
+	next.ProxyUpstream, next.ProxyUsernameSecretRef, next.ProxyPasswordSecretRef = binding.ProxyUpstream, binding.ProxyUsernameSecretRef, binding.ProxyPasswordSecretRef
+	if err := validateDefinition(next.Definition); err != nil {
+		return Record{}, err
+	}
+	if !validNetworkReference(next.NetworkPolicyID, next.NetworkPolicySHA256) {
+		return Record{}, ErrManagedPolicyRequired
+	}
+	next.Revision = current.Revision + 1
+	next.UpdatedAt, next.UpdatedBy = d.now().UTC(), actor
+	previousRecord, previousRevision := current, d.revision
+	d.records[id], d.revision = next, d.revision+1
+	if err := d.writeLocked(); err != nil {
+		d.records[id], d.revision = previousRecord, previousRevision
+		return Record{}, err
+	}
+	return next, nil
 }

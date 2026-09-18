@@ -303,3 +303,81 @@ type ResumeResult struct {
 	InstanceID string   `json:"instance_id"`
 	Steps      []string `json:"steps"`
 }
+
+// SecretGrant is one exact Secret Store authorization dimension set. Every
+// field must match the launching identity, Profile, Home and application.
+type SecretGrant struct {
+	Owner   string `json:"owner"`
+	Profile string `json:"profile"`
+	Home    string `json:"home"`
+	App     string `json:"app"`
+}
+
+// ProxySecretImportRequest carries one credential version to the controller
+// Secret Store. The values only exist in the encrypted request body.
+type ProxySecretImportRequest struct {
+	SecretID      string        `json:"secret_id"`
+	SecretVersion int           `json:"secret_version"`
+	Grants        []SecretGrant `json:"grants"`
+	Username      string        `json:"username"`
+	Password      string        `json:"password"`
+}
+
+type ProxySecretRefs struct {
+	UsernameSecretRef string `json:"username_secret_ref"`
+	PasswordSecretRef string `json:"password_secret_ref"`
+}
+
+// ProxyProbeRequest asks the controller to verify one draft against a frozen
+// public upstream address using credentials it resolves from the Store.
+type ProxyProbeRequest struct {
+	UpstreamHost        string       `json:"upstream_host"`
+	UpstreamPort        int          `json:"upstream_port"`
+	UpstreamProtocol    string       `json:"upstream_protocol"`
+	UpstreamAuth        string       `json:"upstream_auth"`
+	UsernameSecretRef   string       `json:"username_secret_ref,omitempty"`
+	PasswordSecretRef   string       `json:"password_secret_ref,omitempty"`
+	Grant               *SecretGrant `json:"grant,omitempty"`
+	UpstreamTLSCAPEM    string       `json:"upstream_tls_ca_pem,omitempty"`
+	ProbeURL            string       `json:"probe_url"`
+	ProbeCAPEM          string       `json:"probe_ca_pem,omitempty"`
+	ProbeTimeoutSeconds int          `json:"probe_timeout_seconds"`
+}
+
+// ProxyProbeResult never contains credentials, response bodies or banners.
+type ProxyProbeResult struct {
+	Status     string `json:"status"`
+	Code       string `json:"code"`
+	UpstreamIP string `json:"upstream_ip"`
+	HTTPStatus int    `json:"http_status,omitempty"`
+	LatencyMS  int    `json:"latency_ms,omitempty"`
+}
+
+// NetworkPolicyAppendRequest appends one immutable revision to the
+// controller registry; the controller validates the complete policy and
+// computes the digest with its own canonical rules.
+type NetworkPolicyAppendRequest struct {
+	PolicyID         string         `json:"policy_id"`
+	Policy           map[string]any `json:"policy"`
+	UpstreamTLSCAPEM string         `json:"upstream_tls_ca_pem,omitempty"`
+}
+
+type NetworkPolicyAppendResponse struct {
+	PolicyID     string `json:"policy_id"`
+	PolicySHA256 string `json:"policy_sha256"`
+	Created      bool   `json:"created"`
+}
+
+type RevokeSecretRequest struct {
+	SecretRef   string `json:"secret_ref"`
+	OperationID string `json:"operation_id"`
+}
+
+type RevokeSecretResult struct {
+	Revoked             bool   `json:"revoked"`
+	EgressBlocked       bool   `json:"egress_blocked"`
+	CleanupComplete     bool   `json:"cleanup_complete"`
+	AffectedGenerations int    `json:"affected_generations"`
+	SecretID            string `json:"secret_id"`
+	SecretVersion       int    `json:"secret_version"`
+}

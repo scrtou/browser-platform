@@ -19,6 +19,13 @@
     "username": "profile-admin",
     "client_private_key_file": "./secrets/sealskin-admin-private.pem"
   },
+  "proxy_template": {
+    "owner": "profile-adapter",
+    "relay_image": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "probe_image": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "probe_url": "https://example.com/",
+    "probe_timeout_seconds": 10
+  },
   "health": {
     "sample_interval_seconds": 60,
     "entry_hint": true,

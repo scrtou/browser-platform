@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"browser-platform/adapter/internal/access"
@@ -114,5 +115,28 @@ func validConfig() Config {
 			Username: "adapter", ServerPublicKeyFile: "/tmp/server.pem", ClientPrivateKeyFile: "/tmp/client.pem",
 		},
 		Profiles: []profile.Definition{{ID: "personal"}},
+	}
+}
+
+func TestProxyTemplateRequiresCatalogAdminAndLaunchOwner(t *testing.T) {
+	cfg := validConfig()
+	cfg.SealSkin.LifecycleEnabled = true
+	cfg.ProxyTemplate = &profile.ProxyTemplate{Owner: cfg.SealSkin.Username, RelayImage: "sha256:" + strings.Repeat("1", 64), ProbeImage: "sha256:" + strings.Repeat("2", 64), ProbeURL: "https://probe.example/"}
+	if cfg.Validate() == nil {
+		t.Fatal("proxy template without environment catalog accepted")
+	}
+	cfg.ProfileDirectory, cfg.EnvironmentCatalog = "/private/profiles.json", "/private/catalog.json"
+	cfg.SealSkinAdmin = &SealSkinAdmin{Username: "profile-admin", ClientPrivateKeyFile: "/private/admin.pem"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.ProxyTemplate.Owner = "profile-admin"
+	if cfg.Validate() == nil {
+		t.Fatal("proxy template owner other than the launch identity accepted")
+	}
+	cfg.ProxyTemplate.Owner = cfg.SealSkin.Username
+	cfg.ProxyTemplate.RelayImage = "relay:latest"
+	if cfg.Validate() == nil {
+		t.Fatal("proxy template with a tag instead of a digest accepted")
 	}
 }

@@ -30,23 +30,27 @@ type EnvironmentHealth struct {
 // resolved environment configuration, and producing it never observes,
 // launches, resumes or stops a generation.
 type EnvironmentSummary struct {
-	ProfileID       string             `json:"profile_id"`
-	Enabled         bool               `json:"enabled"`
-	Revision        int                `json:"revision"`
-	Label           string             `json:"label"`
-	StartURL        string             `json:"start_url"`
-	EntryPath       string             `json:"entry_path"`
-	ApplicationID   string             `json:"application_id"`
-	HomeName        string             `json:"home_name"`
-	Language        string             `json:"language,omitempty"`
-	Timezone        string             `json:"timezone,omitempty"`
-	DisplayMode     string             `json:"display_mode"`
-	NetworkMode     string             `json:"network_mode"`
-	NetworkPolicyID string             `json:"network_policy_id,omitempty"`
-	Status          state.Status       `json:"status"`
-	UpdatedAt       *time.Time         `json:"updated_at,omitempty"`
-	Observed        bool               `json:"observed"`
-	Health          *EnvironmentHealth `json:"health,omitempty"`
+	ProfileID       string `json:"profile_id"`
+	Enabled         bool   `json:"enabled"`
+	Revision        int    `json:"revision"`
+	Label           string `json:"label"`
+	StartURL        string `json:"start_url"`
+	EntryPath       string `json:"entry_path"`
+	ApplicationID   string `json:"application_id"`
+	HomeName        string `json:"home_name"`
+	Language        string `json:"language,omitempty"`
+	Timezone        string `json:"timezone,omitempty"`
+	DisplayMode     string `json:"display_mode"`
+	NetworkMode     string `json:"network_mode"`
+	NetworkPolicyID string `json:"network_policy_id,omitempty"`
+	// ConfiguredNetworkMode is the directory's binding (direct /
+	// proxy_required / legacy); NetworkMode stays the observed runtime view.
+	ConfiguredNetworkMode string             `json:"configured_network_mode,omitempty"`
+	ProxyUpstream         string             `json:"proxy_upstream,omitempty"`
+	Status                state.Status       `json:"status"`
+	UpdatedAt             *time.Time         `json:"updated_at,omitempty"`
+	Observed              bool               `json:"observed"`
+	Health                *EnvironmentHealth `json:"health,omitempty"`
 }
 
 // Environment builds the summary for one configured Profile. The journal is
@@ -81,6 +85,7 @@ func (s *Service) Environment(ctx context.Context, id string) (EnvironmentSummar
 	if definition.NetworkPolicyID != "" {
 		summary.NetworkMode, summary.NetworkPolicyID = "managed", definition.NetworkPolicyID
 	}
+	summary.ConfiguredNetworkMode, summary.ProxyUpstream = definition.NetworkMode, definition.ProxyUpstream
 	binding, found, err := s.store.Get(id)
 	if err != nil {
 		return EnvironmentSummary{}, err

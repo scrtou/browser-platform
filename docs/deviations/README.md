@@ -8,6 +8,8 @@
 
 | 编号 | 工作项 | 差异 | 处理方式 | 状态 |
 | --- | --- | --- | --- | --- |
+| [DEV-2026-09-18-050](DEV-2026-09-18-050-proxy-draft-probe-scope.md) | [R6D](../work-items/R6D-2026-09-18-proxy-drafts.md) | 规格要求草稿探针在隔离网络中验证并给出出口地区；草稿阶段没有 generation/Guard/Relay，出口地区依赖运行中代次的一致性报告 | 修订实现范围：控制器进程内有界协议/TLS 探针，冻结公网 IPv4、拒绝私网；启动门槛仍由 Guard 探针与一致性策略承担 | 已解决（候选补丁，真实上游未测） |
+| [DEV-2026-09-18-049](DEV-2026-09-18-049-proxy-secret-import-channel.md) | [R6D](../work-items/R6D-2026-09-18-proxy-drafts.md) | 规格要求 Adapter 经 tmpfs 调用同一导入路径并写策略注册表；Store/注册表只在控制器容器内，Adapter 无挂载也不应持有主密钥 | 第二层补丁增加管理员加密接口：Store 导入只返回引用、策略只追加并按控制器规则计算摘要；Adapter 不落盘凭据 | 已解决（候选补丁，未部署） |
 | [DEV-2026-09-18-048](DEV-2026-09-18-048-home-archive-controller-api.md) | [R6C](../work-items/R6C-2026-09-18-create-delete-launch.md) | 固定上游只有 Home 创建/删除接口，未提供保留内容的归档操作 | 增加版本化 `environment-management.patch`，由控制器在 Home 锁内原子移动并提供幂等清单；Adapter 不直接操作 Home，生产未部署补丁 | 已解决（候选补丁，未部署） |
 | [DEV-2026-09-18-047](DEV-2026-09-18-047-profile-directory-lock-contract.md) | [R6B](../work-items/R6B-2026-09-17-directory-roles-stop.md) / [R6](../work-items/R6-2026-09-16-environment-management.md) | 规格把 Profile 目录并发保护写成目录文件独立 `flock`，实现使用 Adapter 全局服务锁保证单写者并以进程内互斥串行更新 | 修订设计：明确服务锁 + 进程内互斥 + 0600/fsync/原子替换；既有服务锁/目录测试及全模块回归通过 | 已解决 |
 | [DEV-2026-09-18-046](DEV-2026-09-18-046-profile-directory-cli-grants.md) | [R6B](../work-items/R6B-2026-09-17-directory-roles-stop.md) / [R6](../work-items/R6-2026-09-16-environment-management.md) | 账号 CLI 在持久化目录启用时把权威目录与静态种子 Profile 合并，目录读取失败也退回种子，可能写出运行中 Adapter 会拒绝的授权表 | 修复实现：目录 ID 完全取代种子，目录读取失败即拒绝；新增回归后 147 项测试与全模块 race 通过，候选未部署 | 已解决 |
