@@ -135,6 +135,30 @@ func run(configPath, action, target string, logger *slog.Logger) error {
 	if cfg.ProfileDirectory != "" {
 		options = append(options, profile.WithDirectory(cfg.ProfileDirectory))
 	}
+	if cfg.EnvironmentCatalog != "" {
+		catalog, catalogErr := profile.NewFileEnvironmentCatalog(cfg.EnvironmentCatalog)
+		if catalogErr != nil {
+			return catalogErr
+		}
+		adminInfo, statErr := os.Stat(cfg.SealSkinAdmin.ClientPrivateKeyFile)
+		if statErr != nil || !adminInfo.Mode().IsRegular() || adminInfo.Mode().Perm()&0o077 != 0 {
+			return errors.New("SealSkin administrator private key must be a private regular file")
+		}
+		adminPrivateKey, readErr := os.ReadFile(cfg.SealSkinAdmin.ClientPrivateKeyFile)
+		if readErr != nil {
+			return errors.New("read SealSkin administrator private key")
+		}
+		adminClient, clientErr := sealskin.NewClient(sealskin.Config{
+			BaseURL: cfg.SealSkin.APIBaseURL, Username: cfg.SealSkinAdmin.Username,
+			ServerPublicKeyPEM: serverPublicKey, ClientPrivateKeyPEM: adminPrivateKey,
+			AllowUnencryptedHTTP: cfg.SealSkin.AllowUnencryptedHTTP, Transport: transport,
+		})
+		clear(adminPrivateKey)
+		if clientErr != nil {
+			return clientErr
+		}
+		options = append(options, profile.WithEnvironmentCatalog(catalog), profile.WithAdminOrchestrator(adminClient), profile.WithHomeArchiver(client))
+	}
 	profiles, err := profile.NewService(client, store, cfg.PublicBaseURL, cfg.Profiles, options...)
 	if err != nil {
 		return err

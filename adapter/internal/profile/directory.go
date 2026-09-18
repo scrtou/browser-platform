@@ -14,6 +14,13 @@ import (
 
 const directoryVersion = 1
 
+const (
+	RecordCreating = "creating"
+	RecordReady    = "ready"
+	RecordDeleting = "deleting"
+	RecordDeleted  = "deleted"
+)
+
 var (
 	ErrProfileDisabled   = errors.New("profile is disabled; no new session may be started or reused")
 	ErrRevisionMismatch  = errors.New("profile revision changed; reload and retry")
@@ -26,6 +33,7 @@ type Record struct {
 	Revision  int       `json:"revision"`
 	UpdatedAt time.Time `json:"updated_at"`
 	UpdatedBy string    `json:"updated_by,omitempty"`
+	Status    string    `json:"status,omitempty"`
 }
 
 type directoryFile struct {
@@ -69,7 +77,7 @@ func newDirectory(definitions []Definition, now func() time.Time) (*directory, e
 			return nil, fmt.Errorf("profiles %q and %q share one Home", previous, definition.ID)
 		}
 		homes[definition.HomeName] = definition.ID
-		d.records[definition.ID] = Record{Definition: definition, Revision: 1, UpdatedAt: now().UTC()}
+		d.records[definition.ID] = Record{Definition: definition, Revision: 1, UpdatedAt: now().UTC(), Status: RecordReady}
 	}
 	return d, nil
 }
@@ -78,6 +86,9 @@ func (d *directory) get(id string) (Definition, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	record, ok := d.records[id]
+	if ok && record.Status == RecordDeleted {
+		ok = false
+	}
 	return record.Definition, ok
 }
 
@@ -85,6 +96,9 @@ func (d *directory) record(id string) (Record, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	record, ok := d.records[id]
+	if ok && record.Status == RecordDeleted {
+		ok = false
+	}
 	return record, ok
 }
 
@@ -95,6 +109,9 @@ func (d *directory) ids() []string {
 	defer d.mu.RUnlock()
 	ids := make([]string, 0, len(d.records))
 	for id := range d.records {
+		if d.records[id].Status == RecordDeleted {
+			continue
+		}
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
@@ -106,6 +123,9 @@ func (d *directory) all() []Record {
 	defer d.mu.RUnlock()
 	records := make([]Record, 0, len(d.records))
 	for _, record := range d.records {
+		if record.Status == RecordDeleted {
+			continue
+		}
 		copy := record
 		copy.RequiredRuntimeCapabilities = cloneCapabilities(record.RequiredRuntimeCapabilities)
 		records = append(records, copy)
@@ -190,6 +210,14 @@ func (d *directory) open(path string) error {
 		if record.Revision < 1 {
 			return fmt.Errorf("profile directory entry %q has no revision", record.ID)
 		}
+		if record.Status == "" {
+			record.Status = RecordReady
+		}
+		switch record.Status {
+		case RecordCreating, RecordReady, RecordDeleting, RecordDeleted:
+		default:
+			return fmt.Errorf("profile directory entry %q has unsupported status %q", record.ID, record.Status)
+		}
 		if _, exists := records[record.ID]; exists {
 			return fmt.Errorf("profile directory has duplicate ID %q", record.ID)
 		}
@@ -265,6 +293,9 @@ func (d *directory) update(id string, expectedRevision int, actor string, patch 
 	if !ok {
 		return Record{}, ErrProfileNotFound
 	}
+	if current.Status != RecordReady {
+		return Record{}, fmt.Errorf("profile record is %s", current.Status)
+	}
 	if current.Revision != expectedRevision {
 		return Record{}, ErrRevisionMismatch
 	}
@@ -294,4 +325,69 @@ func (d *directory) update(id string, expectedRevision int, actor string, patch 
 		return Record{}, err
 	}
 	return next, nil
+}
+
+func (d *directory) add(record Record) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.path == "" {
+		return ErrDirectoryReadOnly
+	}
+	if record.Status == "" {
+		record.Status = RecordCreating
+	}
+	if err := validateDefinition(record.Definition); err != nil {
+		return err
+	}
+	if _, exists := d.records[record.ID]; exists {
+		return fmt.Errorf("profile ID %q already exists", record.ID)
+	}
+	for _, current := range d.records {
+		if current.Status != RecordDeleted && current.HomeName == record.HomeName {
+			return fmt.Errorf("Home %q is already assigned", record.HomeName)
+		}
+	}
+	if record.Revision == 0 {
+		record.Revision = 1
+	}
+	if record.UpdatedAt.IsZero() {
+		record.UpdatedAt = d.now().UTC()
+	}
+	previous := d.revision
+	d.records[record.ID], d.revision = record, d.revision+1
+	if err := d.writeLocked(); err != nil {
+		delete(d.records, record.ID)
+		d.revision = previous
+		return err
+	}
+	return nil
+}
+
+func (d *directory) status(id, status, actor string) (Record, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.path == "" {
+		return Record{}, ErrDirectoryReadOnly
+	}
+	record, ok := d.records[id]
+	if !ok {
+		return Record{}, ErrProfileNotFound
+	}
+	if status != RecordDeleting && status != RecordDeleted && status != RecordReady {
+		return Record{}, errors.New("invalid profile record status")
+	}
+	if record.Status == RecordDeleted && status != RecordDeleted {
+		return Record{}, ErrBrowserDeleted
+	}
+	previous := record
+	previousRevision := d.revision
+	record.Status = status
+	record.Revision++
+	record.UpdatedAt, record.UpdatedBy = d.now().UTC(), actor
+	d.records[id], d.revision = record, d.revision+1
+	if err := d.writeLocked(); err != nil {
+		d.records[id], d.revision = previous, previousRevision
+		return Record{}, err
+	}
+	return record, nil
 }

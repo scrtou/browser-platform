@@ -1,0 +1,166 @@
+diff --git a/server/app/routers/homedirs.py b/server/app/routers/homedirs.py
+--- a/server/app/routers/homedirs.py
++++ b/server/app/routers/homedirs.py
+@@ -2,6 +2,10 @@
+ 
+ from __future__ import annotations
+ 
++import json
++import os
++import re
++from datetime import datetime, timezone
+ from typing import Any
+ 
+ from fastapi import APIRouter, Depends, HTTPException, Response
+@@ -10,6 +14,8 @@
+ from .. import user_manager
+ from ..models import HomeDirectoryCreate, HomeDirectoryList
+ from ..security import EncryptedRoute, get_decrypted_request_body, verify_persistent_storage_enabled
++from ..settings import settings
++from ..fsutil import safe_join
+ 
+ router = APIRouter(
+     prefix="/api/homedirs",
+@@ -67,3 +73,110 @@
+             return Response(status_code=204)
+         except ValueError as exc:
+             raise HTTPException(status_code=404, detail=str(exc)) from exc
++
++
++_ARCHIVE_NAME = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
++_ARCHIVE_MANIFEST = ".browser-platform-archive.json"
++
++
++def _archive_root(username: str) -> str:
++    return safe_join(settings.storage_path, ".browser-platform-archive", username)
++
++
++def _archive_manifest(path: str) -> dict[str, Any] | None:
++    try:
++        with open(os.path.join(path, _ARCHIVE_MANIFEST), encoding="utf-8") as handle:
++            value = json.load(handle)
++    except (FileNotFoundError, OSError, ValueError):
++        return None
++    return value if isinstance(value, dict) else None
++
++
++def _same_archive_manifest(value: dict[str, Any] | None, expected: dict[str, Any]) -> bool:
++    return value is not None and all(value.get(key) == expected[key] for key in expected)
++
++
++def _fsync_directory(path: str) -> None:
++    directory_fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
++    try:
++        os.fsync(directory_fd)
++    finally:
++        os.close(directory_fd)
++
++
++@router.post("/{home_name}/archive", status_code=201)
++async def archive_my_home_dir(
++    home_name: str,
++    decrypted_body: dict[str, Any] = Depends(get_decrypted_request_body),
++    user: dict[str, Any] = Depends(verify_persistent_storage_enabled),
++) -> dict[str, Any]:
++    """Atomically archive an unused Home under the controller-owned storage root."""
++    from ..profile_runtime import home_path, inspect_home, lifecycle_lock
++
++    if not _ARCHIVE_NAME.fullmatch(home_name) or home_name.lower() == "cleanroom":
++        raise HTTPException(status_code=404, detail="Home directory not found.")
++    fields = ("archive_name", "profile_id", "application_id", "environment_artifact_id", "actor")
++    if any(not isinstance(decrypted_body.get(field), str) or not decrypted_body[field].strip() for field in fields):
++        raise HTTPException(status_code=422, detail="Invalid Home archive request.")
++    archive_name = decrypted_body["archive_name"].strip()
++    profile_id = decrypted_body["profile_id"].strip()
++    application_id = decrypted_body["application_id"].strip()
++    artifact_id = decrypted_body["environment_artifact_id"].strip()
++    actor = decrypted_body["actor"].strip()
++    revision = decrypted_body.get("profile_revision")
++    if (not _ARCHIVE_NAME.fullmatch(archive_name) or not _ARCHIVE_NAME.fullmatch(profile_id) or
++            not _ARCHIVE_NAME.fullmatch(application_id) or not _ARCHIVE_NAME.fullmatch(artifact_id) or
++            not _ARCHIVE_NAME.fullmatch(actor) or type(revision) is not int or revision < 1):
++        raise HTTPException(status_code=422, detail="Invalid Home archive request.")
++    try:
++        source = home_path(user["username"], home_name)
++        destination = safe_join(_archive_root(user["username"]), archive_name)
++    except HTTPException:
++        raise
++    except ValueError as exc:
++        raise HTTPException(status_code=422, detail="Invalid Home archive path.") from exc
++    expected = {"version": 1, "home_name": home_name, "profile_id": profile_id,
++                "profile_revision": revision, "application_id": application_id,
++                "environment_artifact_id": artifact_id, "actor": actor,
++                "archive_name": archive_name}
++    async with lifecycle_lock("home:" + source):
++        if not os.path.exists(source):
++            if os.path.isdir(destination) and _same_archive_manifest(_archive_manifest(destination), expected):
++                return {"status": "archived", "archive_name": archive_name, "home_name": home_name}
++            raise HTTPException(status_code=404, detail="Home directory not found.")
++        snapshot = await inspect_home(user["username"], home_name)
++        if snapshot["records"] or snapshot["workers"] or snapshot["resources"]:
++            raise HTTPException(status_code=409, detail="HOME_RESERVED")
++        if os.path.exists(destination):
++            if _same_archive_manifest(_archive_manifest(destination), expected):
++                raise HTTPException(status_code=409, detail="HOME_ARCHIVE_SOURCE_PRESENT")
++            raise HTTPException(status_code=409, detail="HOME_ARCHIVE_EXISTS")
++        os.makedirs(os.path.dirname(destination), mode=0o700, exist_ok=True)
++        manifest_path = os.path.join(source, _ARCHIVE_MANIFEST)
++        temp_path = manifest_path + ".tmp"
++        expected["archived_at"] = datetime.now(timezone.utc).isoformat()
++        try:
++            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
++            fd = os.open(temp_path, flags, 0o600)
++            with os.fdopen(fd, "w", encoding="utf-8") as handle:
++                json.dump(expected, handle, sort_keys=True, separators=(",", ":"))
++                handle.write("\n")
++                handle.flush()
++                os.fsync(handle.fileno())
++            os.replace(temp_path, manifest_path)
++            os.rename(source, destination)
++            _fsync_directory(os.path.dirname(source))
++            _fsync_directory(os.path.dirname(destination))
++        except FileExistsError as exc:
++            try:
++                os.unlink(temp_path)
++            except FileNotFoundError:
++                pass
++            raise HTTPException(status_code=409, detail="HOME_ARCHIVE_EXISTS") from exc
++        except OSError as exc:
++            try:
++                os.unlink(temp_path)
++            except FileNotFoundError:
++                pass
++            raise HTTPException(status_code=503, detail="HOME_ARCHIVE_FAILED") from exc
++    return {"status": "archived", "archive_name": archive_name, "home_name": home_name}
+diff --git a/server/tests/test_home_archive.py b/server/tests/test_home_archive.py
+new file mode 100644
+--- /dev/null
++++ b/server/tests/test_home_archive.py
+@@ -0,0 +1,27 @@
++"""Controller-owned Home archive lifecycle."""
++
++from __future__ import annotations
++
++import json
++from pathlib import Path
++
++from app import profile_runtime as runtime
++from app.routers import homedirs
++from tests.test_launch_journal import plain  # noqa: F401 - fixture is discovered by name
++
++
++async def test_archive_moves_unused_home_and_is_idempotent(plain):
++    home = Path(runtime.home_path("qa", "test-home"))
++    (home / "profile-data").write_text("retained")
++    user = {"username": "qa", "effective_settings": {"persistent_storage": True}}
++    body = {"archive_name": "archive-browser-1", "profile_id": "browser-1", "profile_revision": 2,
++            "application_id": "app-browser-1", "environment_artifact_id": "artifact-1", "actor": "admin"}
++
++    assert await homedirs.archive_my_home_dir("test-home", body, user) == {
++        "status": "archived", "archive_name": "archive-browser-1", "home_name": "test-home"}
++    archived = Path(homedirs._archive_root("qa")) / "archive-browser-1"
++    assert not home.exists() and (archived / "profile-data").read_text() == "retained"
++    manifest = json.loads((archived / homedirs._ARCHIVE_MANIFEST).read_text())
++    assert manifest["profile_id"] == "browser-1" and manifest["profile_revision"] == 2
++    assert await homedirs.archive_my_home_dir("test-home", body, user) == {
++        "status": "archived", "archive_name": "archive-browser-1", "home_name": "test-home"}

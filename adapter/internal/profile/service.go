@@ -24,21 +24,29 @@ var (
 	ErrProfileNotFound  = errors.New("profile not found")
 	ErrOperationRunning = errors.New("profile operation is already running")
 	ErrOwnershipUnknown = errors.New("profile session ownership is unknown; operator recovery is required")
+	ErrAdminUnavailable = errors.New("verified administrator SealSkin client is not configured")
+	ErrBrowserBusy      = errors.New("browser still owns runtime resources")
+	ErrBrowserCreating  = errors.New("browser creation is still in progress")
+	ErrBrowserDeleted   = errors.New("browser has been deleted")
 )
 
 type Definition struct {
 	ID string `json:"id"`
 	// Label is an optional display name for management pages; it never
 	// replaces the ID used by entry paths, journals or authorization.
-	Label               string  `json:"label,omitempty"`
-	ApplicationID       string  `json:"application_id"`
-	HomeName            string  `json:"home_name"`
-	StartURL            string  `json:"start_url"`
-	Language            *string `json:"language,omitempty"`
-	Timezone            *string `json:"timezone,omitempty"`
-	WaylandMode         bool    `json:"wayland_mode"`
-	NetworkPolicyID     string  `json:"network_policy_id,omitempty"`
-	NetworkPolicySHA256 string  `json:"network_policy_sha256,omitempty"`
+	Label                     string  `json:"label,omitempty"`
+	ApplicationID             string  `json:"application_id"`
+	HomeName                  string  `json:"home_name"`
+	StartURL                  string  `json:"start_url"`
+	Language                  *string `json:"language,omitempty"`
+	Timezone                  *string `json:"timezone,omitempty"`
+	WaylandMode               bool    `json:"wayland_mode"`
+	NetworkPolicyID           string  `json:"network_policy_id,omitempty"`
+	NetworkPolicySHA256       string  `json:"network_policy_sha256,omitempty"`
+	NetworkMode               string  `json:"network_mode,omitempty"`
+	EnvironmentArtifactID     string  `json:"environment_artifact_id,omitempty"`
+	EnvironmentArtifactSHA256 string  `json:"environment_artifact_sha256,omitempty"`
+	EnvironmentSource         string  `json:"environment_source,omitempty"`
 	// IdlePolicy enables automatic reclaim; nil or mode "off" disables it.
 	IdlePolicy *IdlePolicy `json:"idle_policy,omitempty"`
 	// RequiredRuntimeCapabilities binds a new Worker to its controller contract.
@@ -84,8 +92,51 @@ type Orchestrator interface {
 	CreateHomeDirectory(context.Context, string, string) error
 }
 
+// AdminOrchestrator is intentionally separate from the launch client. It is
+// used only for R6 management mutations and must be configured with a
+// separate administrator identity in the production process.
+type AdminOrchestrator interface {
+	InstallApp(context.Context, map[string]any, string) error
+	DeleteInstalledApp(context.Context, string, string) error
+}
+
+type HomeArchiver interface {
+	ArchiveHomeDirectory(context.Context, string, sealskin.ArchiveHomeRequest, string) error
+}
+
+type EnvironmentArtifact struct {
+	ID                          string         `json:"id"`
+	SHA256                      string         `json:"sha256"`
+	AcceptanceSHA256            string         `json:"acceptance_sha256"`
+	Image                       string         `json:"image"`
+	Source                      string         `json:"source"`
+	Status                      string         `json:"status"`
+	Application                 map[string]any `json:"application"`
+	RequiredRuntimeCapabilities map[string]int `json:"required_runtime_capabilities,omitempty"`
+}
+
+type EnvironmentCatalog interface {
+	Accepted(context.Context, string) (EnvironmentArtifact, error)
+	List(context.Context) ([]EnvironmentArtifact, error)
+}
+
+type CreateBrowserRequest struct {
+	Label                 string
+	StartURL              string
+	EnvironmentArtifactID string
+	NetworkMode           string
+	NetworkPolicyID       string
+	NetworkPolicySHA256   string
+	Language              *string
+	Timezone              *string
+	WaylandMode           bool
+}
+
 type Service struct {
 	orchestrator  Orchestrator
+	admin         AdminOrchestrator
+	homeArchiver  HomeArchiver
+	catalog       EnvironmentCatalog
 	store         *state.Store
 	publicBase    *url.URL
 	directory     *directory
@@ -99,6 +150,8 @@ type Service struct {
 
 	locksMu sync.Mutex
 	locks   map[string]*sync.Mutex
+	plansMu sync.Mutex
+	plans   map[string]launchPlan
 }
 
 func NewService(orchestrator Orchestrator, store *state.Store, publicBaseURL string, definitions []Definition, options ...Option) (*Service, error) {
@@ -165,6 +218,18 @@ func WithLimits(limits Limits) Option {
 // configured profiles.
 func WithDirectory(path string) Option {
 	return func(s *Service) { s.directoryPath = path }
+}
+
+func WithAdminOrchestrator(admin AdminOrchestrator) Option {
+	return func(s *Service) { s.admin = admin }
+}
+
+func WithHomeArchiver(archiver HomeArchiver) Option {
+	return func(s *Service) { s.homeArchiver = archiver }
+}
+
+func WithEnvironmentCatalog(catalog EnvironmentCatalog) Option {
+	return func(s *Service) { s.catalog = catalog }
 }
 
 // Records lists every browser definition with its directory metadata.
@@ -587,6 +652,20 @@ func validateDefinition(definition Definition) error {
 	}
 	if !sealskin.ValidNetworkPolicyReference(definition.NetworkPolicyID, definition.NetworkPolicySHA256) {
 		return errors.New("network_policy_id and network_policy_sha256 must identify one complete immutable revision")
+	}
+	if definition.NetworkMode != "" && definition.NetworkMode != "legacy" && definition.NetworkMode != "direct" && definition.NetworkMode != "proxy_required" {
+		return errors.New("network_mode must be legacy, direct or proxy_required")
+	}
+	if definition.EnvironmentArtifactID != "" {
+		if len(definition.EnvironmentArtifactSHA256) != 64 || strings.ToLower(definition.EnvironmentArtifactSHA256) != definition.EnvironmentArtifactSHA256 {
+			return errors.New("environment artifact must carry a lowercase SHA-256")
+		}
+		if _, err := hex.DecodeString(definition.EnvironmentArtifactSHA256); err != nil {
+			return errors.New("environment artifact SHA-256 is invalid")
+		}
+		if definition.EnvironmentSource != "frozen" {
+			return errors.New("new browser environments must come from a frozen accepted artifact")
+		}
 	}
 	for _, value := range []string{definition.ID, definition.HomeName} {
 		for _, char := range value {

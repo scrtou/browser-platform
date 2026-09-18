@@ -131,6 +131,56 @@ func manageForm(values url.Values, subject string, grants []access.Grant, target
 	return withGrants(r, subject, grants)
 }
 
+type fakeBrowserManager struct {
+	*fakeProfiles
+	createRequest profile.CreateBrowserRequest
+	createActor   string
+	createKey     string
+	deleteID      string
+	deleteActor   string
+	deleteKey     string
+}
+
+func (f *fakeBrowserManager) CreateBrowser(_ context.Context, request profile.CreateBrowserRequest, actor, key string) (profile.Record, error) {
+	f.createRequest, f.createActor, f.createKey = request, actor, key
+	return profile.Record{Definition: profile.Definition{ID: "browser-new", Label: request.Label, StartURL: request.StartURL}, Revision: 2, Status: profile.RecordReady}, nil
+}
+
+func (f *fakeBrowserManager) DeleteBrowser(_ context.Context, id, actor, key string) error {
+	f.deleteID, f.deleteActor, f.deleteKey = id, actor, key
+	return nil
+}
+
+func (f *fakeBrowserManager) EnvironmentArtifacts(context.Context) ([]profile.EnvironmentArtifactSummary, error) {
+	return []profile.EnvironmentArtifactSummary{{ID: "env-r9", SHA256: strings.Repeat("a", 64), Source: "frozen"}}, nil
+}
+
+func TestManagementCreatesDeletesAndListsFixedArtifacts(t *testing.T) {
+	base := &fakeProfiles{environments: map[string]profile.EnvironmentSummary{"personal": sampleSummary("personal")}, stopResult: profile.LifecycleResult{Status: state.StatusStopped}}
+	profiles := &fakeBrowserManager{fakeProfiles: base}
+	server := New(profiles, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})
+	grants := []access.Grant{{Profile: "personal", Capabilities: []string{"view", "manage", "stop"}}}
+	created := httptest.NewRecorder()
+	server.ServeHTTP(created, manageForm(url.Values{
+		"label": {"新浏览器"}, "start_url": {"https://start.example/"}, "environment_artifact_id": {"env-r9"},
+		"network_mode": {"direct"}, "network_policy_id": {"direct-r1"}, "network_policy_sha256": {strings.Repeat("c", 64)},
+		"idempotency_key": {"create-1"},
+	}, "root", grants, "https://adapter.example/manage/browsers"))
+	if created.Code != http.StatusSeeOther || created.Header().Get("Location") != "/manage/?notice=created" || profiles.createActor != "root" || profiles.createKey != "create-1" || profiles.createRequest.EnvironmentArtifactID != "env-r9" || profiles.createRequest.NetworkMode != "direct" {
+		t.Fatalf("create: status=%d location=%q actor=%q key=%q request=%+v", created.Code, created.Header().Get("Location"), profiles.createActor, profiles.createKey, profiles.createRequest)
+	}
+	deleted := httptest.NewRecorder()
+	server.ServeHTTP(deleted, manageForm(url.Values{"action": {"delete"}, "idempotency_key": {"delete-1"}}, "root", grants, "https://adapter.example/manage/browsers/personal"))
+	if deleted.Code != http.StatusSeeOther || deleted.Header().Get("Location") != "/manage/?notice=deleted" || profiles.deleteID != "personal" || profiles.deleteActor != "root" || profiles.deleteKey != "delete-1" {
+		t.Fatalf("delete: status=%d location=%q id=%q actor=%q key=%q", deleted.Code, deleted.Header().Get("Location"), profiles.deleteID, profiles.deleteActor, profiles.deleteKey)
+	}
+	catalog := httptest.NewRecorder()
+	server.ServeHTTP(catalog, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/environments/catalog", nil), "root", grants))
+	if catalog.Code != http.StatusOK || !strings.Contains(catalog.Body.String(), `"id":"env-r9"`) || strings.Contains(catalog.Body.String(), "image") {
+		t.Fatalf("catalog: %d %s", catalog.Code, catalog.Body.String())
+	}
+}
+
 func TestManagementBrowserFormsUpdateStopAndRespectCapabilities(t *testing.T) {
 	profiles := &fakeProfiles{environments: map[string]profile.EnvironmentSummary{"personal": sampleSummary("personal")}, stopResult: profile.LifecycleResult{Status: "stopped"}}
 	server := New(profiles, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})

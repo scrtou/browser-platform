@@ -26,6 +26,14 @@ type SealSkin struct {
 	LifecycleEnabled     bool   `json:"lifecycle_enabled"`
 }
 
+// SealSkinAdmin is the separate identity allowed to install/delete
+// applications and archive Homes. It shares the verified private endpoint
+// and server identity with SealSkin but never owns launches or lifecycle.
+type SealSkinAdmin struct {
+	Username             string `json:"username"`
+	ClientPrivateKeyFile string `json:"client_private_key_file"`
+}
+
 // Health tunes the read-only runtime health reports. Omitted fields use the
 // defaults; sample_interval_seconds 0 disables background sampling.
 type Health struct {
@@ -80,13 +88,15 @@ type Config struct {
 	ControlSocket     string `json:"control_socket,omitempty"`
 	// ProfileDirectory persists browser definitions so the management
 	// surface can change them; the configured profiles seed its first import.
-	ProfileDirectory string               `json:"profile_directory,omitempty"`
-	SealSkin         SealSkin             `json:"sealskin"`
-	Health           Health               `json:"health"`
-	Startup          Startup              `json:"startup"`
-	Access           *access.Config       `json:"access,omitempty"`
-	Limits           profile.Limits       `json:"limits"`
-	Profiles         []profile.Definition `json:"profiles"`
+	ProfileDirectory   string               `json:"profile_directory,omitempty"`
+	EnvironmentCatalog string               `json:"environment_catalog,omitempty"`
+	SealSkin           SealSkin             `json:"sealskin"`
+	SealSkinAdmin      *SealSkinAdmin       `json:"sealskin_admin,omitempty"`
+	Health             Health               `json:"health"`
+	Startup            Startup              `json:"startup"`
+	Access             *access.Config       `json:"access,omitempty"`
+	Limits             profile.Limits       `json:"limits"`
+	Profiles           []profile.Definition `json:"profiles"`
 }
 
 func Load(path string) (Config, error) {
@@ -115,11 +125,15 @@ func Load(path string) (Config, error) {
 	cfg.StateFile = resolvePath(baseDir, cfg.StateFile)
 	cfg.ControlSocket = resolvePath(baseDir, cfg.ControlSocket)
 	cfg.ProfileDirectory = resolvePath(baseDir, cfg.ProfileDirectory)
+	cfg.EnvironmentCatalog = resolvePath(baseDir, cfg.EnvironmentCatalog)
 	if cfg.SealSkin.LifecycleEnabled && cfg.ControlSocket == "" && cfg.StateFile != "" {
 		cfg.ControlSocket = cfg.StateFile + ".control.sock"
 	}
 	cfg.SealSkin.ServerPublicKeyFile = resolvePath(baseDir, cfg.SealSkin.ServerPublicKeyFile)
 	cfg.SealSkin.ClientPrivateKeyFile = resolvePath(baseDir, cfg.SealSkin.ClientPrivateKeyFile)
+	if cfg.SealSkinAdmin != nil {
+		cfg.SealSkinAdmin.ClientPrivateKeyFile = resolvePath(baseDir, cfg.SealSkinAdmin.ClientPrivateKeyFile)
+	}
 	cfg.Limits.StoragePath = resolvePath(baseDir, cfg.Limits.StoragePath)
 	if cfg.Access != nil {
 		cfg.Access.UsersFile = resolvePath(baseDir, cfg.Access.UsersFile)
@@ -153,6 +167,12 @@ func (cfg Config) Validate() error {
 	}
 	if cfg.ProfileDirectory != "" && !cfg.SealSkin.LifecycleEnabled {
 		return errors.New("profile_directory requires sealskin.lifecycle_enabled")
+	}
+	if cfg.EnvironmentCatalog != "" && cfg.ProfileDirectory == "" {
+		return errors.New("environment_catalog requires profile_directory")
+	}
+	if cfg.EnvironmentCatalog != "" && (cfg.SealSkinAdmin == nil || cfg.SealSkinAdmin.Username == "" || cfg.SealSkinAdmin.ClientPrivateKeyFile == "") {
+		return errors.New("environment_catalog requires a separate sealskin_admin identity")
 	}
 	if cfg.Access != nil {
 		if err := cfg.Access.Validate(); err != nil {

@@ -8,6 +8,7 @@
 
 | 编号 | 工作项 | 差异 | 处理方式 | 状态 |
 | --- | --- | --- | --- | --- |
+| [DEV-2026-09-18-048](DEV-2026-09-18-048-home-archive-controller-api.md) | [R6C](../work-items/R6C-2026-09-18-create-delete-launch.md) | 固定上游只有 Home 创建/删除接口，未提供保留内容的归档操作 | 增加版本化 `environment-management.patch`，由控制器在 Home 锁内原子移动并提供幂等清单；Adapter 不直接操作 Home，生产未部署补丁 | 已解决（候选补丁，未部署） |
 | [DEV-2026-09-18-047](DEV-2026-09-18-047-profile-directory-lock-contract.md) | [R6B](../work-items/R6B-2026-09-17-directory-roles-stop.md) / [R6](../work-items/R6-2026-09-16-environment-management.md) | 规格把 Profile 目录并发保护写成目录文件独立 `flock`，实现使用 Adapter 全局服务锁保证单写者并以进程内互斥串行更新 | 修订设计：明确服务锁 + 进程内互斥 + 0600/fsync/原子替换；既有服务锁/目录测试及全模块回归通过 | 已解决 |
 | [DEV-2026-09-18-046](DEV-2026-09-18-046-profile-directory-cli-grants.md) | [R6B](../work-items/R6B-2026-09-17-directory-roles-stop.md) / [R6](../work-items/R6-2026-09-16-environment-management.md) | 账号 CLI 在持久化目录启用时把权威目录与静态种子 Profile 合并，目录读取失败也退回种子，可能写出运行中 Adapter 会拒绝的授权表 | 修复实现：目录 ID 完全取代种子，目录读取失败即拒绝；新增回归后 147 项测试与全模块 race 通过，候选未部署 | 已解决 |
 | [DEV-2026-09-17-045](DEV-2026-09-17-045-manage-list-role.md) | [R6A](../work-items/R6A-2026-09-17-environment-list.md) / [R6](../work-items/R6-2026-09-16-environment-management.md) | R6A 候选对任意登录账号放行 `/manage/`，用户 2026-09-17 补充要求管理面板仅管理员、浏览器入口用各自账号 | 修复实现（R6B）：账号表 v2 `role`、网关按角色放行、旧账号视为 `user`、最后管理员保护；Go 测试通过，候选未部署 | 已解决 |

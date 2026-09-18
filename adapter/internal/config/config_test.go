@@ -91,6 +91,20 @@ func TestProfileDirectoryAllowsEmptySeedButNeedsLifecycle(t *testing.T) {
 	}
 }
 
+func TestEnvironmentCatalogRequiresSeparateAdministratorIdentity(t *testing.T) {
+	cfg := validConfig()
+	cfg.SealSkin.LifecycleEnabled = true
+	cfg.ProfileDirectory = "/private/profiles.json"
+	cfg.EnvironmentCatalog = "/private/environment-catalog.json"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("catalog without an administrator identity was accepted")
+	}
+	cfg.SealSkinAdmin = &SealSkinAdmin{Username: "profile-admin", ClientPrivateKeyFile: "/private/admin.pem"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("separate administrator identity rejected: %v", err)
+	}
+}
+
 func validConfig() Config {
 	return Config{
 		ListenAddress: "127.0.0.1:8080", PublicBaseURL: "https://adapter.example",

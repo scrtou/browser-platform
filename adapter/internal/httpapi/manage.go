@@ -41,6 +41,15 @@ type manageService interface {
 	UpdateBrowser(string, int, string, profile.BrowserPatch) (profile.Record, error)
 }
 
+type browserManagementService interface {
+	CreateBrowser(context.Context, profile.CreateBrowserRequest, string, string) (profile.Record, error)
+	DeleteBrowser(context.Context, string, string, string) error
+}
+
+type environmentCatalogService interface {
+	EnvironmentArtifacts(context.Context) ([]profile.EnvironmentArtifactSummary, error)
+}
+
 // notices are the only strings the page echoes from a query parameter; any
 // other value renders nothing.
 var notices = map[string]string{
@@ -54,6 +63,9 @@ var notices = map[string]string{
 	"revision":        "记录已被其他操作修改，请核对后重试。",
 	"invalid":         "输入无效，未保存。",
 	"unavailable":     "操作暂时不可用，未保存。",
+	"created":         "浏览器已创建，固定入口地址已生效。",
+	"deleted":         "浏览器已停止、归档 Home 并撤销应用。",
+	"busy":            "浏览器仍占用运行资源，未删除。",
 	"account_created": "账号已创建。",
 	"account_updated": "账号已更新。",
 	"account_exists":  "账号已存在。",
@@ -114,6 +126,29 @@ func (s *Server) manageEnvironments(writer http.ResponseWriter, request *http.Re
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(writer).Encode(list)
+}
+
+func (s *Server) manageEnvironmentCatalog(writer http.ResponseWriter, request *http.Request) {
+	noStore(writer)
+	if _, ok := access.Grants(request); !ok {
+		http.NotFound(writer, request)
+		return
+	}
+	catalog, ok := s.profiles.(environmentCatalogService)
+	if !ok {
+		http.Error(writer, "Environment catalog is not available", http.StatusNotImplemented)
+		return
+	}
+	artifacts, err := catalog.EnvironmentArtifacts(request.Context())
+	if err != nil {
+		http.Error(writer, "Environment catalog is not available", http.StatusServiceUnavailable)
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(writer).Encode(struct {
+		Version   int                                  `json:"version"`
+		Artifacts []profile.EnvironmentArtifactSummary `json:"artifacts"`
+	}{Version: 1, Artifacts: artifacts})
 }
 
 func (s *Server) managePage(writer http.ResponseWriter, request *http.Request) {
@@ -232,6 +267,90 @@ func (s *Server) redirectManage(writer http.ResponseWriter, request *http.Reques
 	http.Redirect(writer, request, "/manage/?notice="+url.QueryEscape(notice), http.StatusSeeOther)
 }
 
+func (s *Server) manageCreateBrowser(writer http.ResponseWriter, request *http.Request) {
+	noStore(writer)
+	_, ok := access.Grants(request)
+	manager, available := s.profiles.(browserManagementService)
+	if !ok || !available {
+		http.NotFound(writer, request)
+		return
+	}
+	request.Body = http.MaxBytesReader(writer, request.Body, 8192)
+	if request.ParseForm() != nil || len(request.PostForm["idempotency_key"]) != 1 {
+		s.redirectManage(writer, request, "invalid")
+		return
+	}
+	requestID := strings.TrimSpace(request.PostForm.Get("idempotency_key"))
+	if requestID == "" || len(requestID) > 128 {
+		s.redirectManage(writer, request, "invalid")
+		return
+	}
+	requestData := profile.CreateBrowserRequest{
+		Label: strings.TrimSpace(request.PostForm.Get("label")), StartURL: strings.TrimSpace(request.PostForm.Get("start_url")),
+		EnvironmentArtifactID: strings.TrimSpace(request.PostForm.Get("environment_artifact_id")), NetworkMode: strings.TrimSpace(request.PostForm.Get("network_mode")),
+		NetworkPolicyID: strings.TrimSpace(request.PostForm.Get("network_policy_id")), NetworkPolicySHA256: strings.TrimSpace(request.PostForm.Get("network_policy_sha256")),
+	}
+	ctx, cancel := context.WithTimeout(request.Context(), sealskin.LongOperationTimeout)
+	defer cancel()
+	record, err := manager.CreateBrowser(ctx, requestData, access.Subject(request), requestID)
+	if err != nil {
+		s.logger.Warn("management action", "action", "browser_create", "status", "rejected", "error", err)
+		s.redirectManage(writer, request, "unavailable")
+		return
+	}
+	if s.access != nil {
+		for _, accountID := range request.PostForm["accounts"] {
+			if grantErr := s.access.Accounts().SetGrants(accountID, appendExistingGrant(s.access, accountID, record.ID)); grantErr != nil {
+				s.logger.Warn("browser account assignment failed", "profile", record.ID, "error", grantErr)
+			}
+		}
+		_ = s.access.Reload()
+	}
+	s.logger.Info("management action", "action", "browser_create", "profile", record.ID, "status", "created")
+	s.redirectManage(writer, request, "created")
+}
+
+func appendExistingGrant(gateway *access.Gateway, accountID, profileID string) []string {
+	for _, account := range gatewayAccounts(gateway) {
+		if account.ID != accountID {
+			continue
+		}
+		for _, id := range account.Profiles {
+			if id == profileID {
+				return account.Profiles
+			}
+		}
+		return append(append([]string(nil), account.Profiles...), profileID)
+	}
+	return []string{profileID}
+}
+
+func gatewayAccounts(gateway *access.Gateway) []access.Account {
+	accounts, err := gateway.Accounts().Snapshot()
+	if err != nil {
+		return nil
+	}
+	return accounts
+}
+
+func (s *Server) revokeBrowserGrants(profileID string) {
+	if s.access == nil {
+		return
+	}
+	for _, account := range gatewayAccounts(s.access) {
+		grants := make([]string, 0, len(account.Profiles))
+		for _, id := range account.Profiles {
+			if id != profileID {
+				grants = append(grants, id)
+			}
+		}
+		if len(grants) != len(account.Profiles) {
+			_ = s.access.Accounts().SetGrants(account.ID, grants)
+		}
+	}
+	_ = s.access.Reload()
+}
+
 // grantFor returns the administrator's grant for a Profile named in a form
 // POST; the gateway already verified login, role and CSRF.
 func grantFor(request *http.Request, id string) (access.Grant, bool) {
@@ -293,6 +412,42 @@ func (s *Server) manageBrowser(writer http.ResponseWriter, request *http.Request
 	}
 	actor := access.Subject(request)
 	switch request.PostForm.Get("action") {
+	case "delete":
+		if !hasCapability(grant, "manage") {
+			http.Error(writer, "Forbidden", http.StatusForbidden)
+			return
+		}
+		if s.access != nil && !s.access.Reauthenticated(request) {
+			s.redirectManage(writer, request, "reauth")
+			return
+		}
+		manager, ok := s.profiles.(browserManagementService)
+		if !ok {
+			s.redirectManage(writer, request, "unavailable")
+			return
+		}
+		idempotencyKey := strings.TrimSpace(request.PostForm.Get("idempotency_key"))
+		if idempotencyKey == "" || len(idempotencyKey) > 128 {
+			s.redirectManage(writer, request, "invalid")
+			return
+		}
+		ctx, cancel := context.WithTimeout(request.Context(), sealskin.LongOperationTimeout)
+		defer cancel()
+		err := manager.DeleteBrowser(ctx, id, actor, idempotencyKey)
+		switch {
+		case err == nil:
+			s.revokeBrowserGrants(id)
+			s.logger.Info("management action", "profile", id, "action", "browser_delete", "status", "deleted")
+			s.redirectManage(writer, request, "deleted")
+		case errors.Is(err, profile.ErrBrowserBusy), errors.Is(err, profile.ErrStopUnconfirmed):
+			s.redirectManage(writer, request, "busy")
+		case errors.Is(err, profile.ErrProfileNotFound):
+			http.NotFound(writer, request)
+		default:
+			s.logger.Warn("management action", "profile", id, "action", "browser_delete", "status", "rejected", "error", err)
+			s.redirectManage(writer, request, "unavailable")
+		}
+		return
 	case "stop":
 		if !hasCapability(grant, "stop") {
 			http.Error(writer, "Forbidden", http.StatusForbidden)
@@ -499,6 +654,18 @@ var manageTemplate = template.Must(template.New("manage").Parse(strings.TrimSpac
   <p class="meta">管理员 {{.Subject}} · 生成时间 {{.GeneratedAt}} · 列表只读取最近一次健康采样，过期即标为 stale；关闭按钮走已验证的停止流程，不删除 Home。</p>
   {{if .Notice}}<p class="notice">{{.Notice}}</p>{{end}}
   <h2>远程浏览器</h2>
+  <p class="meta">新增浏览器只接受固化环境目录中的 artifact 和受管理网络策略；DIRECT 也必须经过控制器网关。</p>
+  <form method="post" action="/manage/browsers"><input type="hidden" name="csrf" value="{{.CSRF}}">
+    <input type="text" name="label" maxlength="64" placeholder="名称" required>
+    <input type="url" name="start_url" maxlength="2048" placeholder="起始页 URL" required>
+    <input type="text" name="environment_artifact_id" maxlength="128" placeholder="固化 artifact ID" required>
+    <select name="network_mode"><option value="direct">受管理 DIRECT</option><option value="proxy_required">现有代理策略</option></select>
+    <input type="text" name="network_policy_id" maxlength="128" placeholder="策略 ID" required>
+    <input type="text" name="network_policy_sha256" maxlength="64" placeholder="策略 SHA-256" required>
+    <input type="text" name="idempotency_key" maxlength="128" placeholder="幂等键" required>
+    <div>{{range .Accounts}}<label class="chk"><input type="checkbox" name="accounts" value="{{.ID}}"> {{.ID}}</label>{{end}}</div>
+    <button>新增浏览器</button>
+  </form>
   {{if .Rows}}<table>
     <tr><th>浏览器</th><th>入口 URL / 账号</th><th>记录状态</th><th>健康（采样时间）</th><th>网络</th><th>显示 / 语言 / 时区</th><th>应用 / Home</th><th>环境产物</th><th>操作</th></tr>
     {{range .Rows}}<tr>
@@ -513,6 +680,7 @@ var manageTemplate = template.Must(template.New("manage").Parse(strings.TrimSpac
         {{if .Enabled}}<form method="post" action="/manage/browsers/{{.ProfileID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="disable"><input type="hidden" name="revision" value="{{.Revision}}"><button>停用</button></form>
         {{else}}<form method="post" action="/manage/browsers/{{.ProfileID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="enable"><input type="hidden" name="revision" value="{{.Revision}}"><button>启用</button></form>{{end}}{{end}}
         {{if and .StopAllowed .Running}}<form method="post" action="/manage/browsers/{{.ProfileID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="stop"><button>安全关闭</button></form>{{end}}
+        {{if .Manage}}<form method="post" action="/manage/browsers/{{.ProfileID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="delete"><input type="text" name="idempotency_key" maxlength="128" placeholder="幂等键" required><button>归档并删除</button></form>{{end}}
       </td>
       {{else}}<td colspan="7" class="meta">摘要暂不可用</td>{{end}}
     </tr>{{end}}

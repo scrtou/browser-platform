@@ -26,6 +26,11 @@ type profileService interface {
 	Environment(context.Context, string) (profile.EnvironmentSummary, error)
 }
 
+type launchPlanService interface {
+	IssueLaunchPlan(context.Context, string, string) (profile.LaunchPlan, error)
+	EnsureWithLaunchPlan(context.Context, string, string, string) (sealskin.Session, error)
+}
+
 // HealthUI controls the entry page's read-only pre-check. EntryWait bounds how
 // long the entry waits for a report before falling back to the plain auto-POST.
 type HealthUI struct {
@@ -69,6 +74,8 @@ func New(profiles profileService, listSessions func(context.Context) ([]sealskin
 	// the login's grants; without them both handlers answer 404.
 	mux.HandleFunc("GET /manage/{$}", server.managePage)
 	mux.HandleFunc("GET /manage/environments", server.manageEnvironments)
+	mux.HandleFunc("GET /manage/environments/catalog", server.manageEnvironmentCatalog)
+	mux.HandleFunc("POST /manage/browsers", server.manageCreateBrowser)
 	mux.HandleFunc("POST /manage/browsers/{profile}", server.manageBrowser)
 	mux.HandleFunc("POST /manage/accounts", server.manageAccounts)
 	mux.HandleFunc("POST /manage/accounts/{account}", server.manageAccount)
@@ -142,7 +149,7 @@ func (s *Server) entry(writer http.ResponseWriter, request *http.Request) {
 	writer.Header().Set("Referrer-Policy", "same-origin")
 	if s.healthUI.EntryHint {
 		if report, ok := s.blockingRecovery(request); ok {
-			s.renderRecovery(writer, request.PathValue("profile"), report, access.CSRF(request))
+			s.renderRecovery(writer, request, report)
 			return
 		}
 	}
@@ -156,11 +163,22 @@ func (s *Server) entry(writer http.ResponseWriter, request *http.Request) {
 	// Chromium also applies form-action to the POST's redirect target.
 	// sessionBaseURL is the configured, validated HTTPS Session origin.
 	writer.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'nonce-"+nonce+"'; style-src 'unsafe-inline'; form-action 'self' "+s.sessionBaseURL+"; base-uri 'none'")
+	plan := ""
+	if planner, ok := s.profiles.(launchPlanService); ok && access.Subject(request) != "" {
+		issued, err := planner.IssueLaunchPlan(request.Context(), access.Subject(request), request.PathValue("profile"))
+		if err != nil {
+			s.logger.Warn("launch plan unavailable", "profile", request.PathValue("profile"), "error", err)
+			http.Error(writer, "Browser launch is temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		plan = issued.Token
+	}
 	data := struct {
-		Profile string
-		Nonce   string
-		CSRF    string
-	}{Profile: request.PathValue("profile"), Nonce: nonce, CSRF: access.CSRF(request)}
+		Profile    string
+		Nonce      string
+		CSRF       string
+		LaunchPlan string
+	}{Profile: request.PathValue("profile"), Nonce: nonce, CSRF: access.CSRF(request), LaunchPlan: plan}
 	if err := entryTemplate.Execute(writer, data); err != nil {
 		s.logger.Error("render browser entry", "error", err)
 	}
@@ -178,7 +196,18 @@ func (s *Server) start(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	profileID := request.PathValue("profile")
-	session, err := s.profiles.Ensure(request.Context(), profileID)
+	var session sealskin.Session
+	var err error
+	if planner, ok := s.profiles.(launchPlanService); ok && access.Subject(request) != "" {
+		plan := strings.TrimSpace(request.PostForm.Get("launch_plan"))
+		if plan == "" {
+			http.Error(writer, "Launch plan is required", http.StatusConflict)
+			return
+		}
+		session, err = planner.EnsureWithLaunchPlan(request.Context(), access.Subject(request), profileID, plan)
+	} else {
+		session, err = s.profiles.Ensure(request.Context(), profileID)
+	}
 	if err != nil {
 		s.writeProfileError(writer, profileID, err)
 		return
@@ -221,20 +250,28 @@ func (s *Server) blockingRecovery(request *http.Request) (profile.HealthReport, 
 	return report, true
 }
 
-func (s *Server) renderRecovery(writer http.ResponseWriter, profileID string, report profile.HealthReport, csrf string) {
+func (s *Server) renderRecovery(writer http.ResponseWriter, request *http.Request, report profile.HealthReport) {
+	profileID, csrf := request.PathValue("profile"), access.CSRF(request)
+	plan := ""
+	if planner, ok := s.profiles.(launchPlanService); ok && access.Subject(request) != "" {
+		if issued, err := planner.IssueLaunchPlan(request.Context(), access.Subject(request), profileID); err == nil {
+			plan = issued.Token
+		}
+	}
 	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 	writer.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' "+s.sessionBaseURL+"; base-uri 'none'")
 	data := struct {
-		Profile   string
-		Overall   string
-		Code      string
-		Title     string
-		Steps     []string
-		CheckedAt string
-		Checks    []profile.HealthCheck
-		CSRF      string
+		Profile    string
+		Overall    string
+		Code       string
+		Title      string
+		Steps      []string
+		CheckedAt  string
+		Checks     []profile.HealthCheck
+		CSRF       string
+		LaunchPlan string
 	}{Profile: profileID, Overall: string(report.Overall), Code: report.Recovery.Code, Title: report.Recovery.Title,
-		Steps: report.Recovery.Steps, CheckedAt: report.CheckedAt.UTC().Format(time.RFC3339), Checks: report.Checks, CSRF: csrf}
+		Steps: report.Recovery.Steps, CheckedAt: report.CheckedAt.UTC().Format(time.RFC3339), Checks: report.Checks, CSRF: csrf, LaunchPlan: plan}
 	if err := recoveryTemplate.Execute(writer, data); err != nil {
 		s.logger.Error("render recovery hint", "error", err)
 	}
@@ -327,7 +364,7 @@ var recoveryTemplate = template.Must(template.New("recovery").Parse(strings.Trim
   <h1>{{.Profile}}：{{.Title}}</h1>
   <p class="meta">状态 {{.Overall}} · {{.Code}} · 检查时间 {{.CheckedAt}}</p>
   <ol>{{range .Steps}}<li>{{.}}</li>{{end}}</ol>
-  <form method="post" action="start">{{if .CSRF}}<input type="hidden" name="csrf" value="{{.CSRF}}">{{end}}<button type="submit">继续进入会话</button></form>
+  <form method="post" action="start">{{if .CSRF}}<input type="hidden" name="csrf" value="{{.CSRF}}">{{end}}{{if .LaunchPlan}}<input type="hidden" name="launch_plan" value="{{.LaunchPlan}}">{{end}}<button type="submit">继续进入会话</button></form>
   <p class="meta"><a href="./?recheck=1">重新检查</a> · <a href="health">健康报告 (JSON)</a></p>
   <table>
     <tr><th>检查</th><th>结果</th><th>代码</th><th>说明</th></tr>
@@ -351,7 +388,7 @@ var entryTemplate = template.Must(template.New("entry").Parse(strings.TrimSpace(
 </head>
 <body>
   <p>正在启动 {{.Profile}}…</p>
-  <form method="post" action="start">{{if .CSRF}}<input type="hidden" name="csrf" value="{{.CSRF}}">{{end}}<button type="submit">继续</button></form>
+  <form method="post" action="start">{{if .CSRF}}<input type="hidden" name="csrf" value="{{.CSRF}}">{{end}}{{if .LaunchPlan}}<input type="hidden" name="launch_plan" value="{{.LaunchPlan}}">{{end}}<button type="submit">继续</button></form>
   <script nonce="{{.Nonce}}">document.forms[0].submit()</script>
 </body>
 </html>

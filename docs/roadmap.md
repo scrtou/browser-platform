@@ -2,9 +2,9 @@
 
 [文档导航](README.md) · [当前进度](progress.md) · [架构](design.md) · [验收索引](acceptance/README.md)
 
-**计划基准：2026-09-18。** R1、R2C、R3、R4A、R4B、R5A、R5B、R5C1、R5C2、R5C3、R5D、R5E、R6A、R6B 已收尾；R6A/R6B 为未部署候选。R4B 于 2026-09-17 完成实际生产切换、目标 Mac 生产复测和正式 Caddy/Docker/VPS 重启。R2 的退出全部登录与 Debian 13 仍待完成。下列优先级表示执行顺序与依赖，没有预设完成日期。
+**计划基准：2026-09-18。** R1、R2C、R3、R4A、R4B、R5A、R5B、R5C1、R5C2、R5C3、R5D、R5E、R6A、R6B、R6C 已收尾；R6A/R6B/R6C 为未部署候选。R4B 于 2026-09-17 完成实际生产切换、目标 Mac 生产复测和正式 Caddy/Docker/VPS 重启。R2 的退出全部登录与 Debian 13 仍待完成。下列优先级表示执行顺序与依赖，没有预设完成日期。
 
-当前生产：共享认证控制器、账号入口、Work 兼容镜像和 r9/fill-r10 Personal 已部署。Work/Personal 各 1 record/1 Worker、能力 1/1；Personal 的受管理代理资源和网络为 running。登录/交接/Session、未登录拒绝、Caddy 候选一致性和目标 Mac 生产验收通过，旧 Home、备份和回退材料保留。维护失败与续接见 [DEV-044](deviations/DEV-2026-09-17-044-production-maintenance-runner.md)，Caddy 重启持久化见 [DEV-043](deviations/DEV-2026-09-17-043-caddy-api-config-persistence.md)。正式 Caddy/Docker/VPS 重启均已通过；R2 剩余退出全部登录验证与 Debian 13。管理面第 1 步 [R6A](work-items/R6A-2026-09-17-environment-list.md) 与第 2 步 [R6B](work-items/R6B-2026-09-17-directory-roles-stop.md) 已完成候选代码、Go 隔离测试和文档收尾，均未部署；生产 Adapter 仍为 candidate-4。下一子项 R6C 尚未开始。
+当前生产：共享认证控制器、账号入口、Work 兼容镜像和 r9/fill-r10 Personal 已部署。Work/Personal 各 1 record/1 Worker、能力 1/1；Personal 的受管理代理资源和网络为 running。登录/交接/Session、未登录拒绝、Caddy 候选一致性和目标 Mac 生产验收通过，旧 Home、备份和回退材料保留。维护失败与续接见 [DEV-044](deviations/DEV-2026-09-17-044-production-maintenance-runner.md)，Caddy 重启持久化见 [DEV-043](deviations/DEV-2026-09-17-043-caddy-api-config-persistence.md)。正式 Caddy/Docker/VPS 重启均已通过；R2 剩余退出全部登录验证与 Debian 13。管理面第 1 步 [R6A](work-items/R6A-2026-09-17-environment-list.md) 与第 2 步 [R6B](work-items/R6B-2026-09-17-directory-roles-stop.md) 已完成候选代码、Go 隔离测试和文档收尾，均未部署；R6C 候选已完成隔离验证，生产 Adapter 仍为 candidate-4。
 
 R4B 发布候选已转为生产运行态。Work Firefox/Wayland 兼容镜像、Personal r9、生产账号、显示 tmpfs/开机配置与 Caddy autosave 已安装；最终 Mac 生产分项与正式重启通过，R2 退出登录仍须补齐。回退材料已核对并保留，不为证明回退而破坏当前成功代次。
 
@@ -92,10 +92,10 @@ R5C 的顺序子项中，[R5C1 DIRECT](work-items/R5C1-2026-09-14-direct-isolati
 - 验证实际浏览器发布升级/回退，恢复匹配的 Home、镜像和产物快照，记录第三方站点登录结果。
 - 完善监控、告警、容量实测、日志保留与灾备演练。
 - 根据使用需要增加 Trilium Dashboard；Persona Studio 与替代 Broker 只在明确需求或维护成本需要时评估。
-- [R6 远程浏览器管理面](work-items/R6-2026-09-16-environment-management.md)：2026-09-17 按用户需求修订为第 2 版设计——面板可新增/删除/修改远程浏览器，每个浏览器配置代理（不配置即受管理 DIRECT）、指纹（固化目录或自定义生成作业）、固定入口 URL 与访问账号密码；契约见[管理面规格](specs/proxy-environment/management.md)。第 1 步 [R6A 只读环境列表](work-items/R6A-2026-09-17-environment-list.md) 与第 2 步 [R6B Profile 目录、账号角色和管理员操作](work-items/R6B-2026-09-17-directory-roles-stop.md) 已完成候选代码与测试（未部署）；R6C–R6F 未开始。
+- [R6 远程浏览器管理面](work-items/R6-2026-09-16-environment-management.md)：2026-09-17 按用户需求修订为第 2 版设计——面板可新增/删除/修改远程浏览器，每个浏览器配置代理（不配置即受管理 DIRECT）、指纹（固化目录或自定义生成作业）、固定入口 URL 与访问账号密码；契约见[管理面规格](specs/proxy-environment/management.md)。第 1 步 R6A、第 2 步 R6B 与第 3 步 [R6C](work-items/R6C-2026-09-18-create-delete-launch.md) 已完成候选代码与隔离测试（未部署）；下一项为 R6D，R6E–R6F 未开始。
 - R6 实施顺序（第 2 版）：R6A 只读列表 → R6B Profile 目录、账号角色与关闭按钮 → R6C 新增/删除浏览器（固化指纹 + DIRECT/现有代理修订，含 DIRECT 生产前置）→ R6D 代理草稿、隔离探针与修订 → R6E 自定义指纹生成/验收作业 → R6F 组合 QA、真实客户端、生产候选与回退。每个子项都须保留固定 Profile URL、Home 独占、Guard/Relay 无直连和现有生命周期所有权。
 
-完成条件：运维流程可由文档重现，升级/恢复有证据，容量上限来自测量；UI 只显示有新鲜证据支持的状态；管理面通过账号/能力、代理凭据、指纹修订、关闭清理和回退验收。R4B 已收尾；用户于 2026-09-17 决定不等待 R2 剩余的退出登录/Debian 13，R6 按上述第 2 版顺序实施。R6A 与 R6B 已收尾未部署；R6B 已实现 Profile 目录、账号角色、管理员面板、reauth/改密、按账号撤销和关闭入口，并解决 [DEV-045](deviations/DEV-2026-09-17-045-manage-list-role.md)、[DEV-046](deviations/DEV-2026-09-18-046-profile-directory-cli-grants.md) 与 [DEV-047](deviations/DEV-2026-09-18-047-profile-directory-lock-contract.md)。下一子项 R6C 未开始。
+完成条件：运维流程可由文档重现，升级/恢复有证据，容量上限来自测量；UI 只显示有新鲜证据支持的状态；管理面通过账号/能力、代理凭据、指纹修订、关闭清理和回退验收。R4B 已收尾；用户于 2026-09-17 决定不等待 R2 剩余的退出登录/Debian 13，R6 按上述第 2 版顺序实施。R6A、R6B 与 R6C 已收尾未部署；下一项为 R6D，R6E/R6F 仍未开始。
 
 <a id="release-criteria"></a>
 ## 版本定义与发布门槛

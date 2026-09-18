@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"browser-platform/adapter/internal/access"
 	"browser-platform/adapter/internal/profile"
 	"browser-platform/adapter/internal/sealskin"
 )
@@ -168,6 +169,52 @@ func TestEntryGETDoesNotLaunchAndPOSTRedirects(t *testing.T) {
 				t.Fatal("rejected start must not disclose a Session URL")
 			}
 		})
+	}
+}
+
+type fakeLaunchProfiles struct {
+	*fakeProfiles
+	issuedSubject string
+	issuedProfile string
+	usedSubject   string
+	usedProfile   string
+	usedToken     string
+}
+
+func (f *fakeLaunchProfiles) IssueLaunchPlan(_ context.Context, subject, profileID string) (profile.LaunchPlan, error) {
+	f.issuedSubject, f.issuedProfile = subject, profileID
+	return profile.LaunchPlan{Token: "plan-token", ProfileID: profileID, Revision: 3, ExpiresAt: time.Now().Add(time.Minute)}, nil
+}
+
+func (f *fakeLaunchProfiles) EnsureWithLaunchPlan(_ context.Context, subject, profileID, token string) (sealskin.Session, error) {
+	f.usedSubject, f.usedProfile, f.usedToken = subject, profileID, token
+	return f.session, nil
+}
+
+func TestAuthenticatedEntryRequiresIssuedLaunchPlan(t *testing.T) {
+	profiles := &fakeLaunchProfiles{fakeProfiles: &fakeProfiles{session: sealskin.Session{SessionID: "session-1", SessionURL: "/session-1/?access_token=secret"}}}
+	server := New(profiles, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})
+	grants := []access.Grant{{Profile: "personal", Capabilities: []string{"start"}}}
+	get := withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/browser/personal/", nil), "alice", grants)
+	getResponse := httptest.NewRecorder()
+	server.ServeHTTP(getResponse, get)
+	if getResponse.Code != http.StatusOK || profiles.issuedSubject != "alice" || profiles.issuedProfile != "personal" || !strings.Contains(getResponse.Body.String(), `name="launch_plan" value="plan-token"`) {
+		t.Fatalf("entry plan: status=%d subject=%q profile=%q body=%s", getResponse.Code, profiles.issuedSubject, profiles.issuedProfile, getResponse.Body.String())
+	}
+	missing := withGrants(httptest.NewRequest(http.MethodPost, "https://adapter.example/browser/personal/start", nil), "alice", grants)
+	missing.Header.Set("Origin", "https://adapter.example")
+	missingResponse := httptest.NewRecorder()
+	server.ServeHTTP(missingResponse, missing)
+	if missingResponse.Code != http.StatusConflict || profiles.usedToken != "" {
+		t.Fatalf("missing plan: status=%d token=%q", missingResponse.Code, profiles.usedToken)
+	}
+	post := withGrants(httptest.NewRequest(http.MethodPost, "https://adapter.example/browser/personal/start", strings.NewReader("launch_plan=plan-token")), "alice", grants)
+	post.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	post.Header.Set("Origin", "https://adapter.example")
+	postResponse := httptest.NewRecorder()
+	server.ServeHTTP(postResponse, post)
+	if postResponse.Code != http.StatusSeeOther || profiles.usedSubject != "alice" || profiles.usedProfile != "personal" || profiles.usedToken != "plan-token" {
+		t.Fatalf("plan start: status=%d subject=%q profile=%q token=%q", postResponse.Code, profiles.usedSubject, profiles.usedProfile, profiles.usedToken)
 	}
 }
 

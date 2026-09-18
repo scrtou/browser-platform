@@ -190,9 +190,9 @@ admin 请求删除 → 必须已停止且 records/workers/resources 为 0（否�
 
 1. **R6A 只读列表**（已完成候选代码与 Go 测试，2026-09-17）。
 2. **R6B 目录与角色**（candidate-2 已完成代码与 Go 测试，2026-09-18 收尾，未部署）：Profile 目录（导入现有配置、修订、乐观锁、热更新）、账号表 version 2 的 `role`、管理面板改为仅管理员（修复 [DEV-045](../../deviations/DEV-2026-09-17-045-manage-list-role.md)）、`/auth/reauth` 与 `/auth/password`、`stop` 能力与面板关闭按钮；修改 `label`/`start_url`/账号分配/`enabled`；账号表变化按账号撤销；账号 CLI 的目录权威边界与锁契约见 [DEV-046](../../deviations/DEV-2026-09-18-046-profile-directory-cli-grants.md)、[DEV-047](../../deviations/DEV-2026-09-18-047-profile-directory-lock-contract.md)。见 [R6B 验收](../../../infra/sealskin/environment-directory-acceptance-2026-09-17.md)。
-3. **R6C 新增与删除（固化指纹 + DIRECT/现有代理修订）**：管理员 SealSkin 客户端、应用安装/删除、Home 创建与归档、launch plan；DIRECT 生产前置（主机 IPv4 证据、网关镜像、控制器能力）作为本步的部署条件。
+3. **R6C 新增与删除（固化指纹 + DIRECT/现有代理修订）**（候选代码已完成隔离验证，未部署）：管理员 SealSkin 客户端、应用安装/删除、Home 创建与控制器归档、launch plan；环境目录只接受已验收固化产物和完整应用模板，创建失败可重试，删除先 Stop 并确认资源为空。DIRECT 生产前置（主机 IPv4 证据、网关镜像、控制器能力）作为本步的部署条件；归档 API 的上游缺口与补丁见 [DEV-048](../../deviations/DEV-2026-09-18-048-home-archive-controller-api.md)。
 4. **R6D 代理草稿、探针与修订**：Secret Store 导入、隔离探针、`proxy_required` 修订与下一代次绑定。
 5. **R6E 自定义指纹作业**：环境目录、隔离生成/验收作业、失败保留与发布。
 6. **R6F 组合 QA 与生产候选**：独立 QA、真实客户端（Trilium/Mac）、备份/恢复、日志脱敏、回退演练后，才准备生产候选与部署。
 
-第 1 版中“关闭入口”作为第 2 步、“指纹选择”作为第 3 步的顺序已被上述顺序取代；R6A 的实现不受影响。R2 的退出登录与 Debian 13 仍待外部条件；本文件不授权部署或改变现有 Profile，R6A、R6B 候选均未部署。
+第 1 版中“关闭入口”作为第 2 步、“指纹选择”作为第 3 步的顺序已被上述顺序取代；R6A/R6B/R6C 均只在候选或隔离环境验证，本文件不授权部署或改变现有 Profile。R2 的退出登录与 Debian 13 仍待外部条件。

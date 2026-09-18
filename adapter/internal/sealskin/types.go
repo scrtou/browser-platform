@@ -133,6 +133,15 @@ type HomeDirectories struct {
 	HomeDirs []string `json:"home_dirs"`
 }
 
+type ArchiveHomeRequest struct {
+	ArchiveName           string `json:"archive_name"`
+	ProfileID             string `json:"profile_id"`
+	ProfileRevision       int    `json:"profile_revision"`
+	ApplicationID         string `json:"application_id"`
+	EnvironmentArtifactID string `json:"environment_artifact_id"`
+	Actor                 string `json:"actor"`
+}
+
 type UserSettings struct {
 	Active            bool   `json:"active"`
 	Group             string `json:"group"`

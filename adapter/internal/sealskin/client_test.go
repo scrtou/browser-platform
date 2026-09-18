@@ -33,6 +33,11 @@ type fakeSealSkinServer struct {
 	launchIdempotency string
 	installedApps     []map[string]any
 	installKey        string
+	deleteAppKey      string
+	deletedApp        string
+	archiveKey        string
+	archiveHome       string
+	archiveName       string
 	runtime           any
 	health            any
 	healthQueries     []string
@@ -159,6 +164,21 @@ func (f *fakeSealSkinServer) ServeHTTP(writer http.ResponseWriter, request *http
 		f.installKey = request.Header.Get("X-Idempotency-Key")
 		f.installedApps = append(f.installedApps, app)
 		f.writeEncrypted(writer, http.StatusCreated, app)
+	case request.Method == http.MethodDelete && strings.HasPrefix(request.URL.Path, "/api/admin/apps/installed/"):
+		f.deletedApp = strings.TrimPrefix(request.URL.Path, "/api/admin/apps/installed/")
+		f.deleteAppKey = request.Header.Get("X-Idempotency-Key")
+		writer.WriteHeader(http.StatusNoContent)
+	case request.Method == http.MethodPost && strings.HasPrefix(request.URL.Path, "/api/homedirs/") && strings.HasSuffix(request.URL.Path, "/archive"):
+		var body struct {
+			ArchiveName string `json:"archive_name"`
+		}
+		if json.Unmarshal(plain, &body) != nil {
+			f.writeEncrypted(writer, http.StatusUnprocessableEntity, map[string]string{"detail": "invalid archive"})
+			return
+		}
+		f.archiveHome = strings.TrimSuffix(strings.TrimPrefix(request.URL.Path, "/api/homedirs/"), "/archive")
+		f.archiveName, f.archiveKey = body.ArchiveName, request.Header.Get("X-Idempotency-Key")
+		writer.WriteHeader(http.StatusNoContent)
 	case request.Method == http.MethodGet && request.URL.Path == "/api/sessions":
 		f.writeEncrypted(writer, http.StatusOK, f.sessions)
 	case request.Method == http.MethodPost && request.URL.Path == "/api/launch/url":
@@ -286,6 +306,28 @@ func TestInstallAppPreservesDefinitionAndRejectsDuplicate(t *testing.T) {
 	actual, _ := json.Marshal(fake.installedApps[1])
 	if string(actual) != string(wanted) || fake.installKey != "install-camoufox-r3" {
 		t.Fatal("encrypted installation did not preserve the full definition or idempotency key")
+	}
+}
+
+func TestAdminClientDeletesApplicationAndArchivesHome(t *testing.T) {
+	serverPrivate, clientPrivate := testKeys(t)
+	fake := &fakeSealSkinServer{serverPrivate: serverPrivate, clientPublic: &clientPrivate.PublicKey}
+	server := httptest.NewServer(fake)
+	defer server.Close()
+	client := newTestClient(t, server.URL, serverPrivate, clientPrivate, server.Client())
+	if err := client.DeleteInstalledApp(context.Background(), "app-personal", ""); err == nil {
+		t.Fatal("application deletion without idempotency was accepted")
+	}
+	if err := client.DeleteInstalledApp(context.Background(), "app-personal", "delete-app-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.ArchiveHomeDirectory(context.Background(), "personal", ArchiveHomeRequest{ArchiveName: "archive-personal-1", ProfileID: "personal", ProfileRevision: 2, ApplicationID: "app-personal", EnvironmentArtifactID: "env-r9", Actor: "root"}, "archive-home-1"); err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.deletedApp != "app-personal" || fake.deleteAppKey != "delete-app-1" || fake.archiveHome != "personal" || fake.archiveName != "archive-personal-1" || fake.archiveKey != "archive-home-1" {
+		t.Fatalf("admin mutations: app=%q appKey=%q home=%q archive=%q archiveKey=%q", fake.deletedApp, fake.deleteAppKey, fake.archiveHome, fake.archiveName, fake.archiveKey)
 	}
 }
 

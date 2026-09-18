@@ -50,8 +50,10 @@ def main():
         for name, expected in base_hashes.items():
             if sha((work / "server/app" / name).read_bytes()) != expected:
                 raise SystemExit(f"Upstream source mismatch: {name}")
-        subprocess.run(["git", "apply", "--check", str(package / "profile-lifecycle.patch")], cwd=work, check=True)
-        subprocess.run(["git", "apply", str(package / "profile-lifecycle.patch")], cwd=work, check=True)
+        patches = ("profile-lifecycle.patch", "environment-management.patch")
+        for patch_name in patches:
+            subprocess.run(["git", "apply", "--check", str(package / patch_name)], cwd=work, check=True)
+            subprocess.run(["git", "apply", str(package / patch_name)], cwd=work, check=True)
         output.mkdir(parents=True, exist_ok=False)
         payload = output / "payload"
         files = {}
@@ -71,10 +73,11 @@ def main():
             files[name] = {"before": sha(before) if before is not None else None, "after": sha(after)}
         release = "0.3.2-entry-auth-v1-" + sha(json.dumps({"files": files, "dependencies": dependencies}, sort_keys=True).encode())[:16]
         build_inputs = {name: sha((package / name).read_bytes()) for name in
-                        ("prepare.py", "install.py", "python-dependencies.json", "upstream-sha256.json", "profile-lifecycle.patch")}
+                        ("prepare.py", "install.py", "python-dependencies.json", "upstream-sha256.json", *patches)}
         packaging_sha = sha(json.dumps(build_inputs, sort_keys=True).encode())
         manifest = {"release": release, "upstream_commit": COMMIT, "base_image": IMAGE,
-                    "patch_sha256": build_inputs["profile-lifecycle.patch"], "files": files,
+                    "patch_sha256": build_inputs["profile-lifecycle.patch"],
+                    "patches": {name: build_inputs[name] for name in patches}, "files": files,
                     "python_dependencies": dependencies["runtime"], "build_inputs": build_inputs,
                     "packaging_sha256": packaging_sha}
         (payload / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")

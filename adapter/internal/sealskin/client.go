@@ -219,6 +219,35 @@ func (c *Client) PatchInstalledApp(ctx context.Context, appID string, patch map[
 	)
 }
 
+// DeleteInstalledApp removes an administrator-owned application definition.
+// SealSkin must have already confirmed that no Home is using the application;
+// the Adapter performs that ownership check before calling this method.
+func (c *Client) DeleteInstalledApp(ctx context.Context, appID, idempotencyKey string) error {
+	appID = strings.TrimSpace(appID)
+	if appID == "" || strings.Contains(appID, "/") {
+		return errors.New("invalid SealSkin application ID")
+	}
+	if strings.TrimSpace(idempotencyKey) == "" {
+		return errors.New("application deletion requires a durable idempotency key")
+	}
+	return c.secure(ctx, http.MethodDelete, "/api/admin/apps/installed/"+url.PathEscape(appID), nil, idempotencyKey, nil)
+}
+
+// ArchiveHomeDirectory moves a stopped named Home into SealSkin's archive
+// namespace. Direct filesystem moves are deliberately not exposed to the
+// Adapter: the controller remains the sole Home owner.
+func (c *Client) ArchiveHomeDirectory(ctx context.Context, homeName string, archive ArchiveHomeRequest, idempotencyKey string) error {
+	if !validHomeName(homeName) || !validHomeName(archive.ArchiveName) || !validHomeName(archive.ProfileID) ||
+		!validHomeName(archive.EnvironmentArtifactID) || !validHomeName(archive.Actor) || archive.ProfileRevision < 1 ||
+		!validHomeName(archive.ApplicationID) {
+		return errors.New("invalid Home archive name")
+	}
+	if strings.TrimSpace(idempotencyKey) == "" {
+		return errors.New("Home archive requires a durable idempotency key")
+	}
+	return c.secure(ctx, http.MethodPost, "/api/homedirs/"+url.PathEscape(homeName)+"/archive", archive, idempotencyKey, nil)
+}
+
 func (c *Client) secure(ctx context.Context, method, path string, body any, idempotencyKey string, out any) error {
 	return c.secureWith(ctx, c.httpClient, method, path, body, idempotencyKey, out)
 }

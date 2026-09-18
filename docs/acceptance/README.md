@@ -8,7 +8,8 @@
 
 | 日期 / 记录 | 验证内容 | 范围与后续关系 |
 | --- | --- | --- |
-| 2026-09-17–18 · [R6B Profile 目录、账号角色、管理员面板与关闭按钮](../../infra/sealskin/environment-directory-acceptance-2026-09-17.md) | Profile 目录/热更新、账号表 v2 角色、管理员边界、reauth/改密、按账号撤销与关闭入口；DEV-045–047；全模块 147 项测试、vet、gofmt、checks 镜像 race | candidate-2 代码与二进制未部署生产；生产 candidate-4、配置、账号表、控制器、Caddy 与 Home 未变；真实浏览器/Trilium、控制器组合与回退归 R6F，R6C–R6E 未实现 |
+| 2026-09-18 · [R6C 新增/删除浏览器、Home 归档与 launch plan](../../infra/sealskin/environment-create-delete-acceptance-2026-09-18.md) | 9 个 Go 包 234 项测试、vet、gofmt、race；固定环境目录、管理员应用安装/删除、Home 创建/控制器归档、Stop/资源保护、删除审计状态和一次性 launch plan；控制器补丁 `pytest` 归档/幂等测试通过 | 候选代码与第二层控制器补丁只在隔离环境验证，生产仍为 candidate-4；DIRECT 主机前置、R6D/R6E/R6F 及真实 Home/客户端未测，不得部署 |
+| 2026-09-17–18 · [R6B Profile 目录、账号角色、管理员面板与关闭按钮](../../infra/sealskin/environment-directory-acceptance-2026-09-17.md) | Profile 目录/热更新、账号表 v2 角色、管理员边界、reauth/改密、按账号撤销与关闭入口；DEV-045–047；全模块 147 项测试、vet、gofmt、checks 镜像 race | candidate-2 代码与二进制未部署生产；生产 candidate-4、配置、账号表、控制器、Caddy 与 Home 未变；真实浏览器/Trilium、控制器组合与回退归 R6F；R6C 已有独立报告，R6D–R6E 未实现 |
 | 2026-09-17 · [R6A 授权环境列表与只读环境摘要](../../infra/sealskin/environment-list-acceptance-2026-09-17.md) | 12 项新增 Go 测试（网关权限边界、脱敏、只读、真实网关端到端）、全模块 138 项测试、vet、checks 镜像 race | 候选代码与二进制未部署生产；真实浏览器/Trilium、组合 QA 归管理面第 6 步；R2 退出登录/Debian 13 保持 |
 | 2026-09-15–17 · [R4B 迁移能力修复与客户端阶段验收](../../infra/sealskin/target-client-migration-acceptance-2026-09-15.md) | 534 项控制/10 项准备；r9/fill-r10 与 Work Wayland/存储/入口/秘密边界；39 文件生产包、实际维护、目标 Mac 及 Caddy/Docker/VPS 重启检查 | 共享控制器、账号入口、Work 兼容镜像和 r9 Personal 已部署；公网认证、目标 Mac 和正式 Caddy/Docker/VPS 同代次恢复通过，旧 Home/备份保留。R2 的退出全部登录与 Debian 13 仍待外部条件 |
 | 2026-09-15 · [R2B 旧 Firefox 加密恢复](../../infra/sealskin/legacy-browser-recovery-acceptance-2026-09-15.md) | 固定旧 Firefox/Wayland 真实三类浏览器存储、正常关闭、旧格式 age 加密往返、新私有根读回、错误路径与 QA 清理 | 独立 QA；源代次先退出，生产四容器/五份配置保持；真实生产 Home、linger、主机重启、Debian 13 和 R4B 仍未测 |

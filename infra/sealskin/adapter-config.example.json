@@ -4,6 +4,8 @@
   "public_base_url": "https://browser.example.com",
   "state_file": "./adapter-state.json",
   "control_socket": "./adapter-control.sock",
+  "profile_directory": "./profiles.json",
+  "environment_catalog": "./environment-catalog.json",
   "sealskin": {
     "api_base_url": "https://127.0.0.1:8443",
     "public_session_base_url": "https://sealskin.example.com",
@@ -12,6 +14,10 @@
     "client_private_key_file": "./secrets/sealskin-client-private.pem",
     "allow_unencrypted_http": false,
     "lifecycle_enabled": true
+  },
+  "sealskin_admin": {
+    "username": "profile-admin",
+    "client_private_key_file": "./secrets/sealskin-admin-private.pem"
   },
   "health": {
     "sample_interval_seconds": 60,
