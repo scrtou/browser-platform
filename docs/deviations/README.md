@@ -8,6 +8,7 @@
 
 | 编号 | 工作项 | 差异 | 处理方式 | 状态 |
 | --- | --- | --- | --- | --- |
+| [DEV-2026-09-19-055](DEV-2026-09-19-055-encrypted-backup-account-version.md) | [R6F](../work-items/R6F-2026-09-19-release-combination.md) | `secure-backup.py` 只接受 version 1 账号表，当前 R6F 生产账号表已含 `role` 的 version 2 | 校验器接受 version 1/2 并按现行 admin/user 授权规则验证；固定 checks 回归及当前控制根 age 加密/verify/离线 restore 通过，真实生产 Home 备份仍需单独维护窗口 | 已解决（工具/组合 QA） |
 | [DEV-2026-09-19-053](DEV-2026-09-19-053-management-production-gating.md) | [R6F](../work-items/R6F-2026-09-19-release-combination.md) | 现有账号缺少不更换密码的角色升级 CLI；未配置控制器管理后端时页面仍显示新增/删除入口 | 无损角色修改与页面/写入口能力门控已回归并部署；生产安全子集启用，完整创建/删除/代理/指纹保持关闭 | 已解决（部分生产启用） |
 | [DEV-2026-09-19-054](DEV-2026-09-19-054-r6f-combination-runner-scope.md) | [R6F](../work-items/R6F-2026-09-19-release-combination.md) | 现有组合运行器硬编码旧 R5E QA 根、资源注册表和控制器身份，不能直接验证当前 R6F/r9 组合 | 按用户授权改为现有环境受控手工组合；overlay 已安装并完成固化/自定义指纹、代理探测和清理，自动运行器改造列为后续独立范围 | 已解决（现有环境范围） |
 | [DEV-2026-09-19-052](DEV-2026-09-19-052-stale-release-package.md) | [R6F](../work-items/R6F-2026-09-19-release-combination.md) | R4B `release-ready-2` 准备摘要早于当前 r9 生产配置/状态写入，旧包复核拒绝 live input drift | 保留旧包为回退材料；R6F 已重新构建并绑定当前输入，candidate-10/12 摘要核对一致 | 已解决（历史包隔离） |

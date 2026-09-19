@@ -9,7 +9,7 @@
 - 当前源码基线为 `97105e5d912fb4c3b90fee4c2338df225b8e6d09`。Adapter 在固定 Go 1.27.1 环境中通过 `go test ./...`、`go vet ./...` 和格式化检查；固定 Go 容器内 `CGO_ENABLED=1`、串行 `go test -race -p 1 -count=1 ./...` 通过，日志末尾为 `exit=0`。
 - 固定 Camoufox r9 镜像内执行 `acceptance.py --phase unit`，artifact 单元验收通过。直接在宿主 Debian 12 执行同一组 artifact 测试会因 Python 3.11/运行架构与固定产物不匹配返回 `ENVIRONMENT_VERSION_MISMATCH`，因此不把宿主结果写成通过。
 - R6E 主机执行器/准备器的 21 项 Python 回归继续通过；真实 R6E 作业的 10 次重建、目录追加和夹具清理沿用 R6E 报告，不扩大为 R6F 组合通过。
-- 使用固定 age v1.2.1 工具和 checks 镜像重跑备份测试：115 项通过，0 项失败。此前一次执行中的 `test_legacy_cli_uses_real_socket_age_and_offline_restore` 泛化失败在同一源码、同一镜像、同一固定 age 工具和 `/repo` 挂载条件下复跑通过；未修改实现，也未触及生产。初次未提供 age 工具的运行记录为 115 skipped，不计入验收；可复现的固定工具结果保存在 `backup-tests-age-rerun.log`。
+- 使用固定 age v1.2.1 工具和 checks 镜像重跑备份测试：修复前 115 项通过；新增 version 2 账号表回归后 116 项通过、0 项失败。此前一次执行中的 `test_legacy_cli_uses_real_socket_age_and_offline_restore` 泛化失败在同一源码、同一镜像、同一固定 age 工具和 `/repo` 挂载条件下复跑通过；初次未提供 age 工具的运行记录为 skipped，不计入验收。最终结果保存在 `combination-backup-1/backup-tests-full-age.log`。组合复核首次使用当前 version 2 账号表时发现旧校验器拒绝 `role` 字段，见 [DEV-055](../../docs/deviations/DEV-2026-09-19-055-encrypted-backup-account-version.md)；修复后在不停止生产 Profile 的前提下，以停止且不再绑定生产的旧 QA Home 收集当前控制根、Session/Secret Store、账号表和 r9 环境资产，完成 4543 个成员的 age 加密归档、verify 与离线 restore，恢复目录和 tmpfs 均通过检查。
 - 使用与 R6D 候选一致的控制器 checks 镜像、R6D 补丁树只读挂载和无网络运行参数重跑全量控制器回归：545 项通过，0 项失败，2 个既有依赖弃用警告；结果保存在 `controller-tests-rerun.log`。该结果确认补丁输入和测试树可复现，但不扩大为真实控制器/Worker 组合通过。
 - 通过 [`prepare-r6f-candidate.py`](checks/prepare-r6f-candidate.py) 重新生成 R6F 隔离审查候选 `candidate-14`：使用固定 `golang:1.27-alpine` 容器构建 `profile-adapter`/`profile-accounts`，源码输入绑定当前 HEAD `129b844`；manifest 为 `browser-platform/r6f-candidate/v2`、`ISOLATED_REVIEW_ONLY`，`production_changed=false`、`deployment_authorized=false`。候选二进制摘要为 Adapter `7f699ce3…`、账号 CLI `8d6eee72…`，与当前生产 Adapter 文件及已核对的账号 CLI 摘要一致；候选未安装服务。
 - 构建了隔离审查候选 `candidate-1`：`profile-adapter`、`profile-accounts`，并以源码、控制器第二层补丁、固定 r9/SealSkin/checks 镜像摘要生成 manifest。候选标记为 `ISOLATED_REVIEW_ONLY`，未安装为服务。
@@ -19,6 +19,7 @@
 - 本机复核通过 `go test ./...`、`go vet ./...`、`gofmt -l adapter` 和新增候选准备器/组合脚本的 Python 编译检查。主机未安装 gcc，直接运行 `CGO_ENABLED=1 go test -race` 只能得到环境缺失错误；全模块 race 结论继续采用固定 checks 镜像中既有的 `go test -race -p 1 -count=1 ./...` 通过记录，不把本机限制写成代码失败。
 - 生产只读复核确认用户 Adapter 服务 `active`/`enabled`；通过公网 Host 路由访问 `https://mybrowser.azhen.de/healthz` 和 `/readyz` 均为 200（`{"status":"ok"}` / `{"status":"ready"}`）。Docker、SealSkin、Personal/Work Home、Relay/Guard 容器仍在运行；未执行生产写操作、停止、重建或回退。
 - 固定 r9 artifact 在 r9 镜像内按正确运行环境变量重跑 `acceptance.py --phase unit`：17 项通过，0 项失败；结果保存在被忽略的 `runtime/r6f-release-combination-2026-09-19/camoufox-unit-rerun-3/`。此前一次手工调用因未注入 artifact 运行环境变量而得到 `ENVIRONMENT_CONFIG_DRIFT`，不计入验收。
+- 组合控制根备份使用临时 Unix control socket 返回已停止且清单为空的 QA Profile；生产 Adapter、SealSkin、Personal/Work 容器、Home、账号表和 Secret Store 未写入。私有证据为 `runtime/r6f-release-combination-2026-09-19/combination-backup-1/`，公开记录不包含 identity、凭据、Cookie 或授权 URL。
 - R6E 执行器/迁移相关主机 Python 回归重新运行：21 项通过，0 项失败；`environment-job.py` 编译检查通过。该结果仍只证明执行器与迁移工具隔离行为，不证明 R6F 控制器/Worker 组合。
 
 ## 现有环境组合验证
@@ -53,6 +54,6 @@
 - 接入运行控制器的历史核对曾发现管理员身份阻断：运行控制器的 `keys/admins/admin` 公钥与当时使用的仓库 `infra/sealskin/config/admin.json` 私钥不匹配；扫描当时的运行目录未找到匹配私钥，因此未重启控制器、未安装 overlay、未调用管理写 API。2026-09-19 后续只读复核确认当前本机挂载公钥与仓库私钥推导公钥一致，并以该身份完成管理员握手及 `GET /api/admin/apps/installed`（5 个现有应用）读取；历史不匹配不改写为当时通过。
 - 后续重建的生产基线 overlay 与 checks 镜像均成功构建；在无网络、只读容器中重跑 `test_environment_management.py` / `test_home_archive.py` 共 11 项，11 passed。该结果仍不等于已安装生产控制器。
 
-R6F 仍未完成组合根的加密备份/离线恢复、真实 Mac/Trilium 上自定义 artifact 的视觉与交互验收、生产 Profile 的停用/启用/安全关闭写操作、账号密码操作和破坏性实际回退。现有 `run-release-combination.py` 仍绑定旧 R5E 资源，当前组合证据来自现有环境的受控手工步骤，不能把旧运行器结果扩大为 R6F 自动化组合通过。R6E 执行器仍未安装为常驻生产服务；自定义作业本轮以受控一次性执行完成并在清理后保留目录审计。用户已完成安全子集页面及普通账号边界实测，但不能扩大为真实 Mac 自定义产物通过。
+R6F 仍未完成真实 Personal/Work Home 的停机备份、真实 Mac/Trilium 上自定义 artifact 的视觉与交互验收、生产 Profile 的停用/启用/安全关闭写操作、账号密码操作和破坏性实际回退。现有 `run-release-combination.py` 仍绑定旧 R5E 资源，当前组合证据来自现有环境的受控手工步骤，不能把旧运行器结果扩大为 R6F 自动化组合通过。R6E 执行器仍未安装为常驻生产服务；自定义作业本轮以受控一次性执行完成并在清理后保留目录审计。用户已完成安全子集页面及普通账号边界实测，但不能扩大为真实 Mac 自定义产物通过。
 
-R6F 保持“进行中”。overlay 安装和现有环境的固化/自定义指纹组合验证已完成并清理；下一步是组合根恢复、真实客户端自定义 artifact 验收、Profile 生命周期写操作和可逆回退演练。停用或安全关闭会影响现有浏览器，须单独选择 Profile 后再操作。在这些条件完成前，不得把 R6 父项标记为收尾。
+R6F 保持“进行中”。overlay 安装、现有环境的固化/自定义指纹组合验证及组合控制根隔离恢复已完成并清理；下一步是真实生产 Home 停机备份、真实客户端自定义 artifact 验收、Profile 生命周期写操作和可逆回退演练。停用或安全关闭会影响现有浏览器，须单独选择 Profile 后再操作。在这些条件完成前，不得把 R6 父项标记为收尾。

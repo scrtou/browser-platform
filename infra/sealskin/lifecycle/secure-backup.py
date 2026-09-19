@@ -220,17 +220,21 @@ def validate_access_registry(raw):
         if len(raw) > 1 << 20:
             raise ValueError()
         value = json.loads(raw)
-        if (set(value) != {"version", "users"} or type(value["version"]) is not int or value["version"] != 1
+        if (set(value) != {"version", "users"} or type(value["version"]) is not int
+                or value["version"] not in (1, 2)
                 or not isinstance(value["users"], list) or not 1 <= len(value["users"]) <= 64):
             raise ValueError()
         seen = set()
         for user in value["users"]:
-            if (not isinstance(user, dict) or set(user) - {"id", "password_hash", "profiles", "disabled"}
+            if (not isinstance(user, dict) or set(user) - {"id", "password_hash", "profiles", "disabled", "role"}
                     or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", user["id"]) or user["id"] in seen
                     or type(user.get("disabled", False)) is not bool
-                    or not isinstance(user["profiles"], list) or not 1 <= len(user["profiles"]) <= 128
+                    or not isinstance(user["profiles"], list) or not 0 <= len(user["profiles"]) <= 128
                     or any(not isinstance(p, str) or not p for p in user["profiles"])
-                    or len(set(user["profiles"])) != len(user["profiles"])):
+                    or len(set(user["profiles"])) != len(user["profiles"])
+                    or user.get("role", "") not in ("", "admin", "user")
+                    or (value["version"] == 1 and user.get("role", "") != "")
+                    or (not user.get("role") == "admin" and len(user["profiles"]) == 0)):
                 raise ValueError()
             algorithm, iterations, salt, digest = user["password_hash"].split("$")
             if (algorithm != "pbkdf2-sha256" or iterations != "600000"

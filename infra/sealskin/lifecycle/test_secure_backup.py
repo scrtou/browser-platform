@@ -371,6 +371,15 @@ def access_and_session_state(args, root):
     return registry, plaintext
 
 
+def test_version2_access_registry_with_roles_is_accepted():
+    verifier = "pbkdf2-sha256$600000$" + base64.b64encode(os.urandom(16)).decode().rstrip("=") + "$" + base64.b64encode(os.urandom(32)).decode().rstrip("=")
+    registry = {"version": 2, "users": [
+        {"id": "owner", "password_hash": verifier, "profiles": [], "role": "admin"},
+        {"id": "entry", "password_hash": verifier, "profiles": ["personal"], "role": "user"},
+    ]}
+    backup.validate_access_registry(backup.canonical(registry))
+
+
 def test_session_keys_and_access_material_restore_with_current_login_policy(setup, monkeypatch):
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     import yaml

@@ -54,7 +54,7 @@ POST /api/admin/profile-secrets/revoke
 
 ## 加密备份与恢复
 
-[secure-backup.py](secure-backup.py) 固定使用 **age v1.2.1** 的 X25519 接收者。创建时直接 tar → age，不生成磁盘明文归档；验证/恢复先在私有 tmpfs 中完成整个 age 流的认证和所有成员/摘要检查，才创建新的恢复目录。暂存容量必须覆盖未压缩归档；当前归档上限 8 GiB，超限拒绝。必须保存独立的 age 恢复 identity。
+[secure-backup.py](secure-backup.py) 固定使用 **age v1.2.1** 的 X25519 接收者。创建时直接 tar → age，不生成磁盘明文归档；验证/恢复先在私有 tmpfs 中完成整个 age 流的认证和所有成员/摘要检查，才创建新的恢复目录。暂存容量必须覆盖未压缩归档；当前归档上限 8 GiB，超限拒绝。必须保存独立的 age 恢复 identity。账号表校验同时接受无角色的 version 1 和带 `admin`/`user` 角色的 version 2；version 1 不得混入角色，普通入口账号必须至少有一个 Profile 授权，管理员可以没有授权。
 
 `create` 支持当前 `/config/.config/sealskin` 部署布局，先后通过 Adapter 控制 socket 核对目标 Profile 已停止、清单为空，并比较来源前后快照。维护期间应保持该 Profile 停止且不修改控制配置。包中包括 Home、Adapter 配置/journal/客户端私钥/服务公钥、固定环境产物和验收报告、Store/主密钥、控制授权与操作元数据、实际 `/config/ssl` 和管理员恢复材料；必要服务密钥缺失时拒绝。服务镜像和客户端代码仍由固定版本构建/发布材料提供，包不包含 Docker 镜像层。
 
