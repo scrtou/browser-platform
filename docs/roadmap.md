@@ -4,7 +4,7 @@
 
 **计划基准：2026-09-18。** R1、R2C、R3、R4A、R4B、R5A、R5B、R5C1、R5C2、R5C3、R5D、R5E、R6A、R6B、R6C 已收尾；R6A/R6B/R6C 为未部署候选。R4B 于 2026-09-17 完成实际生产切换、目标 Mac 生产复测和正式 Caddy/Docker/VPS 重启。R2 的退出全部登录与 Debian 13 仍待完成。下列优先级表示执行顺序与依赖，没有预设完成日期。
 
-当前生产：共享认证控制器、账号入口、Work 兼容镜像和 r9/fill-r10 Personal 已部署。Work/Personal 各 1 record/1 Worker、能力 1/1；Personal 的受管理代理资源和网络为 running。登录/交接/Session、未登录拒绝、Caddy 候选一致性和目标 Mac 生产验收通过，旧 Home、备份和回退材料保留。维护失败与续接见 [DEV-044](deviations/DEV-2026-09-17-044-production-maintenance-runner.md)，Caddy 重启持久化见 [DEV-043](deviations/DEV-2026-09-17-043-caddy-api-config-persistence.md)。正式 Caddy/Docker/VPS 重启均已通过；R2 剩余退出全部登录验证与 Debian 13。管理面第 1 步 [R6A](work-items/R6A-2026-09-17-environment-list.md) 与第 2 步 [R6B](work-items/R6B-2026-09-17-directory-roles-stop.md) 已完成候选代码、Go 隔离测试和文档收尾，均未部署；R6C 候选已完成隔离验证，生产 Adapter 仍为 candidate-4。
+当前生产：共享认证控制器、账号入口、Work 兼容镜像和 r9/fill-r10 Personal 已部署。Work/Personal 各 1 record/1 Worker；Personal 的受管理代理资源和网络为 running。2026-09-19 又部署 R6F Adapter 管理面安全子集并安装现有环境控制器 overlay：列表、账号、名称/起始页、停用/启用和安全关闭已启用；固化/自定义指纹浏览器的创建、启动、代理探测和删除清理已完成一次受控组合验证，临时记录保留审计。原 Personal/Work 容器、Home 与运行绑定保持。用户已完成管理面 Mac/Trilium 实测及普通账号边界测试，R2 仍剩退出全部登录验证与 Debian 13。
 
 R4B 发布候选已转为生产运行态。Work Firefox/Wayland 兼容镜像、Personal r9、生产账号、显示 tmpfs/开机配置与 Caddy autosave 已安装；最终 Mac 生产分项与正式重启通过，R2 退出登录仍须补齐。回退材料已核对并保留，不为证明回退而破坏当前成功代次。
 
@@ -92,10 +92,10 @@ R5C 的顺序子项中，[R5C1 DIRECT](work-items/R5C1-2026-09-14-direct-isolati
 - 验证实际浏览器发布升级/回退，恢复匹配的 Home、镜像和产物快照，记录第三方站点登录结果。
 - 完善监控、告警、容量实测、日志保留与灾备演练。
 - 根据使用需要增加 Trilium Dashboard；Persona Studio 与替代 Broker 只在明确需求或维护成本需要时评估。
-- [R6 远程浏览器管理面](work-items/R6-2026-09-16-environment-management.md)：2026-09-17 按用户需求修订为第 2 版设计——面板可新增/删除/修改远程浏览器，每个浏览器配置代理（不配置即受管理 DIRECT）、指纹（固化目录或自定义生成作业）、固定入口 URL 与访问账号密码；契约见[管理面规格](specs/proxy-environment/management.md)。第 1 步 R6A、第 2 步 R6B 与第 3 步 [R6C](work-items/R6C-2026-09-18-create-delete-launch.md) 已完成候选代码与隔离测试（未部署）；第 4 步 [R6D](work-items/R6D-2026-09-18-proxy-drafts.md) 同日完成候选代码与隔离测试（未部署，真实上游代理归 R6F）；第 5 步 [R6E](work-items/R6E-2026-09-18-custom-fingerprint-jobs.md) 于 2026-09-19 完成候选代码、执行器与隔离验证（未部署）；第 6 步 [R6F](work-items/R6F-2026-09-19-release-combination.md) 已开始，先完成独立组合 QA、备份/恢复、回退材料和生产候选核对，真实 Mac/生产维护按外部条件单独记录。
+- [R6 远程浏览器管理面](work-items/R6-2026-09-16-environment-management.md)：第 1–5 步候选代码与隔离验收已完成；第 6 步 [R6F](work-items/R6F-2026-09-19-release-combination.md) 已部署安全子集并安装现有环境控制器 overlay。固化指纹和自定义指纹浏览器均已在现有环境完成创建、启动、健康/代理探测和删除清理，临时目录保留删除审计；用户已完成 Mac/Trilium 管理面和普通账号边界实测。组合根加密恢复、真实 Mac 自定义产物、Profile 停启/关闭和实际回退仍待验证。
 - R6 实施顺序（第 2 版）：R6A 只读列表 → R6B Profile 目录、账号角色与关闭按钮 → R6C 新增/删除浏览器（固化指纹 + DIRECT/现有代理修订，含 DIRECT 生产前置）→ R6D 代理草稿、隔离探针与修订 → R6E 自定义指纹生成/验收作业 → R6F 组合 QA、真实客户端、生产候选与回退。每个子项都须保留固定 Profile URL、Home 独占、Guard/Relay 无直连和现有生命周期所有权。
 
-完成条件：运维流程可由文档重现，升级/恢复有证据，容量上限来自测量；UI 只显示有新鲜证据支持的状态；管理面通过账号/能力、代理凭据、指纹修订、关闭清理和回退验收。R4B 已收尾；用户于 2026-09-17 决定不等待 R2 剩余的退出登录/Debian 13，R6 按上述第 2 版顺序实施。R6A–R6E 已收尾未部署；R6F 进行中。
+完成条件：运维流程可由文档重现，升级/恢复有证据，容量上限来自测量；UI 只显示有新鲜证据支持的状态；管理面通过账号/能力、代理凭据、指纹修订、关闭清理和回退验收。R6A–R6E 候选已完成，R6F overlay、固化/自定义指纹和真实代理组合已在现有环境验证并清理；组合根恢复、真实客户端自定义产物、Profile 生命周期写操作和实际回退仍未完成，因此 R6 父项继续进行。
 
 <a id="release-criteria"></a>
 ## 版本定义与发布门槛

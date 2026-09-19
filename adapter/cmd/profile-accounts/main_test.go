@@ -84,6 +84,12 @@ func TestAccountChangesAreExplicitPrivateAndRetainOtherUsers(t *testing.T) {
 	if err := run([]string{"put", "--config", config, "--user", "root", "--role", "admin"}, strings.NewReader(password)); err != nil {
 		t.Fatalf("administrator without grants: %v", err)
 	}
+	if err := run([]string{"role", "--config", config, "--user", "alice", "--role", "admin"}, strings.NewReader("")); err != nil {
+		t.Fatalf("promote existing account without password replacement: %v", err)
+	}
+	if err := run([]string{"role", "--config", config, "--user", "alice", "--role", "user"}, strings.NewReader("")); err != nil {
+		t.Fatalf("demote while another administrator remains: %v", err)
+	}
 	if err := run([]string{"disable", "--config", config, "--user", "root"}, strings.NewReader("")); err == nil {
 		t.Fatal("last administrator disabled")
 	}
@@ -108,6 +114,31 @@ func TestAccountChangesAreExplicitPrivateAndRetainOtherUsers(t *testing.T) {
 				t.Fatal("enable or default role failed")
 			}
 		}
+	}
+}
+
+func TestRoleCommandPreservesPasswordAndGrants(t *testing.T) {
+	config, path := configuration(t)
+	password := "synthetic-role-password-51e9"
+	if err := run([]string{"put", "--config", config, "--user", "owner", "--profiles", "personal,work"}, strings.NewReader(password)); err != nil {
+		t.Fatal(err)
+	}
+	before, _, err := access.ReadRegistry(path, map[string]bool{"personal": true, "work": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"role", "--config", config, "--user", "owner", "--role", "admin"}, strings.NewReader("ignored")); err != nil {
+		t.Fatal(err)
+	}
+	after, _, err := access.ReadRegistry(path, map[string]bool{"personal": true, "work": true})
+	if err != nil || after.Version != 2 || len(after.Users) != 1 || after.Users[0].Role != access.RoleAdmin {
+		t.Fatalf("unexpected promoted registry: %+v %v", after, err)
+	}
+	if before.Users[0].PasswordHash != after.Users[0].PasswordHash || strings.Join(after.Users[0].Profiles, ",") != "personal,work" {
+		t.Fatal("role command changed password verifier or grants")
+	}
+	if err := run([]string{"role", "--config", config, "--user", "owner", "--role", "user"}, strings.NewReader("")); err == nil {
+		t.Fatal("last administrator demotion was accepted")
 	}
 }
 
@@ -176,5 +207,20 @@ func TestPersistedDirectoryIsAuthoritativeForCLIGrants(t *testing.T) {
 	after, _ := os.ReadFile(users)
 	if string(before) != string(after) {
 		t.Fatal("failed directory validation modified the account registry")
+	}
+}
+
+func TestUngrantedDeletedProfileRepairsRegistry(t *testing.T) {
+	config, users := configuration(t)
+	password := "synthetic-ungrant-password-51e9"
+	if err := run([]string{"put", "--config", config, "--user", "root", "--role", "admin", "--profiles", "personal,work"}, strings.NewReader(password)); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"ungrant-profile", "--config", config, "--profile", "work"}, strings.NewReader("")); err != nil {
+		t.Fatal(err)
+	}
+	registry, _, err := access.ReadRegistry(users, map[string]bool{"personal": true, "work": true})
+	if err != nil || len(registry.Users) != 1 || strings.Join(registry.Users[0].Profiles, ",") != "personal" {
+		t.Fatalf("unexpected CLI cleanup: %+v %v", registry, err)
 	}
 }

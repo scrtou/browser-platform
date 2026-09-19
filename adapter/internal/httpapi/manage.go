@@ -47,6 +47,17 @@ type browserManagementService interface {
 	DeleteBrowser(context.Context, string, string, string) error
 }
 
+type managementCapabilityService interface {
+	ManagementCapabilities() profile.ManagementCapabilities
+}
+
+func managementCapabilities(service any) profile.ManagementCapabilities {
+	if capabilities, ok := service.(managementCapabilityService); ok {
+		return capabilities.ManagementCapabilities()
+	}
+	return profile.ManagementCapabilities{}
+}
+
 type environmentCatalogService interface {
 	EnvironmentArtifacts(context.Context) ([]profile.EnvironmentArtifactSummary, error)
 }
@@ -160,7 +171,7 @@ func (s *Server) manageEnvironments(writer http.ResponseWriter, request *http.Re
 
 func (s *Server) manageEnvironmentCatalog(writer http.ResponseWriter, request *http.Request) {
 	noStore(writer)
-	if _, ok := access.Grants(request); !ok {
+	if _, ok := access.Grants(request); !ok || !managementCapabilities(s.profiles).CreateDelete {
 		http.NotFound(writer, request)
 		return
 	}
@@ -192,7 +203,9 @@ func (s *Server) managePage(writer http.ResponseWriter, request *http.Request) {
 	defer cancel()
 	accounts := s.accounts()
 	entries := s.environments(ctx, grants, accounts)
+	capabilities := managementCapabilities(s.profiles)
 	drafts, hasDrafts := s.profiles.(proxyDraftService)
+	hasDrafts = hasDrafts && capabilities.ProxyDrafts
 	rows := make([]manageRow, 0, len(entries))
 	for _, entry := range entries {
 		row := manageRowFor(entry)
@@ -216,13 +229,14 @@ func (s *Server) managePage(writer http.ResponseWriter, request *http.Request) {
 	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 	writer.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 	var artifacts []profile.EnvironmentArtifactSummary
-	if catalog, ok := s.profiles.(environmentCatalogService); ok {
+	if catalog, ok := s.profiles.(environmentCatalogService); ok && capabilities.CreateDelete {
 		if listed, err := catalog.EnvironmentArtifacts(ctx); err == nil {
 			artifacts = listed
 		}
 	}
 	var jobs []profile.EnvironmentJobSummary
 	jobService, hasJobs := s.profiles.(environmentJobService)
+	hasJobs = hasJobs && capabilities.EnvironmentJobs
 	if hasJobs {
 		listed, err := jobService.EnvironmentJobs()
 		if err != nil {
@@ -232,21 +246,22 @@ func (s *Server) managePage(writer http.ResponseWriter, request *http.Request) {
 		}
 	}
 	data := struct {
-		Subject     string
-		GeneratedAt string
-		Notice      string
-		Rows        []manageRow
-		Accounts    []accountRow
-		ProfileIDs  []string
-		EntryOrigin string
-		CSRF        string
-		ProxyDrafts bool
-		Artifacts   []profile.EnvironmentArtifactSummary
-		Jobs        []profile.EnvironmentJobSummary
-		JobsEnabled bool
+		Subject      string
+		GeneratedAt  string
+		Notice       string
+		Rows         []manageRow
+		Accounts     []accountRow
+		ProfileIDs   []string
+		EntryOrigin  string
+		CSRF         string
+		ProxyDrafts  bool
+		Artifacts    []profile.EnvironmentArtifactSummary
+		Jobs         []profile.EnvironmentJobSummary
+		JobsEnabled  bool
+		CreateDelete bool
 	}{Subject: access.Subject(request), GeneratedAt: time.Now().UTC().Format(time.RFC3339), Notice: notices[request.URL.Query().Get("notice")],
 		Rows: rows, Accounts: accountRows(accounts, profileIDs), ProfileIDs: profileIDs, EntryOrigin: s.publicOrigin.String(), CSRF: access.CSRF(request), ProxyDrafts: hasDrafts,
-		Artifacts: artifacts, Jobs: jobs, JobsEnabled: hasJobs}
+		Artifacts: artifacts, Jobs: jobs, JobsEnabled: hasJobs && capabilities.EnvironmentJobs, CreateDelete: capabilities.CreateDelete}
 	if err := manageTemplate.Execute(writer, data); err != nil {
 		s.logger.Error("render environment list", "error", err)
 	}
@@ -339,6 +354,7 @@ func (s *Server) manageCreateBrowser(writer http.ResponseWriter, request *http.R
 	noStore(writer)
 	_, ok := access.Grants(request)
 	manager, available := s.profiles.(browserManagementService)
+	available = available && managementCapabilities(s.profiles).CreateDelete
 	if !ok || !available {
 		http.NotFound(writer, request)
 		return
@@ -481,6 +497,10 @@ func (s *Server) manageBrowser(writer http.ResponseWriter, request *http.Request
 	actor := access.Subject(request)
 	switch request.PostForm.Get("action") {
 	case "delete":
+		if !managementCapabilities(s.profiles).CreateDelete {
+			http.NotFound(writer, request)
+			return
+		}
 		if !hasCapability(grant, "manage") {
 			http.Error(writer, "Forbidden", http.StatusForbidden)
 			return
@@ -501,10 +521,21 @@ func (s *Server) manageBrowser(writer http.ResponseWriter, request *http.Request
 		}
 		ctx, cancel := context.WithTimeout(request.Context(), sealskin.LongOperationTimeout)
 		defer cancel()
+		if s.access != nil {
+			if err := s.access.Accounts().RemoveProfileGrants(id); err != nil {
+				s.logger.Warn("browser account grant cleanup failed", "profile", id, "error", err)
+				s.redirectManage(writer, request, "unavailable")
+				return
+			}
+			if err := s.access.Reload(); err != nil {
+				s.logger.Warn("browser account registry reload failed", "profile", id, "error", err)
+				s.redirectManage(writer, request, "unavailable")
+				return
+			}
+		}
 		err := manager.DeleteBrowser(ctx, id, actor, idempotencyKey)
 		switch {
 		case err == nil:
-			s.revokeBrowserGrants(id)
 			s.logger.Info("management action", "profile", id, "action", "browser_delete", "status", "deleted")
 			s.redirectManage(writer, request, "deleted")
 		case errors.Is(err, profile.ErrBrowserBusy), errors.Is(err, profile.ErrStopUnconfirmed):
@@ -539,6 +570,10 @@ func (s *Server) manageBrowser(writer http.ResponseWriter, request *http.Request
 		}
 		return
 	case "proxy_draft", "proxy_probe", "proxy_apply", "network_direct":
+		if !managementCapabilities(s.profiles).ProxyDrafts {
+			http.NotFound(writer, request)
+			return
+		}
 		if !hasCapability(grant, "manage") {
 			http.Error(writer, "Forbidden", http.StatusForbidden)
 			return
@@ -599,7 +634,7 @@ func (s *Server) manageBrowser(writer http.ResponseWriter, request *http.Request
 
 func (s *Server) manageEnvironmentJobList(writer http.ResponseWriter, request *http.Request) {
 	noStore(writer)
-	if _, ok := access.Grants(request); !ok {
+	if _, ok := access.Grants(request); !ok || !managementCapabilities(s.profiles).EnvironmentJobs {
 		http.NotFound(writer, request)
 		return
 	}
@@ -624,7 +659,7 @@ func (s *Server) manageEnvironmentJobList(writer http.ResponseWriter, request *h
 // carries only specification 46.2 fields; the service fixes everything else.
 func (s *Server) manageEnvironmentJobCreate(writer http.ResponseWriter, request *http.Request) {
 	noStore(writer)
-	if _, ok := access.Grants(request); !ok {
+	if _, ok := access.Grants(request); !ok || !managementCapabilities(s.profiles).EnvironmentJobs {
 		http.NotFound(writer, request)
 		return
 	}
@@ -888,7 +923,7 @@ var manageTemplate = template.Must(template.New("manage").Parse(strings.TrimSpac
   <p class="meta">管理员 {{.Subject}} · 生成时间 {{.GeneratedAt}} · 列表只读取最近一次健康采样，过期即标为 stale；关闭按钮走已验证的停止流程，不删除 Home。</p>
   {{if .Notice}}<p class="notice">{{.Notice}}</p>{{end}}
   <h2>远程浏览器</h2>
-  <p class="meta">新增浏览器只接受固化环境目录中的 artifact 和受管理网络策略；DIRECT 也必须经过控制器网关。</p>
+  {{if .CreateDelete}}<p class="meta">新增浏览器只接受固化环境目录中的 artifact 和受管理网络策略；DIRECT 也必须经过控制器网关。</p>
   <form method="post" action="/manage/browsers"><input type="hidden" name="csrf" value="{{.CSRF}}">
     <input type="text" name="label" maxlength="64" placeholder="名称" required>
     <input type="url" name="start_url" maxlength="2048" placeholder="起始页 URL" required>
@@ -900,7 +935,7 @@ var manageTemplate = template.Must(template.New("manage").Parse(strings.TrimSpac
     <input type="text" name="idempotency_key" maxlength="128" placeholder="幂等键" required>
     <div>{{range .Accounts}}<label class="chk"><input type="checkbox" name="accounts" value="{{.ID}}"> {{.ID}}</label>{{end}}</div>
     <button>新增浏览器</button>
-  </form>
+  </form>{{else}}<p class="meta">新增与归档删除尚未启用；现有浏览器仍可修改、停用或安全关闭。</p>{{end}}
   {{if .Rows}}<table>
     <tr><th>浏览器</th><th>入口 URL / 账号</th><th>记录状态</th><th>健康（采样时间）</th><th>网络</th><th>显示 / 语言 / 时区</th><th>应用 / Home</th><th>环境产物</th><th>操作</th></tr>
     {{range .Rows}}<tr>
@@ -928,7 +963,7 @@ var manageTemplate = template.Must(template.New("manage").Parse(strings.TrimSpac
         {{if .Enabled}}<form method="post" action="/manage/browsers/{{.ProfileID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="disable"><input type="hidden" name="revision" value="{{.Revision}}"><button>停用</button></form>
         {{else}}<form method="post" action="/manage/browsers/{{.ProfileID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="enable"><input type="hidden" name="revision" value="{{.Revision}}"><button>启用</button></form>{{end}}{{end}}
         {{if and .StopAllowed .Running}}<form method="post" action="/manage/browsers/{{.ProfileID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="stop"><button>安全关闭</button></form>{{end}}
-        {{if .Manage}}<form method="post" action="/manage/browsers/{{.ProfileID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="delete"><input type="text" name="idempotency_key" maxlength="128" placeholder="幂等键" required><button>归档并删除</button></form>{{end}}
+        {{if and $.CreateDelete .Manage}}<form method="post" action="/manage/browsers/{{.ProfileID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="delete"><input type="text" name="idempotency_key" maxlength="128" placeholder="幂等键" required><button>归档并删除</button></form>{{end}}
       </td>
       {{else}}<td colspan="7" class="meta">摘要暂不可用</td>{{end}}
     </tr>{{end}}

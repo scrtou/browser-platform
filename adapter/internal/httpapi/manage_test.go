@@ -133,12 +133,17 @@ func manageForm(values url.Values, subject string, grants []access.Grant, target
 
 type fakeBrowserManager struct {
 	*fakeProfiles
+	capabilities  profile.ManagementCapabilities
 	createRequest profile.CreateBrowserRequest
 	createActor   string
 	createKey     string
 	deleteID      string
 	deleteActor   string
 	deleteKey     string
+}
+
+func (f *fakeBrowserManager) ManagementCapabilities() profile.ManagementCapabilities {
+	return f.capabilities
 }
 
 func (f *fakeBrowserManager) CreateBrowser(_ context.Context, request profile.CreateBrowserRequest, actor, key string) (profile.Record, error) {
@@ -213,7 +218,7 @@ func TestManagementProxyDraftFormsNeverEchoCredentials(t *testing.T) {
 	summary := sampleSummary("personal")
 	summary.ConfiguredNetworkMode = "direct"
 	base := &fakeProfiles{environments: map[string]profile.EnvironmentSummary{"personal": summary}, stopResult: profile.LifecycleResult{Status: state.StatusStopped}}
-	profiles := &fakeProxyDrafts{fakeBrowserManager: &fakeBrowserManager{fakeProfiles: base}, drafts: map[string]profile.ProxyDraftSummary{}, probeStatus: "passed"}
+	profiles := &fakeProxyDrafts{fakeBrowserManager: &fakeBrowserManager{fakeProfiles: base, capabilities: profile.ManagementCapabilities{CreateDelete: true, ProxyDrafts: true}}, drafts: map[string]profile.ProxyDraftSummary{}, probeStatus: "passed"}
 	logs := &strings.Builder{}
 	server := New(profiles, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(logs, nil)), HealthUI{})
 	grants := []access.Grant{{Profile: "personal", Capabilities: []string{"view", "manage", "stop"}}}
@@ -320,7 +325,7 @@ func (f *fakeEnvironmentJobs) EnvironmentArtifacts(context.Context) ([]profile.E
 
 func TestManagementEnvironmentJobsFormListAndCatalogSelect(t *testing.T) {
 	base := &fakeProfiles{environments: map[string]profile.EnvironmentSummary{"personal": sampleSummary("personal")}, stopResult: profile.LifecycleResult{Status: state.StatusStopped}}
-	profiles := &fakeEnvironmentJobs{fakeBrowserManager: &fakeBrowserManager{fakeProfiles: base}, jobs: []profile.EnvironmentJobSummary{{ID: "job-ffffffffffffffff", EnvironmentID: "env-custom-ffffffffffffffff", Actor: "root",
+	profiles := &fakeEnvironmentJobs{fakeBrowserManager: &fakeBrowserManager{fakeProfiles: base, capabilities: profile.ManagementCapabilities{CreateDelete: true, EnvironmentJobs: true}}, jobs: []profile.EnvironmentJobSummary{{ID: "job-ffffffffffffffff", EnvironmentID: "env-custom-ffffffffffffffff", Actor: "root",
 		Locale: "de-DE", Timezone: "Europe/Berlin", Screen: "1600x900@1", Window: "1600x900", Status: "failed", Phase: "failed", Code: "ENVIRONMENT_ACCEPTANCE_FAILED", Message: "exit 1", ArtifactSHA256: strings.Repeat("c", 64), Attempts: 2}}}
 	server := New(profiles, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})
 	grants := []access.Grant{{Profile: "personal", Capabilities: []string{"view", "manage", "stop"}}}
@@ -374,19 +379,19 @@ func TestManagementEnvironmentJobsFormListAndCatalogSelect(t *testing.T) {
 	plain := New(base, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})
 	response = httptest.NewRecorder()
 	plain.ServeHTTP(response, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/environment-jobs", nil), "root", grants))
-	if response.Code != http.StatusNotImplemented {
+	if response.Code != http.StatusNotFound {
 		t.Fatalf("jobs without service: %d", response.Code)
 	}
 	page = httptest.NewRecorder()
 	plain.ServeHTTP(page, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/", nil), "root", grants))
-	if strings.Contains(page.Body.String(), "自定义指纹作业") || !strings.Contains(page.Body.String(), `name="environment_artifact_id" maxlength`) {
-		t.Fatal("page without job service still rendered the job section or hid the text input")
+	if strings.Contains(page.Body.String(), "自定义指纹作业") || strings.Contains(page.Body.String(), `name="environment_artifact_id"`) {
+		t.Fatal("page without optional capabilities rendered a job or browser creation field")
 	}
 }
 
 func TestManagementCreatesDeletesAndListsFixedArtifacts(t *testing.T) {
 	base := &fakeProfiles{environments: map[string]profile.EnvironmentSummary{"personal": sampleSummary("personal")}, stopResult: profile.LifecycleResult{Status: state.StatusStopped}}
-	profiles := &fakeBrowserManager{fakeProfiles: base}
+	profiles := &fakeBrowserManager{fakeProfiles: base, capabilities: profile.ManagementCapabilities{CreateDelete: true}}
 	server := New(profiles, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})
 	grants := []access.Grant{{Profile: "personal", Capabilities: []string{"view", "manage", "stop"}}}
 	created := httptest.NewRecorder()
@@ -407,6 +412,42 @@ func TestManagementCreatesDeletesAndListsFixedArtifacts(t *testing.T) {
 	server.ServeHTTP(catalog, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/environments/catalog", nil), "root", grants))
 	if catalog.Code != http.StatusOK || !strings.Contains(catalog.Body.String(), `"id":"env-r9"`) || strings.Contains(catalog.Body.String(), "image") {
 		t.Fatalf("catalog: %d %s", catalog.Code, catalog.Body.String())
+	}
+}
+
+func TestManagementUnavailableOptionalCapabilitiesAreNotAdvertisedOrCallable(t *testing.T) {
+	base := &fakeProfiles{environments: map[string]profile.EnvironmentSummary{"personal": sampleSummary("personal")}, stopResult: profile.LifecycleResult{Status: state.StatusStopped}}
+	profiles := &fakeProxyDrafts{fakeBrowserManager: &fakeBrowserManager{fakeProfiles: base}, drafts: map[string]profile.ProxyDraftSummary{}}
+	server := New(profiles, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})
+	grants := []access.Grant{{Profile: "personal", Capabilities: []string{"view", "manage", "stop"}}}
+
+	page := httptest.NewRecorder()
+	server.ServeHTTP(page, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/", nil), "root", grants))
+	body := page.Body.String()
+	for _, forbidden := range []string{"新增浏览器</button>", "归档并删除</button>", `name="action" value="proxy_draft"`, "自定义指纹作业"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("disabled capability %q was advertised: %s", forbidden, body)
+		}
+	}
+	for _, required := range []string{"新增与归档删除尚未启用", `name="action" value="update"`, `name="action" value="disable"`, "安全关闭"} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("base management action %q is missing: %s", required, body)
+		}
+	}
+
+	requests := []*http.Request{
+		manageForm(url.Values{"idempotency_key": {"create-1"}}, "root", grants, "https://adapter.example/manage/browsers"),
+		manageForm(url.Values{"action": {"delete"}, "idempotency_key": {"delete-1"}}, "root", grants, "https://adapter.example/manage/browsers/personal"),
+		manageForm(url.Values{"action": {"proxy_draft"}}, "root", grants, "https://adapter.example/manage/browsers/personal"),
+		manageForm(url.Values{"locale": {"en-US"}}, "root", grants, "https://adapter.example/manage/environment-jobs"),
+		withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/environments/catalog", nil), "root", grants),
+	}
+	for _, request := range requests {
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, request)
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("disabled optional endpoint %s returned %d", request.URL.Path, response.Code)
+		}
 	}
 }
 

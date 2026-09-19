@@ -95,3 +95,30 @@ func TestRegistryVersionsRolesAndLastAdministrator(t *testing.T) {
 		t.Fatal("mutating a missing registry created it")
 	}
 }
+
+func TestRemoveProfileGrantsRecoversAfterDirectoryDeletion(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "users.json")
+	known := map[string]bool{"personal": true, "removed": true}
+	store := NewAccountStore(path, func() map[string]bool { return known })
+	if err := store.Put("root", testPassword, RoleAdmin, []string{"personal", "removed"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put("only-removed", testPassword, RoleUser, []string{"removed"}, false); err != nil {
+		t.Fatal(err)
+	}
+	delete(known, "removed")
+	if _, _, err := ReadRegistry(path, known); err == nil {
+		t.Fatal("stale Profile grant was accepted before cleanup")
+	}
+	if err := store.RemoveProfileGrants("removed"); err != nil {
+		t.Fatal(err)
+	}
+	registry, _, err := ReadRegistry(path, known)
+	if err != nil || len(registry.Users) != 1 || registry.Users[0].ID != "root" || strings.Join(registry.Users[0].Profiles, ",") != "personal" {
+		t.Fatalf("unexpected recovered registry: %+v %v", registry, err)
+	}
+}

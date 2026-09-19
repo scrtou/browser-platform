@@ -24,8 +24,8 @@ func main() {
 }
 
 func run(args []string, input io.Reader) error {
-	if len(args) == 0 || (args[0] != "put" && args[0] != "disable" && args[0] != "enable" && args[0] != "check") {
-		return errors.New("use profile-accounts put|disable|enable|check --config <adapter-config>")
+	if len(args) == 0 || (args[0] != "put" && args[0] != "disable" && args[0] != "enable" && args[0] != "role" && args[0] != "ungrant-profile" && args[0] != "check") {
+		return errors.New("use profile-accounts put|disable|enable|role|ungrant-profile|check --config <adapter-config>")
 	}
 	command := args[0]
 	flags := flag.NewFlagSet("profile-accounts", flag.ContinueOnError)
@@ -35,6 +35,7 @@ func run(args []string, input io.Reader) error {
 	grants := flags.String("profiles", "", "comma-separated Profile IDs")
 	replace := flags.Bool("replace", false, "explicitly replace an existing account and its password/grants")
 	role := flags.String("role", "", "account role: admin or user (default user on create, unchanged on replace)")
+	profileID := flags.String("profile", "", "deleted Profile ID whose account grants must be removed")
 	if flags.Parse(args[1:]) != nil || flags.NArg() != 0 || *configPath == "" {
 		return errors.New("invalid account command arguments")
 	}
@@ -62,7 +63,7 @@ func run(args []string, input io.Reader) error {
 	store := access.NewAccountStore(cfg.Access.UsersFile, known)
 	switch command {
 	case "check":
-		if *user != "" || *grants != "" || *replace || *role != "" {
+		if *user != "" || *grants != "" || *replace || *role != "" || *profileID != "" {
 			return errors.New("check accepts only the configuration path")
 		}
 		if _, err := os.Lstat(cfg.Access.UsersFile); err != nil {
@@ -70,13 +71,23 @@ func run(args []string, input io.Reader) error {
 		}
 		_, _, err := access.ReadRegistry(cfg.Access.UsersFile, known())
 		return err
+	case "ungrant-profile":
+		if *profileID == "" || *user != "" || *grants != "" || *replace || *role != "" {
+			return errors.New("ungrant-profile requires one --profile")
+		}
+		return store.RemoveProfileGrants(*profileID)
 	case "disable", "enable":
-		if *user == "" || *grants != "" || *replace || *role != "" {
+		if *user == "" || *grants != "" || *replace || *role != "" || *profileID != "" {
 			return errors.New(command + " requires one existing account")
 		}
 		return store.SetDisabled(*user, command == "disable")
+	case "role":
+		if *user == "" || *grants != "" || *replace || *profileID != "" || (*role != access.RoleAdmin && *role != access.RoleUser) {
+			return errors.New("role requires one existing account and --role admin|user")
+		}
+		return store.SetRole(*user, *role)
 	}
-	if *user == "" {
+	if *user == "" || *profileID != "" {
 		return errors.New("put requires --user")
 	}
 	var selected []string

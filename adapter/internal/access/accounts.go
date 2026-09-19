@@ -55,6 +55,14 @@ func (s *AccountStore) known() map[string]bool {
 // result atomically. A missing registry is created only when allowCreate is
 // set, so an accidental path never becomes a new empty account table.
 func (s *AccountStore) Mutate(allowCreate bool, change func(*Registry) error) error {
+	known := s.known()
+	return s.mutate(allowCreate, known, known, change)
+}
+
+// mutate permits a narrowly broader set while loading than it permits in the
+// final registry. This is used only to remove a Profile grant after the
+// authoritative Profile directory has stopped advertising that Profile.
+func (s *AccountStore) mutate(allowCreate bool, readProfiles, finalProfiles map[string]bool, change func(*Registry) error) error {
 	parent, err := os.Lstat(filepath.Dir(s.path))
 	if err != nil || !parent.IsDir() || parent.Mode().Perm()&0o077 != 0 {
 		return errors.New("create the account directory with mode 0700 before use")
@@ -77,7 +85,7 @@ func (s *AccountStore) Mutate(allowCreate bool, change func(*Registry) error) er
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN) //nolint:errcheck
 	registry := Registry{Version: 1}
 	if _, err := os.Lstat(s.path); err == nil {
-		registry, _, err = ReadRegistry(s.path, s.known())
+		registry, _, err = ReadRegistry(s.path, readProfiles)
 		if err != nil {
 			return err
 		}
@@ -85,6 +93,10 @@ func (s *AccountStore) Mutate(allowCreate bool, change func(*Registry) error) er
 		return errors.New("account registry unavailable")
 	}
 	if err := change(&registry); err != nil {
+		return err
+	}
+	registry.Version = registryVersion(registry)
+	if err := validateRegistry(registry, finalProfiles); err != nil {
 		return err
 	}
 	return WriteRegistry(s.path, registry)
@@ -212,6 +224,42 @@ func (s *AccountStore) SetGrants(id string, grants []string) error {
 			return ErrAccountNotFound
 		}
 		registry.Users[index].Profiles = normalized
+		return nil
+	})
+}
+
+// RemoveProfileGrants atomically removes one Profile from every account even
+// when the Profile directory has already marked it deleted. An ordinary entry
+// account whose only grant was the deleted Profile is removed as it can no
+// longer satisfy the registry invariant or log into any browser. Administrators
+// may remain with no explicit start grants and retain management access.
+func (s *AccountStore) RemoveProfileGrants(profileID string) error {
+	profileID = strings.TrimSpace(profileID)
+	known := s.known()
+	if profileID == "" || known == nil {
+		return errors.New("Profile grant cleanup requires the authoritative Profile set")
+	}
+	readable := make(map[string]bool, len(known)+1)
+	for id := range known {
+		readable[id] = true
+	}
+	readable[profileID] = true
+	return s.mutate(false, readable, known, func(registry *Registry) error {
+		users := make([]Account, 0, len(registry.Users))
+		for _, account := range registry.Users {
+			grants := account.Profiles[:0]
+			for _, grant := range account.Profiles {
+				if grant != profileID {
+					grants = append(grants, grant)
+				}
+			}
+			account.Profiles = grants
+			if len(account.Profiles) == 0 && account.EffectiveRole() != RoleAdmin {
+				continue
+			}
+			users = append(users, account)
+		}
+		registry.Users = users
 		return nil
 	})
 }

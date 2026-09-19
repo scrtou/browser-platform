@@ -154,6 +154,15 @@ type CreateBrowserRequest struct {
 	WaylandMode           bool
 }
 
+// ManagementCapabilities reports which optional management backends are
+// fully configured. The HTTP layer uses this to avoid advertising actions
+// that can only fail after submission.
+type ManagementCapabilities struct {
+	CreateDelete    bool
+	ProxyDrafts     bool
+	EnvironmentJobs bool
+}
+
 type Service struct {
 	orchestrator  Orchestrator
 	admin         AdminOrchestrator
@@ -272,6 +281,15 @@ func (s *Service) Records() []Record { return s.directory.all() }
 
 // ProfileIDs lists the configured Profile IDs in a stable order.
 func (s *Service) ProfileIDs() []string { return s.directory.ids() }
+
+func (s *Service) ManagementCapabilities() ManagementCapabilities {
+	createDelete := s.directoryPath != "" && s.admin != nil && s.homeArchiver != nil && s.catalog != nil
+	return ManagementCapabilities{
+		CreateDelete:    createDelete,
+		ProxyDrafts:     createDelete && s.proxyTemplate != nil,
+		EnvironmentJobs: s.catalog != nil && s.jobSpool != "",
+	}
+}
 
 // KnownProfile reports whether a Profile ID is configured.
 func (s *Service) KnownProfile(id string) bool {

@@ -13,8 +13,8 @@ systemctl --user is-active profile-adapter.service
 systemctl --user is-enabled profile-adapter.service
 loginctl show-user sshUser -p Linger
 docker ps --format '{{.Names}}\t{{.Status}}'
-curl -fsS http://127.0.0.1:9100/healthz
-curl -fsS http://127.0.0.1:9100/readyz
+curl -fsS --resolve mybrowser.azhen.de:443:127.0.0.1 https://mybrowser.azhen.de/healthz
+curl -fsS --resolve mybrowser.azhen.de:443:127.0.0.1 https://mybrowser.azhen.de/readyz
 ~/.local/lib/browser-platform/profile-adapter \
   -config infra/sealskin/adapter-config.json -inspect-profile personal
 ~/.local/lib/browser-platform/profile-adapter \
@@ -30,6 +30,8 @@ curl -fsS http://127.0.0.1:9100/readyz
 检查结果记录时间、发布版本和适用 Profile。避免把完整 Docker inspect、私有配置或原始授权响应贴入文档；它们可能包含不应公开的运行信息。
 
 R5D 的 [入口授权](../infra/sealskin/entry-auth/README.md) 已通过独立验收，并随 R4B 共享组合部署。两个公开域名都经过 Adapter；普通健康路径不提供 Profile 数据，`/browser/{profile}/health` 要求当前登录和 Profile 授权。账号表变更、注销、到期或业务绑定变化只撤销显示；查看/停止 Worker 仍通过原运维 socket。账号管理使用 `profile-accounts`，密码经标准输入，不放入命令参数。R4B 上线或重启后可运行 `python3 infra/sealskin/checks/check-r4b-production-live.py --output <新的私有目录>` 做脱敏只读复核；输出目录必须不存在。
+
+2026-09-19 生产已启用 R6 管理面安全子集。管理员登录后访问 `https://mybrowser.azhen.de/manage/`；当前可查看 Personal/Work、管理入口账号、修改名称与起始页、停用/启用和安全关闭。未配置完整后端的新增/归档删除、代理草稿和自定义指纹不显示，直接请求也返回 404。`owner` 已无损提升为管理员，原密码和 Profile 授权不变。执行停用或安全关闭会产生真实生产副作用，实测前须明确选定 Profile；仅打开页面、查看列表和编辑框不会启动、停止或探测浏览器。
 
 R5C1 候选中的 DIRECT 报告增加 `network_mode=direct` 和必需的 `egress` 分项，`proxy` 为 `not_applicable / DIRECT_NO_UPSTREAM`。`DIRECT_OK` 只表示经专属网关的 HTTPS 探测通过；未执行探测、地址证据缺失或端点异常保持 unknown，不能据此声称地区/公开 DNS 一致性通过。候选未部署，生产旧 Work 不具有该隔离保证。
 
@@ -92,6 +94,8 @@ R2A/R2C 的旧部署加密包仍是切换前 Personal/Work Home 的保留恢复�
 Camoufox 的现有离线恢复证据使用 QA Home 和同一固定版本。真实 Home 备份恢复、跨引擎迁移和跨版本回退依照 [R2](roadmap.md#r2)、[R4](roadmap.md#r4)、[R6](roadmap.md#r6) 分别验收。
 
 当前控制服务的安装、旧 payload 位置和回滚限制见 [生命周期安装与回滚](../infra/sealskin/lifecycle/README.md#构建与安装)，精确发布摘要见 [v2 发布记录](../infra/sealskin/network-isolation-acceptance-2026-09-13.md#发布身份)。若新版本已创建受管理代次，应先由对应版本确认其资源清空，再评估回退；不能恢复旧 journal 强行释放 Home。
+
+R6 管理面安全子集的私有回退包同时保存部署前 Adapter、配置、状态和 version 1 账号表。旧 Adapter 不能读取含角色的 version 2 账号表，因此回退不得只换二进制；须在 Adapter 停止时同时恢复旧二进制、旧配置和旧账号表，再启动并复核 health/ready 与两个 Profile。`profiles.json` 可保留为未引用文件，不得用旧状态覆盖部署后发生的真实生命周期操作；若管理面已经修改浏览器定义，回退前须单独评估这些修改，不能用部署前快照静默抹除。
 
 R5A 新增代理协议/认证修订，当前仅隔离 QA，生产仍使用原版本。采用新修订时，先核对协议能力、CONNECT 端口、代理 CA/主机名与准确凭据字节，经已验证 stop 后切换引用再启动；运行中不热改原代次。回退 R5A 之前的 payload 还需在资源清空后恢复旧 schema 的策略 registry 与匹配应用引用，保留最新 journal。构建器会拒绝覆盖输入不同的镜像标签，恢复需保留原 image ID 的可查标签。
 

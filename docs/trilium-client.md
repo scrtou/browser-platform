@@ -13,7 +13,7 @@
 
 `https://mysession.azhen.de/` 承载 SealSkin 会话与显示通道。入口会自动跳转并授权，不把 Session URL 保存到永久笔记。Work 现使用带正常退出和显示认证能力的兼容 Firefox/Wayland 代次；Personal 已切换到 r9/fill-r10、新 Home 与受管理代理。旧 Personal、r7 和 Work Home、加密备份及回退材料仍保留；部署范围见 [开发进度](progress.md#deployment)。
 
-[入口登录](../infra/sealskin/entry-auth/README.md) 已随 R4B 上线。仍保存上述固定地址；首次进入或登录到期时先登录，再进入获授权的 Profile。入口首页可退出登录，退出会断开该登录的画面，浏览器数据保留。再次登录后打开固定入口可重新连接；打开第二个完整画面会接管前一个画面的控制。服务器端生产登录、交接与最终 Session 已通过；用户也已在目标 Mac/Trilium 确认正式登录、Personal 铺满/点击/图片预览和 Work 打开正常。R6A 候选新增首页“环境列表与状态”链接（`/manage/`）用于只读查看授权环境的记录状态、最近健康采样与环境产物；该候选尚未部署生产，Trilium 中的实际显示未测。
+[入口登录](../infra/sealskin/entry-auth/README.md) 已随 R4B 上线。仍保存上述固定地址；首次进入或登录到期时先登录，再进入获授权的 Profile。入口首页可退出登录，退出会断开该登录的画面，浏览器数据保留。再次登录后打开固定入口可重新连接；打开第二个完整画面会接管前一个画面的控制。服务器端生产登录、交接与最终 Session 已通过；用户也已在目标 Mac/Trilium 确认正式登录、Personal 铺满/点击/图片预览和 Work 打开正常。R6F 已把管理面安全子集部署到 `/manage/`；2026-09-19 用户在目标 Mac/Trilium 使用原 `owner` 账号成功进入，页面显示 Personal/Work、账号管理和修改/停启/安全关闭操作，并明确提示新增与归档删除未启用；代理和自定义指纹入口未显示。随后完成名称/起始页可逆修改、账号创建及普通账号边界实测；未触发停用、启用、安全关闭或账号密码操作。
 
 ## 常用操作
 
@@ -61,6 +61,16 @@
 2026-09-15，用户补充 macOS 15.1 (24B83) / Trilium 0.105.0、本机 1280×800、正常显示、macOS 系统中文输入法，并确认 r7 QA 的基础输入/候选取消、双向文字、Files 按钮选择/Finder 拖放、后退/前进、新标签页和断网恢复重载通过。用户反馈窗口偏小、截图仅看到成功提示；r9 已修复窗口并补上图片预览区，原入口留供复测。远端报告的 1920×1080 / DPR 1 不代表 Mac 本机参数。
 
 2026-09-16，用户复测 r9 后确认五个按钮可点击、页面可见图片预览，但固定画面没有铺满 Trilium 视区，并指出 Work 页面显示正常。检查发现远端窗口本身已铺满，留边来自客户端对固定 16:9 串流的等比缩放；独立 QA 已切到 `fill-r10`，改为完整视区映射并通过 Linux 多尺寸坐标回归。用户随后确认 fill-r10 已铺满且点击正常，但 Trilium 未横向展开时字体显得细长、分辨率观感与 Work 不同；这是固定远端画面被非等比映射的结果，作为固定分辨率取舍保留。
+
+2026-09-19，用户提供目标 Mac/Trilium 的生产管理面截图。截图中 `owner` 显示为启用的 `admin`，Personal 与 Work 的固定入口、运行状态、修订和账号分配均可见；Work 健康为 `healthy`，Personal 为非阻断的 `unknown / PROXY_UPSTREAM_UNKNOWN`。同一时点服务器只读复核确认 Personal 的入口、控制面、Session、Worker、浏览器和显示均通过，只有上游探测端点超时，`blocking=false`；重复强制探测结果相同，不能据此判断代理失效。截图 SHA-256 与详细报告只保存在忽略的私有证据目录，不把图片或账号画面提交到公开仓库。
+
+随后用户在同一生产管理面提交 Personal 名称修改，页面显示新名称“个人浏览器测试”，并显示“修订 2”。服务器端核对确认 `profiles.json` 的 Profile 目录 revision 为 2，Personal 记录 `revision=2`、`status=ready`、`disabled=false`、`updated_by=owner`，起始页仍为 `https://example.com/`；Work 保持 revision 1。Personal/Work 的运行绑定和容器未被该修改触碰，health/ready 仍为 200。名称修改实测通过；停用、启用、安全关闭和账号密码类操作仍未执行。
+
+随后用户在 Mac/Trilium 中将 Personal 起始页临时改为 `https://example.org/`，保存后再恢复为 `https://example.com/`。服务器端核对确认 Profile 目录 revision 从 2 增至 4，Personal 最终 `revision=4`、起始页为原值、状态为 ready 且未禁用；Work 仍为 revision 1。两次修改均未改变 Personal/Work 的 Session、容器或网络绑定，health/ready 仍为 200。起始页修改与恢复实测通过；停用、启用、安全关闭和账号密码类操作仍未执行。
+
+用户随后通过管理面创建入口账号 `test`。服务器端核对确认账号表保持 version 2、共 2 个账号：`owner` 为启用的 `admin`，仍分配 Personal/Work；`test` 为启用的普通用户，仅分配 Personal。密码内容未读取或写入公开记录，Personal/Work 运行绑定、容器和 health/ready 未受影响。创建账号实测通过。
+
+用户随后使用 `test` 完成普通账号边界实测：可以进入 Personal 固定入口；访问 `/manage/` 被拒绝；管理面列表中不可见 Work。服务器只读核对确认两个 Profile 仍为 running，`health=200`、`ready=200`，账号授权与启用状态未被改变。普通账号三项边界测试通过。
 
 ## 关闭远程 Firefox 后出现黑框
 

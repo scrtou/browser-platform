@@ -1,6 +1,6 @@
 # 远程浏览器管理面设计：新增/修改/删除、代理、指纹与访问
 
-状态：**设计（2026-09-17 第 2 版，按用户需求修订）；第 1–5 步（只读列表；目录、角色、管理员面板、关闭；新增/删除与 launch plan；代理草稿、探针与修订；自定义指纹作业）已完成候选代码与隔离测试，第 6 步未实施，均未部署生产**。本文把远程浏览器的新增、修改、删除，每个浏览器的代理、指纹、起始页和访问账号，纳入现有 Adapter/SealSkin 生命周期；不表示任何生产入口已经启用这些操作。
+状态：**设计（2026-09-17 第 2 版，按用户需求修订）；第 1–5 步候选代码与隔离测试完成。2026-09-19 已在生产受控启用第 1–2 步安全子集：列表、账号、名称/起始页、停用/启用和安全关闭；新增/删除、代理与自定义指纹仍按实际后端能力关闭。第 6 步的完整组合仍进行中，管理员页面和普通账号边界已完成真实客户端验收。**
 
 相关基础：[当前架构](../../design.md)、[代理与环境规格](specification.md)、[入口登录与 Session 访问](../../../infra/sealskin/entry-auth/README.md)、[Secret Store](../../../infra/sealskin/lifecycle/secret-store.md)、[按 generation 分配代理与网络](../../../infra/sealskin/lifecycle/README.md#按-generation-分配代理与网络)、[受管理 DIRECT](../../../infra/sealskin/lifecycle/direct-network.md)、[Camoufox 产物与验收](../../../infra/camoufox/README.md)、[R6 工作项](../../work-items/R6-2026-09-16-environment-management.md)。
 
@@ -197,6 +197,6 @@ R6E 实现（2026-09-18，候选）：面板表单只接受 locale、languages�
 3. **R6C 新增与删除（固化指纹 + DIRECT/现有代理修订）**（候选代码已完成隔离验证，未部署）：管理员 SealSkin 客户端、应用安装/删除、Home 创建与控制器归档、launch plan；环境目录只接受已验收固化产物和完整应用模板，创建失败可重试，删除先 Stop 并确认资源为空。DIRECT 生产前置（主机 IPv4 证据、网关镜像、控制器能力）作为本步的部署条件；归档 API 的上游缺口与补丁见 [DEV-048](../../deviations/DEV-2026-09-18-048-home-archive-controller-api.md)。
 4. **R6D 代理草稿、探针与修订**（候选代码已完成隔离验证，未部署）：控制器管理员接口的 Secret Store 导入、有界探针、`proxy_required` 修订追加与下一代次绑定，切回 DIRECT 与删除时撤销凭据；见 [DEV-049](../../deviations/DEV-2026-09-18-049-proxy-secret-import-channel.md)、[DEV-050](../../deviations/DEV-2026-09-18-050-proxy-draft-probe-scope.md) 与 [R6D 验收](../../../infra/sealskin/proxy-drafts-acceptance-2026-09-18.md)。真实上游代理与生产验证归 R6F。
 5. **R6E 自定义指纹作业**（候选代码已完成隔离验证，未部署）：高层字段校验、私有 spool、主机执行器的隔离生成/完整验收/镜像核对/目录追加、失败保留与不发布、内存排队提示；见 [DEV-051](../../deviations/DEV-2026-09-18-051-environment-job-runner.md) 与 [R6E 验收](../../../infra/sealskin/custom-fingerprint-acceptance-2026-09-18.md)。执行器安装与真实客户端归 R6F。
-6. **R6F 组合 QA 与生产候选**：独立 QA、真实客户端（Trilium/Mac）、备份/恢复、日志脱敏、回退演练后，才准备生产候选与部署。
+6. **R6F 组合 QA 与生产候选**：2026-09-19 已完成 Adapter 管理面安全子集的生产部署和服务器端保持性检查；用户已在 Trilium/Mac 完成管理员页面、可逆名称/起始页修改、账号创建及普通账号三项边界实测。创建/删除、真实代理、自定义指纹、完整备份恢复与控制器组合仍须独立验收后才能启用。
 
-第 1 版中“关闭入口”作为第 2 步、“指纹选择”作为第 3 步的顺序已被上述顺序取代；R6A–R6E 均只在候选或隔离环境验证，本文件不授权部署或改变现有 Profile。R2 的退出登录与 Debian 13 仍待外部条件。
+第 1 版中“关闭入口”作为第 2 步、“指纹选择”作为第 3 步的顺序已被上述顺序取代。生产只启用由运行配置明确报告可用的能力；未配置 `environment_catalog`、独立 `sealskin_admin`、代理模板或作业 spool 时，页面不得展示相应操作，写入口也必须拒绝。R2 的退出登录与 Debian 13 仍待外部条件。

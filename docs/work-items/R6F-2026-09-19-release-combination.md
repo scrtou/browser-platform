@@ -6,9 +6,9 @@
 
 - 用户要求 / 对应计划：[R6 远程浏览器管理面](R6-2026-09-16-environment-management.md)、[R6 计划](../roadmap.md#r6)、[管理面规格第 2 版](../specs/proxy-environment/management.md#实施顺序)。
 - 本项交付：以 R6A–R6E 候选源码为同一版本，在独立 QA 根完成组合控制器/Adapter/Worker 验证；覆盖管理员与浏览器账号边界、固化和自定义指纹、DIRECT 与真实上游代理、创建/停止/删除/归档、恢复和日志脱敏；准备真实客户端（Trilium/macOS）复测清单；核对加密备份/离线恢复；演练可逆回退并形成生产候选包、清单和部署前置。
-- 明确不在本项自动执行：未经用户明确维护窗口授权的生产部署、真实 Mac 上的操作、生产 Home/Session 的破坏性回退、删除真实数据，以及把隔离 QA 结果扩大为生产通过。生产候选可在隔离环境构建和静态核对，部署条件另行记录。
+- 明确不在本项自动执行：未经用户明确维护窗口授权的生产部署、真实 Mac 上的操作、生产 Home/Session 的破坏性回退、删除真实数据，以及把隔离回归结果扩大为生产通过。按用户决定不建立专用 QA 根，直接复用现有环境；控制器 overlay 的安装仍须通过现有管理员身份核验。
 - 完成条件：组合 QA 与失败保留/清理证据完整；真实客户端分项由用户在 Mac/Trilium 实测或明确保持待验证；备份恢复和回退材料可复现且不泄露敏感数据；候选源码、二进制、镜像、控制器补丁和配置摘要一致；未通过或外部条件明确列为未完成。
-- 验证环境：本机 Debian 12、独立 Docker 网络/卷/tmpfs、固定 Camoufox r9 与现有 checks 镜像；真实客户端为 macOS 15.1 / Trilium 0.105.0（需用户操作）；生产仍保持 R4B `release-ready-2` 运行态。
+- 验证环境：本机 Debian 12、独立 Docker 网络/卷/tmpfs、固定 Camoufox r9 与现有 checks 镜像；真实客户端为 macOS 15.1 / Trilium 0.105.0（需用户操作）。本项开始时生产为 R4B `release-ready-2` 运行态；用户随后授权部署管理面进行实测。
 - 前置项及其收尾记录：[R6E](R6E-2026-09-18-custom-fingerprint-jobs.md) 已收尾（`c7e946f`）；R6A–R6D 均已收尾，候选均未部署。
 
 ## 阅读与代码核对
@@ -18,28 +18,28 @@
 | 进度、计划、设计、规格与验收索引 | R6F 是 R6A–R6E 后的最后组合项；父项仍进行中，生产为 R4B `release-ready-2`。 |
 | Adapter 启动/配置、HTTP 管理入口、Profile 状态与 SealSkin 客户端 | `adapter/cmd/profile-adapter/main.go` → `internal/config`/`profile`/`httpapi`/`sealskin`；Adapter 只拥有授权、目录和状态，SealSkin 仍拥有 Worker/Home 生命周期。 |
 | R6D 控制器补丁、R6E 执行器、R5E 组合工具、备份工具 | R5E 的组合协调器可复用其网络/入口/恢复检查，但固定 R5E 路径、版本和资源注册表不能直接冒充 R6F；R6E 主机执行器尚未安装为服务。 |
-| 已有工作区改动、运行版本与生效范围 | 开始时源码工作区干净（`c7e946f`）；生产 Adapter 为 candidate-4，真实配置、账号、控制器、Caddy、Home 和 Session 不改。 |
+| 已有工作区改动、运行版本与生效范围 | 本项开始时源码工作区干净（`c7e946f`）、生产 Adapter 为 candidate-4；2026-09-19 用户授权后仅切换 Adapter/配置并升级账号角色，控制器、Caddy、Home、Session 和浏览器容器保持。 |
 
 ## 实施与偏差
 
-实施前先登记本工作项并锁定 `infra/sealskin/runtime/r6f-release-combination-2026-09-19/` 为私有证据根。所有 QA 资源使用独立名称、网络、卷和账号，结束时逐项核对清理。发现实现与设计或环境前置不符时，先在 `docs/deviations/` 登记并链接本项，再决定修复、修订设计或保留待处理。
+实施前先登记本工作项并锁定 `infra/sealskin/runtime/r6f-release-combination-2026-09-19/` 为私有证据根。按用户决定本轮不创建专用资源，现有 Personal/Work、Home、Session 和容器保持；发现实现与设计或环境前置不符时，先在 `docs/deviations/` 登记并链接本项，再决定修复、修订设计或保留待处理。
 
-已登记 [DEV-052](../deviations/DEV-2026-09-19-052-stale-release-package.md)：R4B 历史 `release-ready-2` 的准备摘要早于当前 r9 生产状态写入，复核按预期拒绝 `live input drift`；旧包只保留为回退材料，R6F 必须重新绑定当前输入。R6E 的执行器安装位置差异沿用 [DEV-051](../deviations/DEV-2026-09-18-051-environment-job-runner.md)。真实上游代理、真实 Mac、生产 DIRECT 前置和生产维护授权在验证前保持未决，不以 HTTP 200、容器 running 或旧版本 QA 代替。
+已登记 [DEV-052](../deviations/DEV-2026-09-19-052-stale-release-package.md)：R4B 历史 `release-ready-2` 的准备摘要早于当前 r9 生产状态写入，复核按预期拒绝 `live input drift`；旧包只保留为回退材料，R6F 已重新绑定当前输入。新增 [DEV-053](../deviations/DEV-2026-09-19-053-management-production-gating.md)：补齐无损首管理员升级和可选管理后端的页面/接口能力门控，允许生产只启用已具备前置的安全子集。新增 [DEV-054](../deviations/DEV-2026-09-19-054-r6f-combination-runner-scope.md)：按用户决定改为复用现有环境；overlay 已通过 11 项隔离管理/Home 归档测试并安装，固化/自定义指纹浏览器和真实代理探测已完成受控组合验证与清理；原运行器仍绑定旧 R5E 资源，自动化适配另列后续。R6E 的执行器安装位置差异沿用 [DEV-051](../deviations/DEV-2026-09-18-051-environment-job-runner.md)。真实 Mac 自定义 artifact、组合根恢复、Profile 生命周期写操作和实际回退仍保持未决，不以 HTTP 200、容器 running 或旧版本 QA 代替。
 
 ## 验收复核
 
 | 原要求 / 验收编号 | 实现位置 | 检查与证据 | 结果 / 未测范围 |
 | --- | --- | --- | --- |
-| R6 管理面组合：账号、目录、创建/删除、代理/DIRECT、指纹、停止 | Adapter `internal/{access,httpapi,profile}`、控制器第二层补丁 | 当前源码 vet/test/race 通过；独立控制器/Worker 组合 QA 尚未执行 | 代码检查通过；组合未验证 |
+| R6 管理面组合：账号、目录、创建/删除、代理/DIRECT、指纹、停止 | Adapter `internal/{access,httpapi,profile}`、控制器第二层补丁 | 当前源码 test/vet/gofmt 和固定 checks 镜像全模块 race 通过；控制器 checks 镜像全量 545 项通过；固定 r9 artifact unit 17 项、R6E 主机回归 21 项通过；overlay 安装后，固化/自定义指纹浏览器均完成创建、启动、health/ready、代理探测和删除清理 | 安全子集与现有环境组合已验证；Profile 停启/关闭、组合根恢复、真实 Mac 自定义产物和实际回退仍未完成 |
 | P/N/C/S/E/H 适用矩阵 | R5A–R5E 工具与 R6D/R6E 入口 | 复用工具但重建 R6F 版本/资源绑定；不得扩大旧报告范围 | 未验证 |
-| 真实客户端 | Trilium WebView / macOS 15.1 | 用户实机记录固定入口、管理员/用户边界、自定义产物、代理/DIRECT、停止/恢复和视觉/输入 | 待用户实测 |
-| 备份/恢复与日志脱敏 | `secure-backup.py`、R5E 恢复工具、候选日志 | 固定 age v1.2.1 的 checks 镜像回归为 115 passed/0 failed；包含 legacy CLI 真实 Unix socket、加密归档、verify、离线 restore 与敏感输出扫描。R6F 新组合根的端到端恢复尚未执行 | 固定工具回归通过；组合恢复待测 |
-| 回退演练与生产候选 | R4B release tooling、候选 manifest、回退配置 | 当前源码候选二进制/manifest 已构建；历史 `release-ready-2` 只读复核因输入摘要漂移拒绝复用，生产边界只读通过 | 候选审查部分完成；回退演练和生产部署未验证 |
+| 真实客户端 | Trilium WebView / macOS 15.1 | 用户截图确认原 `owner` 登录、Personal/Work 列表、账号区、安全子集表单和未启用提示正常；随后提交 Personal 名称修改，服务器确认 `revision=2`，再临时修改并恢复起始页，最终 `revision=4`、起始页原值和运行绑定保持；创建 `test` 普通账号，仅分配 Personal；`test` 可进入 Personal、访问 `/manage/` 被拒绝且看不到 Work；新增/删除、代理、指纹未显示 | 页面、能力门控、名称修改、起始页修改/恢复、创建账号和普通账号三项边界通过；停启/关闭及账号密码操作未测 |
+| 备份/恢复与日志脱敏 | `secure-backup.py`、R5E 恢复工具、候选日志 | 固定 age v1.2.1 的 checks 镜像回归为 115 passed/0 failed；包含 legacy CLI 真实 Unix socket、加密归档、verify、离线 restore 与敏感输出扫描。临时 Profile 的停止/删除清理已完成，R6F 组合根的加密归档/离线恢复尚未执行 | 固定工具回归和临时清理通过；组合恢复待测 |
+| 回退演练与生产候选 | R4B release tooling、候选 manifest、回退配置 | `candidate-10` 已部署；控制器 overlay `r6f-existing-overlay-recheck` 已安装并重启 `sealskin`，生产服务 active/enabled，正确 Host 路由的 health/ready 均为 200；候选/旧 Adapter/配置/状态/账号表回退材料仍保留 | overlay 安装和当前运行态复核通过；未执行破坏性实际回退，组合根恢复仍待测 |
 
 ## 文档与收尾
 
 - [ ] 逐项回看原始任务、计划、设计和实际行为。
-- [ ] 完成本项必要验证，公开报告与私有证据范围明确。
+- [ ] 完成本项必要验证，公开报告与私有证据范围明确。（安全子集部署及 Mac/Trilium 普通账号边界证据已完成；完整组合仍待执行。）
 - [ ] 相关偏差已处理并复核；未完成项有明确状态。
 - [ ] 更新设计/规格/组件/用户或运维说明，或记录不适用原因。
 - [ ] 更新验收索引。
@@ -48,4 +48,4 @@
 - [ ] 核对 QA 清理、回滚材料、链接及工作区变更。
 - [ ] 更新本记录与工作项索引，确认是否允许结束 R6 父项。
 
-收尾结论：未收尾。下一步：完成同版本隔离组合 QA，并在可用的 Mac/Trilium 通道执行真实客户端分项；随后核对 R6F 组合根恢复、回退材料与候选重新绑定，再由用户决定是否进入生产维护窗口。本项未收尾前不开始新的计划工作项。
+收尾结论：未收尾。当前生产已启用列表、账号、名称/起始页修改、停用/启用和安全关闭；控制器 overlay 已安装。现有环境中固化指纹浏览器和自定义指纹浏览器均完成创建、启动、健康/代理探测、删除和审计清理；临时 QA 管理员已禁用，owner/test 账号和 Personal/Work 绑定保留。Mac/Trilium 页面、能力门控、名称修改、起始页修改/恢复、创建普通账号及普通账号三项边界已实测通过。R6F 组合根加密恢复、真实 Mac 自定义产物、Profile 停启/关闭操作和实际回退仍待完成。本项未收尾前不开始新的计划工作项。
