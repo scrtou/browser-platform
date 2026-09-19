@@ -63,7 +63,7 @@ R5A 的恢复检查发现并修复 TERM 丢失最近 localStorage 写入的问�
 | R5D 候选 | `0.3.2-entry-auth-v1-0e2bdae7d717825a-pkg-9a7e6b5738e3`、Adapter `b6c5cf21…`、r7 `env-tw-camoufox-r7` | 登录/当前 Session 授权、密封状态与专属显示材料通过真实 QA；发布配置已准备，未部署。r7 启用 coherence 的适用组合由下行 R5E 补充，其他原矩阵仍按各自版本引用 |
 | R5E 候选组合 | 沿用固定 C3/r7 与 R5C3 Guard/Relay；独立备份工具增加一致性资产校验 | 23 项实际组合与 101 项备份检查、新私有根恢复通过；全部 QA 清理，未部署生产 |
 | R4B 控制发布 | `0.3.2-entry-auth-v1-2ba57382ce75c8f9`，增加显示能力声明 | 534 项控制回归、QA、生产入口与目标 Mac 生产实机通过；共享生产控制器已升级 |
-| R6 管理面生产安全子集 | Adapter `136ddac0…`、账号 CLI `fd741597…`（候选私有清单为准） | Profile 目录、管理员列表/账号/修改/停启/关闭已部署；owner 无损升为 admin；Mac/Trilium 登录、列表、能力门控、Personal 名称修改（revision 2）、起始页修改/恢复（最终 revision 4）和创建 `test` 普通账号（仅 Personal）通过；`test` 可进入 Personal、管理面被拒绝且看不到 Work；QA 管理员账号已禁用，Profile 停启/关闭和账号密码操作仍未完成 |
+| R6 管理面生产安全子集 | Adapter `136ddac0…`、账号 CLI `fd741597…`（候选私有清单为准） | Profile 目录、管理员列表/账号/修改/停启/关闭已部署；owner 无损升为 admin；Mac/Trilium 登录、列表、能力门控、Personal 名称修改（revision 2）、起始页修改/恢复（最终 revision 4）和创建 `test` 普通账号（仅 Personal）通过；`test` 可进入 Personal、管理面被拒绝且看不到 Work；QA 管理员的 reauth、自助改密、登录撤销、旧/新密码及管理面重置通过，最终已禁用；Profile 停启/关闭仍未完成 |
 | R6C–R6F 组合验证 | 控制器第二层 `environment-management.patch`（SHA-256 `4f73f680…`）、主机执行器/固定 r9 与自定义 artifact、`secure-backup.py` | overlay 已安装；固化 Profile 和自定义指纹 Profile 均完成创建、启动、health/ready、代理探测和删除清理，目录保留 `deleted` 审计记录；组合控制根已完成 age 加密归档、verify 和离线 restore。真实生产 Home 备份、Mac 自定义产物和生产回退仍未验证 |
 | 主机与客户端 | Debian 12、`Linger=yes`；Trilium 0.105.0 / macOS 15.1，1280×800、系统中文输入法 | 正式 Caddy/Docker/VPS 重启已通过；Debian 13 和退出全部登录未验证；Mac 系统缩放选项及本机 DPR 未测，远端报告不能代替 |
 

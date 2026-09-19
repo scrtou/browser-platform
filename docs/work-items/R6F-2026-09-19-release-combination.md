@@ -32,7 +32,7 @@
 | --- | --- | --- | --- |
 | R6 管理面组合：账号、目录、创建/删除、代理/DIRECT、指纹、停止 | Adapter `internal/{access,httpapi,profile}`、控制器第二层补丁 | 当前源码 test/vet/gofmt 和固定 checks 镜像全模块 race 通过；控制器 checks 镜像全量 545 项通过；固定 r9 artifact unit 17 项、R6E 主机回归 21 项通过；overlay 安装后，固化/自定义指纹浏览器均完成创建、启动、health/ready、代理探测和删除清理 | 安全子集与现有环境组合已验证；组合控制根恢复已完成；Profile 停启/关闭、真实 Mac 自定义产物和实际回退仍未完成 |
 | P/N/C/S/E/H 适用矩阵 | R5A–R5E 工具与 R6D/R6E 入口 | 复用工具但重建 R6F 版本/资源绑定；不得扩大旧报告范围 | 未验证 |
-| 真实客户端 | Trilium WebView / macOS 15.1 | 用户截图确认原 `owner` 登录、Personal/Work 列表、账号区、安全子集表单和未启用提示正常；随后提交 Personal 名称修改，服务器确认 `revision=2`，再临时修改并恢复起始页，最终 `revision=4`、起始页原值和运行绑定保持；创建 `test` 普通账号，仅分配 Personal；`test` 可进入 Personal、访问 `/manage/` 被拒绝且看不到 Work；新增/删除、代理、指纹未显示 | 页面、能力门控、名称修改、起始页修改/恢复、创建账号和普通账号三项边界通过；停启/关闭及账号密码操作未测 |
+| 真实客户端与账号操作 | Trilium WebView / macOS 15.1、生产 Adapter HTTPS | 用户截图确认原 `owner` 登录、Personal/Work 列表、账号区、安全子集表单和未启用提示正常；随后提交 Personal 名称修改，服务器确认 `revision=2`，再临时修改并恢复起始页，最终 `revision=4`、起始页原值和运行绑定保持；创建 `test` 普通账号，仅分配 Personal；`test` 可进入 Personal、访问 `/manage/` 被拒绝且看不到 Work；复用 QA 管理员完成 reauth、自助改密、其他登录撤销、旧/新密码切换和管理面重置，最终禁用 QA 账号 | 页面、能力门控、名称/起始页、创建账号、普通账号边界及账号密码操作通过；真实 Mac 自定义产物和 Profile 停启/关闭未测 |
 | 备份/恢复与日志脱敏 | `secure-backup.py`、R5E 恢复工具、候选日志 | 固定 age v1.2.1 的 checks 镜像备份回归通过；修复 version 2 账号表校验后，使用当前控制根、Session/Secret Store、账号表和 r9 环境资产，对已停止且不再绑定生产的旧 QA Home 完成 4543 成员加密归档、verify 和离线 restore，scratch 为空，未触及生产运行态 | 组合控制根恢复通过；真实 Personal/Work Home 停机备份仍待用户选择 Profile/维护窗口 |
 | 回退演练与生产候选 | R4B release tooling、候选 manifest、回退配置 | 首轮 `candidate-10` 后当前运行 Adapter 摘要为 `7f699ce3…`，与 `candidate-14` 复核候选一致；控制器 overlay `r6f-existing-overlay-recheck` 已安装并重启 `sealskin`，生产服务 active/enabled，正确 Host 路由的 health/ready 均为 200；候选/旧 Adapter/配置/状态/账号表回退材料仍保留 | overlay 安装和当前运行态复核通过；组合控制根恢复另有隔离证据，但未执行破坏性实际回退 |
 
@@ -48,4 +48,4 @@
 - [x] 核对 QA 清理、回滚材料、链接及工作区变更。
 - [x] 更新本记录与工作项索引，确认当前不允许结束 R6 父项。
 
-收尾结论：未收尾。当前生产已启用列表、账号、名称/起始页修改、停用/启用和安全关闭；控制器 overlay 已安装。现有环境中固化指纹浏览器和自定义指纹浏览器均完成创建、启动、健康/代理探测、删除和审计清理；临时 QA 管理员已禁用，owner/test 账号和 Personal/Work 绑定保留。Mac/Trilium 页面、能力门控、名称修改、起始页修改/恢复、创建普通账号及普通账号三项边界已实测通过。组合控制根已在隔离旧 QA Home 上完成加密归档、verify 和离线 restore；真实 Personal/Work Home 停机备份、真实 Mac 自定义产物、Profile 停启/关闭操作、账号密码操作和实际回退仍待完成。本项未收尾前不开始新的计划工作项。
+收尾结论：未收尾。当前生产已启用列表、账号、名称/起始页修改、停用/启用和安全关闭；控制器 overlay 已安装。现有环境中固化指纹浏览器和自定义指纹浏览器均完成创建、启动、健康/代理探测、删除和审计清理；临时 QA 管理员完成账号密码操作后已再次禁用，owner/test 完整账号记录和 Personal/Work 绑定保持。Mac/Trilium 页面、能力门控、名称修改、起始页修改/恢复、创建普通账号及普通账号三项边界已实测通过；生产 HTTPS 上的 reauth、自助改密、其他登录撤销、旧/新密码切换及管理面重置也已通过。组合控制根已在隔离旧 QA Home 上完成加密归档、verify 和离线 restore；真实 Personal/Work Home 停机备份、真实 Mac 自定义产物、Profile 停启/关闭操作和实际回退仍待完成。本项未收尾前不开始新的计划工作项。
