@@ -46,10 +46,15 @@ type LaunchPlan struct {
 }
 
 type EnvironmentArtifactSummary struct {
-	ID     string `json:"id"`
-	SHA256 string `json:"sha256"`
-	Source string `json:"source"`
-	Status string `json:"status"`
+	ID         string   `json:"id"`
+	SHA256     string   `json:"sha256"`
+	Source     string   `json:"source"`
+	Status     string   `json:"status"`
+	Locale     string   `json:"locale,omitempty"`
+	Languages  []string `json:"languages,omitempty"`
+	Timezone   string   `json:"timezone,omitempty"`
+	Screen     string   `json:"screen,omitempty"`
+	AcceptedAt string   `json:"accepted_at,omitempty"`
 }
 
 func (s *Service) EnvironmentArtifacts(ctx context.Context) ([]EnvironmentArtifactSummary, error) {
@@ -63,7 +68,8 @@ func (s *Service) EnvironmentArtifacts(ctx context.Context) ([]EnvironmentArtifa
 	result := make([]EnvironmentArtifactSummary, 0, len(artifacts))
 	for _, artifact := range artifacts {
 		if validAcceptedArtifact(artifact) {
-			result = append(result, EnvironmentArtifactSummary{ID: artifact.ID, SHA256: artifact.SHA256, Source: artifact.Source, Status: artifact.Status})
+			result = append(result, EnvironmentArtifactSummary{ID: artifact.ID, SHA256: artifact.SHA256, Source: artifact.Source, Status: artifact.Status,
+				Locale: artifact.Locale, Languages: append([]string(nil), artifact.Languages...), Timezone: artifact.Timezone, Screen: artifact.Screen, AcceptedAt: artifact.AcceptedAt})
 		}
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
@@ -273,7 +279,7 @@ func validDigest(value string) bool {
 }
 
 func validAcceptedArtifact(artifact EnvironmentArtifact) bool {
-	return artifact.ID != "" && artifact.Status == "accepted" && artifact.Source == "frozen" && validDigest(artifact.SHA256) &&
+	return artifact.ID != "" && validPolicyName(artifact.ID) && artifact.Status == "accepted" && (artifact.Source == "frozen" || artifact.Source == "custom") && validDigest(artifact.SHA256) &&
 		validDigest(artifact.AcceptanceSHA256) && strings.HasPrefix(artifact.Image, "sha256:") && validDigest(strings.TrimPrefix(artifact.Image, "sha256:")) &&
 		len(artifact.Application) != 0
 }

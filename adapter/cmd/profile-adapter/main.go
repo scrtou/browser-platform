@@ -161,6 +161,9 @@ func run(configPath, action, target string, logger *slog.Logger) error {
 		if cfg.ProxyTemplate != nil {
 			options = append(options, profile.WithProxyTemplate(*cfg.ProxyTemplate))
 		}
+		if cfg.EnvironmentJobSpool != "" {
+			options = append(options, profile.WithEnvironmentJobs(cfg.EnvironmentJobSpool))
+		}
 	}
 	profiles, err := profile.NewService(client, store, cfg.PublicBaseURL, cfg.Profiles, options...)
 	if err != nil {

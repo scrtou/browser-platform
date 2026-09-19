@@ -76,6 +76,8 @@ func New(profiles profileService, listSessions func(context.Context) ([]sealskin
 	mux.HandleFunc("GET /manage/environments", server.manageEnvironments)
 	mux.HandleFunc("GET /manage/environments/catalog", server.manageEnvironmentCatalog)
 	mux.HandleFunc("POST /manage/browsers", server.manageCreateBrowser)
+	mux.HandleFunc("GET /manage/environment-jobs", server.manageEnvironmentJobList)
+	mux.HandleFunc("POST /manage/environment-jobs", server.manageEnvironmentJobCreate)
 	mux.HandleFunc("POST /manage/browsers/{profile}", server.manageBrowser)
 	mux.HandleFunc("POST /manage/accounts", server.manageAccounts)
 	mux.HandleFunc("POST /manage/accounts/{account}", server.manageAccount)

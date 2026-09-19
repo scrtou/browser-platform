@@ -8,6 +8,7 @@
 
 | 编号 | 工作项 | 差异 | 处理方式 | 状态 |
 | --- | --- | --- | --- | --- |
+| [DEV-2026-09-18-051](DEV-2026-09-18-051-environment-job-runner.md) | [R6E](../work-items/R6E-2026-09-18-custom-fingerprint-jobs.md) | 规格要求“服务端”在隔离容器中生成/验收自定义指纹；Adapter 无 Docker 权限且不应成为第二个容器所有者，完整验收需要一次性网络与 QA 夹具 | Adapter 只写私有 spool 请求并读状态；主机执行器持 Docker 组一次处理一个作业（只读根/无网络/限额生成、有界重试、完整验收、镜像 verify 后原子追加目录），失败保留证据不发布 | 已解决（候选，未部署） |
 | [DEV-2026-09-18-050](DEV-2026-09-18-050-proxy-draft-probe-scope.md) | [R6D](../work-items/R6D-2026-09-18-proxy-drafts.md) | 规格要求草稿探针在隔离网络中验证并给出出口地区；草稿阶段没有 generation/Guard/Relay，出口地区依赖运行中代次的一致性报告 | 修订实现范围：控制器进程内有界协议/TLS 探针，冻结公网 IPv4、拒绝私网；启动门槛仍由 Guard 探针与一致性策略承担 | 已解决（候选补丁，真实上游未测） |
 | [DEV-2026-09-18-049](DEV-2026-09-18-049-proxy-secret-import-channel.md) | [R6D](../work-items/R6D-2026-09-18-proxy-drafts.md) | 规格要求 Adapter 经 tmpfs 调用同一导入路径并写策略注册表；Store/注册表只在控制器容器内，Adapter 无挂载也不应持有主密钥 | 第二层补丁增加管理员加密接口：Store 导入只返回引用、策略只追加并按控制器规则计算摘要；Adapter 不落盘凭据 | 已解决（候选补丁，未部署） |
 | [DEV-2026-09-18-048](DEV-2026-09-18-048-home-archive-controller-api.md) | [R6C](../work-items/R6C-2026-09-18-create-delete-launch.md) | 固定上游只有 Home 创建/删除接口，未提供保留内容的归档操作 | 增加版本化 `environment-management.patch`，由控制器在 Home 锁内原子移动并提供幂等清单；Adapter 不直接操作 Home，生产未部署补丁 | 已解决（候选补丁，未部署） |

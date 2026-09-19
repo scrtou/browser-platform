@@ -51,6 +51,14 @@ type environmentCatalogService interface {
 	EnvironmentArtifacts(context.Context) ([]profile.EnvironmentArtifactSummary, error)
 }
 
+// environmentJobService is the R6E surface: the form only carries the
+// high-level fields of specification 46.2, and the list never exposes
+// generated device values.
+type environmentJobService interface {
+	CreateEnvironmentJob(context.Context, string, profile.EnvironmentJobRequest) (profile.EnvironmentJobSummary, error)
+	EnvironmentJobs() ([]profile.EnvironmentJobSummary, error)
+}
+
 // proxyDraftService is the R6D write side: credentials travel once from the
 // form into CreateProxyDraft and are never stored by the HTTP layer.
 type proxyDraftService interface {
@@ -90,6 +98,9 @@ var notices = map[string]string{
 	"network_applied": "网络修订已固化；下一次启动使用新的代理或 DIRECT 策略。",
 	"network_busy":    "浏览器仍占用运行资源，网络修订未应用。",
 	"unmanaged":       "该浏览器不是受管理网络，不能配置代理。",
+	"job_created":     "自定义指纹作业已排队；执行器将在隔离容器中生成并完整验收，通过后出现在固化环境目录。",
+	"job_busy":        "排队或运行中的作业已达上限，请稍后再提交。",
+	"job_invalid":     "自定义指纹字段无效或当前适配器不支持（仅 Linux、DPR 1、有效 BCP 47 与 IANA 名称）。",
 }
 
 // environments reads one summary per grant. The gateway already restricted
@@ -204,6 +215,22 @@ func (s *Server) managePage(writer http.ResponseWriter, request *http.Request) {
 	writer.Header().Set("Referrer-Policy", "same-origin")
 	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 	writer.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+	var artifacts []profile.EnvironmentArtifactSummary
+	if catalog, ok := s.profiles.(environmentCatalogService); ok {
+		if listed, err := catalog.EnvironmentArtifacts(ctx); err == nil {
+			artifacts = listed
+		}
+	}
+	var jobs []profile.EnvironmentJobSummary
+	jobService, hasJobs := s.profiles.(environmentJobService)
+	if hasJobs {
+		listed, err := jobService.EnvironmentJobs()
+		if err != nil {
+			hasJobs = false
+		} else {
+			jobs = listed
+		}
+	}
 	data := struct {
 		Subject     string
 		GeneratedAt string
@@ -214,8 +241,12 @@ func (s *Server) managePage(writer http.ResponseWriter, request *http.Request) {
 		EntryOrigin string
 		CSRF        string
 		ProxyDrafts bool
+		Artifacts   []profile.EnvironmentArtifactSummary
+		Jobs        []profile.EnvironmentJobSummary
+		JobsEnabled bool
 	}{Subject: access.Subject(request), GeneratedAt: time.Now().UTC().Format(time.RFC3339), Notice: notices[request.URL.Query().Get("notice")],
-		Rows: rows, Accounts: accountRows(accounts, profileIDs), ProfileIDs: profileIDs, EntryOrigin: s.publicOrigin.String(), CSRF: access.CSRF(request), ProxyDrafts: hasDrafts}
+		Rows: rows, Accounts: accountRows(accounts, profileIDs), ProfileIDs: profileIDs, EntryOrigin: s.publicOrigin.String(), CSRF: access.CSRF(request), ProxyDrafts: hasDrafts,
+		Artifacts: artifacts, Jobs: jobs, JobsEnabled: hasJobs}
 	if err := manageTemplate.Execute(writer, data); err != nil {
 		s.logger.Error("render environment list", "error", err)
 	}
@@ -566,6 +597,84 @@ func (s *Server) manageBrowser(writer http.ResponseWriter, request *http.Request
 	}
 }
 
+func (s *Server) manageEnvironmentJobList(writer http.ResponseWriter, request *http.Request) {
+	noStore(writer)
+	if _, ok := access.Grants(request); !ok {
+		http.NotFound(writer, request)
+		return
+	}
+	jobService, ok := s.profiles.(environmentJobService)
+	if !ok {
+		http.Error(writer, "Environment jobs are not available", http.StatusNotImplemented)
+		return
+	}
+	jobs, err := jobService.EnvironmentJobs()
+	if err != nil {
+		http.Error(writer, "Environment jobs are not available", http.StatusServiceUnavailable)
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(writer).Encode(struct {
+		Version int                             `json:"version"`
+		Jobs    []profile.EnvironmentJobSummary `json:"jobs"`
+	}{Version: 1, Jobs: jobs})
+}
+
+// manageEnvironmentJobCreate enqueues one custom fingerprint job. The form
+// carries only specification 46.2 fields; the service fixes everything else.
+func (s *Server) manageEnvironmentJobCreate(writer http.ResponseWriter, request *http.Request) {
+	noStore(writer)
+	if _, ok := access.Grants(request); !ok {
+		http.NotFound(writer, request)
+		return
+	}
+	jobService, ok := s.profiles.(environmentJobService)
+	if !ok {
+		s.redirectManage(writer, request, "unavailable")
+		return
+	}
+	request.Body = http.MaxBytesReader(writer, request.Body, 8192)
+	if request.ParseForm() != nil {
+		s.redirectManage(writer, request, "job_invalid")
+		return
+	}
+	number := func(name string) int {
+		value, err := strconv.Atoi(strings.TrimSpace(request.PostForm.Get(name)))
+		if err != nil {
+			return -1
+		}
+		return value
+	}
+	dpr, err := strconv.ParseFloat(strings.TrimSpace(request.PostForm.Get("dpr")), 64)
+	if err != nil {
+		dpr = 0
+	}
+	var languages []string
+	for _, tag := range strings.Split(request.PostForm.Get("languages"), ",") {
+		if tag = strings.TrimSpace(tag); tag != "" {
+			languages = append(languages, tag)
+		}
+	}
+	jobRequest := profile.EnvironmentJobRequest{Locale: strings.TrimSpace(request.PostForm.Get("locale")), Languages: languages,
+		Timezone: strings.TrimSpace(request.PostForm.Get("timezone")), ScreenWidth: number("screen_width"), ScreenHeight: number("screen_height"), DPR: dpr}
+	if strings.TrimSpace(request.PostForm.Get("window_width")) != "" || strings.TrimSpace(request.PostForm.Get("window_height")) != "" {
+		jobRequest.WindowWidth, jobRequest.WindowHeight = number("window_width"), number("window_height")
+	}
+	summary, err := jobService.CreateEnvironmentJob(request.Context(), access.Subject(request), jobRequest)
+	switch {
+	case err == nil:
+		s.logger.Info("management action", "action", "environment_job_create", "job", summary.ID, "status", "queued")
+		s.redirectManage(writer, request, "job_created")
+	case errors.Is(err, profile.ErrEnvironmentJobInvalid):
+		s.redirectManage(writer, request, "job_invalid")
+	case errors.Is(err, profile.ErrEnvironmentJobsBusy):
+		s.redirectManage(writer, request, "job_busy")
+	default:
+		s.logger.Warn("management action", "action", "environment_job_create", "status", "rejected", "error", err)
+		s.redirectManage(writer, request, "unavailable")
+	}
+}
+
 // manageNetwork handles the R6D proxy draft and DIRECT switch actions. The
 // draft credentials are read from the form once, handed to the service and
 // cleared; the log lines never carry them. Applying a revision or switching
@@ -783,7 +892,8 @@ var manageTemplate = template.Must(template.New("manage").Parse(strings.TrimSpac
   <form method="post" action="/manage/browsers"><input type="hidden" name="csrf" value="{{.CSRF}}">
     <input type="text" name="label" maxlength="64" placeholder="名称" required>
     <input type="url" name="start_url" maxlength="2048" placeholder="起始页 URL" required>
-    <input type="text" name="environment_artifact_id" maxlength="128" placeholder="固化 artifact ID" required>
+    {{if .Artifacts}}<select name="environment_artifact_id" required>{{range .Artifacts}}<option value="{{.ID}}">{{.ID}}{{if .Locale}} · {{.Locale}}{{end}}{{if .Timezone}} · {{.Timezone}}{{end}}{{if .Screen}} · {{.Screen}}{{end}} · {{.Source}}</option>{{end}}</select>
+    {{else}}<input type="text" name="environment_artifact_id" maxlength="128" placeholder="固化 artifact ID" required>{{end}}
     <select name="network_mode"><option value="direct">受管理 DIRECT</option><option value="proxy_required">现有代理策略</option></select>
     <input type="text" name="network_policy_id" maxlength="128" placeholder="策略 ID" required>
     <input type="text" name="network_policy_sha256" maxlength="64" placeholder="策略 SHA-256" required>
@@ -823,6 +933,24 @@ var manageTemplate = template.Must(template.New("manage").Parse(strings.TrimSpac
       {{else}}<td colspan="7" class="meta">摘要暂不可用</td>{{end}}
     </tr>{{end}}
   </table>{{else}}<p>没有配置远程浏览器。</p>{{end}}
+  {{if .JobsEnabled}}<h2>自定义指纹作业</h2>
+  <p class="meta">只提交高层字段；服务端在隔离容器中一次生成完整产物并执行完整验收（两个 QA Home 各 10 次重建），通过后才进入上方目录。当前适配器只支持 Linux、DPR 1；一次只运行一个作业。</p>
+  <form method="post" action="/manage/environment-jobs"><input type="hidden" name="csrf" value="{{.CSRF}}">
+    <input type="text" name="locale" maxlength="35" placeholder="locale（如 en-US）" required> <input type="text" name="languages" maxlength="200" placeholder="languages，逗号分隔，首项须等于 locale" required>
+    <input type="text" name="timezone" maxlength="64" placeholder="IANA 时区（如 America/New_York）" required>
+    <input type="text" name="screen_width" maxlength="4" value="1920" required> <input type="text" name="screen_height" maxlength="4" value="1080" required> <input type="hidden" name="dpr" value="1">
+    <input type="text" name="window_width" maxlength="4" placeholder="窗口宽（默认同屏幕）"> <input type="text" name="window_height" maxlength="4" placeholder="窗口高（默认同屏幕）">
+    <button>提交作业</button>
+  </form>
+  {{if .Jobs}}<table>
+    <tr><th>作业</th><th>请求</th><th>状态</th><th>结果</th></tr>
+    {{range .Jobs}}<tr>
+      <td>{{.ID}}<div class="meta">{{.EnvironmentID}}</div><div class="meta">{{.Actor}} · {{.RequestedAt}}</div></td>
+      <td>{{.Locale}} · {{.Timezone}}<div class="meta">{{.Screen}} · 窗口 {{.Window}}</div></td>
+      <td>{{.Status}}{{if .Phase}} · {{.Phase}}{{end}}{{if .Code}}<div class="meta{{if eq .Status "failed"}} blocking{{end}}">{{.Code}}{{if .Message}} · {{.Message}}{{end}}</div>{{end}}{{if .UpdatedAt}}<div class="meta">{{.UpdatedAt}}</div>{{end}}</td>
+      <td class="meta">{{if .ArtifactSHA256}}产物 {{slice .ArtifactSHA256 0 12}}…{{end}}{{if .AcceptanceSHA256}}<div>报告 {{slice .AcceptanceSHA256 0 12}}…</div>{{end}}{{if .Attempts}}<div>生成尝试 {{.Attempts}}</div>{{end}}</td>
+    </tr>{{end}}
+  </table>{{else}}<p class="meta">没有作业。</p>{{end}}{{end}}
   <h2>访问账号</h2>
   <p class="meta">浏览器入口账号只能登录被分配的浏览器；管理员账号可进入本面板。禁用/启用账号、修改角色、重置他人密码前须 <a href="/auth/reauth?next=/manage/">确认密码</a>（5 分钟内有效）。</p>
   {{if .Accounts}}<table>

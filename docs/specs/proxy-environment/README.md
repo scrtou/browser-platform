@@ -9,7 +9,7 @@
 | [specification.md](specification.md) | 代理、环境、一致性、网络、健康、凭据的要求与 P/E/C/N/H/S 验收 |
 | [types.go](types.go) | 使用标准库的 Go JSON 数据契约；不是服务实现 |
 | [schema.sql](schema.sql) | 在空库执行的 SQLite 规格快照；不是旧表或 SealSkin YAML 的迁移 |
-| [management.md](management.md) | R6 管理面第 2 版：新增/修改/删除远程浏览器、代理或 DIRECT、固化/自定义指纹、入口账号、关闭与 launch plan；R6A/R6B/R6C 已收尾，R6D 为候选实现，R6E/R6F 未实施 |
+| [management.md](management.md) | R6 管理面第 2 版：新增/修改/删除远程浏览器、代理或 DIRECT、固化/自定义指纹、入口账号、关闭与 launch plan；R6A–R6D 已收尾，R6E 为候选实现，R6F 未实施 |
 | [config.example.json](config.example.json) | Camoufox + 带认证 SOCKS5、Chromium + DIRECT 两种配置 |
 | [health.example.json](health.example.json) | 带分项结果、新鲜度和 UNKNOWN 的合成健康报告 |
 

@@ -291,6 +291,99 @@ func TestManagementProxyDraftFormsNeverEchoCredentials(t *testing.T) {
 	}
 }
 
+type fakeEnvironmentJobs struct {
+	*fakeBrowserManager
+	jobs      []profile.EnvironmentJobSummary
+	requests  []profile.EnvironmentJobRequest
+	actors    []string
+	createErr error
+}
+
+func (f *fakeEnvironmentJobs) CreateEnvironmentJob(_ context.Context, actor string, request profile.EnvironmentJobRequest) (profile.EnvironmentJobSummary, error) {
+	f.requests, f.actors = append(f.requests, request), append(f.actors, actor)
+	if f.createErr != nil {
+		return profile.EnvironmentJobSummary{}, f.createErr
+	}
+	summary := profile.EnvironmentJobSummary{ID: "job-0123456789abcdef", EnvironmentID: "env-custom-0123456789abcdef", Actor: actor, Locale: request.Locale, Timezone: request.Timezone, Status: "queued"}
+	f.jobs = append(f.jobs, summary)
+	return summary, nil
+}
+
+func (f *fakeEnvironmentJobs) EnvironmentJobs() ([]profile.EnvironmentJobSummary, error) {
+	return append([]profile.EnvironmentJobSummary(nil), f.jobs...), nil
+}
+
+func (f *fakeEnvironmentJobs) EnvironmentArtifacts(context.Context) ([]profile.EnvironmentArtifactSummary, error) {
+	return []profile.EnvironmentArtifactSummary{{ID: "env-r9", SHA256: strings.Repeat("a", 64), Source: "frozen", Locale: "zh-TW", Timezone: "Asia/Taipei", Screen: "1920x1080@1"},
+		{ID: "env-custom-0123456789abcdef", SHA256: strings.Repeat("b", 64), Source: "custom", Locale: "en-US", Timezone: "America/New_York", Screen: "1920x1080@1", AcceptedAt: "2026-09-19T01:32:44Z"}}, nil
+}
+
+func TestManagementEnvironmentJobsFormListAndCatalogSelect(t *testing.T) {
+	base := &fakeProfiles{environments: map[string]profile.EnvironmentSummary{"personal": sampleSummary("personal")}, stopResult: profile.LifecycleResult{Status: state.StatusStopped}}
+	profiles := &fakeEnvironmentJobs{fakeBrowserManager: &fakeBrowserManager{fakeProfiles: base}, jobs: []profile.EnvironmentJobSummary{{ID: "job-ffffffffffffffff", EnvironmentID: "env-custom-ffffffffffffffff", Actor: "root",
+		Locale: "de-DE", Timezone: "Europe/Berlin", Screen: "1600x900@1", Window: "1600x900", Status: "failed", Phase: "failed", Code: "ENVIRONMENT_ACCEPTANCE_FAILED", Message: "exit 1", ArtifactSHA256: strings.Repeat("c", 64), Attempts: 2}}}
+	server := New(profiles, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})
+	grants := []access.Grant{{Profile: "personal", Capabilities: []string{"view", "manage", "stop"}}}
+	page := httptest.NewRecorder()
+	server.ServeHTTP(page, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/", nil), "root", grants))
+	body := page.Body.String()
+	for _, want := range []string{`<select name="environment_artifact_id"`, `env-custom-0123456789abcdef · en-US · America/New_York · 1920x1080@1 · custom`, "自定义指纹作业", "job-ffffffffffffffff", "ENVIRONMENT_ACCEPTANCE_FAILED · exit 1", "产物 cccccccccccc…", "生成尝试 2"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("page lacks %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, `name="environment_artifact_id" maxlength`) {
+		t.Fatal("free-text artifact input rendered although the catalog is available")
+	}
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, manageForm(url.Values{"locale": {"en-US"}, "languages": {" en-US, en "}, "timezone": {"America/New_York"}, "screen_width": {"1920"}, "screen_height": {"1080"}, "dpr": {"1"}, "window_width": {"1600"}, "window_height": {"900"}}, "root", grants, "https://adapter.example/manage/environment-jobs"))
+	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/manage/?notice=job_created" || len(profiles.requests) != 1 || profiles.actors[0] != "root" {
+		t.Fatalf("create: %d %s requests=%+v", response.Code, response.Header().Get("Location"), profiles.requests)
+	}
+	got := profiles.requests[0]
+	if got.Locale != "en-US" || strings.Join(got.Languages, ",") != "en-US,en" || got.Timezone != "America/New_York" || got.ScreenWidth != 1920 || got.ScreenHeight != 1080 || got.DPR != 1 || got.WindowWidth != 1600 || got.WindowHeight != 900 {
+		t.Fatalf("parsed request: %+v", got)
+	}
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, manageForm(url.Values{"locale": {"en-US"}, "languages": {"en-US"}, "timezone": {"UTC"}, "screen_width": {"1920"}, "screen_height": {"1080"}, "dpr": {"1"}}, "root", grants, "https://adapter.example/manage/environment-jobs"))
+	if profiles.requests[1].WindowWidth != 0 || profiles.requests[1].WindowHeight != 0 {
+		t.Fatalf("omitted window must stay zero for the service default: %+v", profiles.requests[1])
+	}
+	profiles.createErr = profile.ErrEnvironmentJobInvalid
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, manageForm(url.Values{"locale": {"x"}, "languages": {"x"}, "timezone": {"UTC"}, "screen_width": {"abc"}, "screen_height": {"1080"}, "dpr": {"1"}}, "root", grants, "https://adapter.example/manage/environment-jobs"))
+	if response.Header().Get("Location") != "/manage/?notice=job_invalid" || profiles.requests[2].ScreenWidth != -1 {
+		t.Fatalf("invalid: %s %+v", response.Header().Get("Location"), profiles.requests[2])
+	}
+	profiles.createErr = profile.ErrEnvironmentJobsBusy
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, manageForm(url.Values{"locale": {"en-US"}, "languages": {"en-US"}, "timezone": {"UTC"}, "screen_width": {"1920"}, "screen_height": {"1080"}, "dpr": {"1"}}, "root", grants, "https://adapter.example/manage/environment-jobs"))
+	if response.Header().Get("Location") != "/manage/?notice=job_busy" {
+		t.Fatalf("busy: %s", response.Header().Get("Location"))
+	}
+	list := httptest.NewRecorder()
+	server.ServeHTTP(list, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/environment-jobs", nil), "root", grants))
+	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), `"id":"job-0123456789abcdef"`) || !strings.Contains(list.Body.String(), `"code":"ENVIRONMENT_ACCEPTANCE_FAILED"`) || strings.Contains(list.Body.String(), "resolvedConfig") {
+		t.Fatalf("list: %d %s", list.Code, list.Body.String())
+	}
+	anonymous := httptest.NewRecorder()
+	server.ServeHTTP(anonymous, httptest.NewRequest(http.MethodPost, "https://adapter.example/manage/environment-jobs", strings.NewReader("locale=en-US")))
+	if anonymous.Code != http.StatusNotFound || len(profiles.requests) != 4 {
+		t.Fatalf("POST without gateway grants: %d", anonymous.Code)
+	}
+	plain := New(base, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})
+	response = httptest.NewRecorder()
+	plain.ServeHTTP(response, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/environment-jobs", nil), "root", grants))
+	if response.Code != http.StatusNotImplemented {
+		t.Fatalf("jobs without service: %d", response.Code)
+	}
+	page = httptest.NewRecorder()
+	plain.ServeHTTP(page, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/", nil), "root", grants))
+	if strings.Contains(page.Body.String(), "自定义指纹作业") || !strings.Contains(page.Body.String(), `name="environment_artifact_id" maxlength`) {
+		t.Fatal("page without job service still rendered the job section or hid the text input")
+	}
+}
+
 func TestManagementCreatesDeletesAndListsFixedArtifacts(t *testing.T) {
 	base := &fakeProfiles{environments: map[string]profile.EnvironmentSummary{"personal": sampleSummary("personal")}, stopResult: profile.LifecycleResult{Status: state.StatusStopped}}
 	profiles := &fakeBrowserManager{fakeProfiles: base}

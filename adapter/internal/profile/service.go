@@ -127,6 +127,14 @@ type EnvironmentArtifact struct {
 	Status                      string         `json:"status"`
 	Application                 map[string]any `json:"application"`
 	RequiredRuntimeCapabilities map[string]int `json:"required_runtime_capabilities,omitempty"`
+	// Descriptive fields for the catalog listing; they never replace the
+	// artifact's own bytes as the source of device values.
+	Locale     string   `json:"locale,omitempty"`
+	Languages  []string `json:"languages,omitempty"`
+	Timezone   string   `json:"timezone,omitempty"`
+	Screen     string   `json:"screen,omitempty"`
+	AcceptedAt string   `json:"accepted_at,omitempty"`
+	JobID      string   `json:"job_id,omitempty"`
 }
 
 type EnvironmentCatalog interface {
@@ -170,6 +178,7 @@ type Service struct {
 	proxyTemplate *ProxyTemplate
 	draftsMu      sync.Mutex
 	drafts        map[string]*proxyDraft
+	jobSpool      string
 }
 
 func NewService(orchestrator Orchestrator, store *state.Store, publicBaseURL string, definitions []Definition, options ...Option) (*Service, error) {
@@ -706,8 +715,8 @@ func validateDefinition(definition Definition) error {
 		if _, err := hex.DecodeString(definition.EnvironmentArtifactSHA256); err != nil {
 			return errors.New("environment artifact SHA-256 is invalid")
 		}
-		if definition.EnvironmentSource != "frozen" {
-			return errors.New("new browser environments must come from a frozen accepted artifact")
+		if definition.EnvironmentSource != "frozen" && definition.EnvironmentSource != "custom" {
+			return errors.New("new browser environments must come from a frozen or custom accepted artifact")
 		}
 	}
 	for _, value := range []string{definition.ID, definition.HomeName} {

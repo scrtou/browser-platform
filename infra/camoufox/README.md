@@ -155,6 +155,24 @@ python3 infra/camoufox/check-stream.py \
 
 `artifacts/`、`evidence/` 和 `.build/` 被 Git 忽略。部署备份必须同时保存精确产物、成功报告及镜像，不能通过重新生成来恢复原设备配置；不要覆盖已挂载的报告路径。
 
+## 自定义指纹作业
+
+R6E 的 [environment-job.py](environment-job.py) 处理 Adapter 写入私有 spool 的自定义指纹作业：`queue/job-<hex>.json` 是 Adapter 按规格 46.2 校验后派生的完整规格（Linux、DPR 1、WebRTC/定位关闭），执行器再次以 `validate_spec` 校验。每次只处理一个最早的作业（spool 文件锁），主机 `MemAvailable` 低于 `--min-free-mib`（默认 2048）时写入 `HOST_MEMORY_LOW` 并保持排队。生成在 `--image` 指定的固定镜像中以只读根、无网络、drop ALL、1.5 CPU/1536 MiB 执行 `environment.py generate`，生成器偶尔不满足屏幕约束（`ENVIRONMENT_SPEC_MISMATCH`）时最多重试 3 次，不修改产物；随后创建一次性 internal/egress 网络与 [QA 代理夹具](../sealskin/checks/qa-artifact-proxy.py)（别名 `profile-relay`），执行本目录的 `acceptance.py --phase all --recreations N`（默认 10），通过后由镜像自身 `verify` 核对产物与报告，再原子追加目录条目（同 ID 拒绝覆盖）。产物与报告保存在 `<spool>/artifacts/<环境 ID>/`，目录模板的只读挂载指向这两个文件；日志与生成 Home 保存在 `<spool>/evidence/<作业>/`。失败作业保留全部证据并写入稳定失败码，不进入目录。
+
+```bash
+python3 infra/camoufox/environment-job.py run \
+  --spool /private/environment-jobs --catalog /private/environment-catalog.json \
+  --image sha256:<固定 Worker 镜像 ID> --session-origin https://mysession.azhen.de \
+  [--clipboard-addon infra/sealskin/runtime/client-addons/<包>] [--recreations 10] [--watch 30]
+
+python3 infra/camoufox/environment-job.py register \
+  --artifact infra/camoufox/artifacts/env-tw-camoufox-r9.json \
+  --acceptance infra/camoufox/evidence/acceptance-r9-1-2026-09-15.json \
+  --catalog /private/environment-catalog.json --session-origin https://mysession.azhen.de
+```
+
+`--watch` 让执行器常驻轮询；省略时只处理一个作业后退出，适合由定时器触发。`register` 把已完整验收的固化产物登记为 `source=frozen` 条目，使用与自定义作业相同的模板与核对。执行器未安装为服务，生产未启用；2026-09-18 的真实隔离作业与执行器单元测试见 [R6E 验收](../sealskin/custom-fingerprint-acceptance-2026-09-18.md)，执行位置差异见 [DEV-051](../../docs/deviations/DEV-2026-09-18-051-environment-job-runner.md)。
+
 ## 常见拒绝码
 
 | 错误码 | 含义 |

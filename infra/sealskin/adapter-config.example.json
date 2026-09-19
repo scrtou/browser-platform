@@ -6,6 +6,7 @@
   "control_socket": "./adapter-control.sock",
   "profile_directory": "./profiles.json",
   "environment_catalog": "./environment-catalog.json",
+  "environment_job_spool": "./environment-jobs",
   "sealskin": {
     "api_base_url": "https://127.0.0.1:8443",
     "public_session_base_url": "https://sealskin.example.com",

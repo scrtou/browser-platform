@@ -52,6 +52,64 @@ def clipboard_mounts(directory):
     ], hashes
 
 
+def verify_in_image(image, mounts, env):
+    """Ask the exact bound image to accept the artifact and report before use."""
+    command = ["run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL",
+               "--security-opt", "no-new-privileges:true", "--user", f"{os.getuid()}:{os.getgid()}",
+               "--entrypoint", "/opt/camoufox-python/bin/python"]
+    for mount in mounts:
+        command += ["--mount", f'type=bind,src={mount["Source"]},dst={mount["Target"]},readonly']
+    for key, value in env.items():
+        command += ["-e", key + "=" + value]
+    command += [image, "/usr/local/lib/browser-platform/environment.py", "verify"]
+    verified = docker(command, timeout=60)
+    if verified.returncode or "ENVIRONMENT_ARTIFACT_OK" not in verified.stdout:
+        raise SystemExit("image rejected the artifact or acceptance report: " + verified.stderr.strip())
+
+
+def build_definition(*, app_id, artifact_path, report_path, artifact, env, image, username, store, template,
+                     network_overrides, policy_reference, addon_mounts, verify):
+    """Assemble the SealSkin application definition for one accepted artifact.
+
+    The same shape serves a directly installed app and the R6 catalog template;
+    the template leaves the policy reference and final ID to the Adapter.
+    """
+    mounts = [
+        {"Type": "bind", "Source": str(artifact_path), "Target": "/run/browser-platform/environment.json", "ReadOnly": True},
+        {"Type": "bind", "Source": str(report_path), "Target": "/run/browser-platform/acceptance.json", "ReadOnly": True},
+    ]
+    if verify:
+        verify_in_image(image, mounts, env)
+    mounts += addon_mounts
+    script = '#!/usr/bin/env bash\nset -euo pipefail\nexec /usr/local/bin/browser-platform-camoufox "${SEALSKIN_URL:-about:blank}"\n'
+    wayland_script = '#!/usr/bin/env bash\necho "ENVIRONMENT_CONFIG_DRIFT: X11 is required" >&2\nexit 1\n'
+    return {
+        "id": app_id, "name": "Camoufox Personal (" + artifact["spec"]["id"] + ")",
+        "logo": "", "url": "https://camoufox.com/", "provider": "docker",
+        "source": store, "source_app_id": "firefox", "app_template": template,
+        "users": [username], "groups": [], "home_directories": True, "auto_update": False,
+        "is_meta_app": False,
+        "provider_config": {
+            **policy_reference,
+            "image": image, "port": 3000, "type": "browser", "url_support": True,
+            "open_support": False, "extensions": [], "nvidia_support": False, "dri3_support": False,
+            "autostart": True,
+            "custom_autostart_script_b64": base64.b64encode(script.encode()).decode(),
+            "custom_autostart_wayland_script_b64": base64.b64encode(wayland_script.encode()).decode(),
+            "env": [{"name": key, "value": value} for key, value in sorted(env.items())],
+            # The Docker provider shallow-merges these kwargs. Additional mounts
+            # preserve the separate Home/shared-files volumes managed by SealSkin.
+            "docker_overrides": {
+                **network_overrides, "mounts": mounts, "mem_limit": "1536m",
+                "nano_cpus": 1500000000, "pids_limit": 512, "shm_size": "256m",
+                "security_opt": ["no-new-privileges:true"],
+                "labels": {"browser-platform.application": app_id,
+                           "browser-platform.environment": artifact["spec"]["id"]},
+            },
+        },
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact", type=Path, required=True)
@@ -98,49 +156,11 @@ def main():
         inspected = docker(["network", "inspect", network_overrides["network"], "--format", "{{.Internal}}"], timeout=15)
         if inspected.returncode or inspected.stdout.strip() != "true":
             raise SystemExit("the Worker network must be an existing Docker internal network")
-    mounts = [
-        {"Type": "bind", "Source": str(artifact_path), "Target": "/run/browser-platform/environment.json", "ReadOnly": True},
-        {"Type": "bind", "Source": str(report_path), "Target": "/run/browser-platform/acceptance.json", "ReadOnly": True},
-    ]
-    command = ["run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL",
-               "--security-opt", "no-new-privileges:true", "--user", f"{os.getuid()}:{os.getgid()}",
-               "--entrypoint", "/opt/camoufox-python/bin/python"]
-    for mount in mounts:
-        command += ["--mount", f'type=bind,src={mount["Source"]},dst={mount["Target"]},readonly']
-    for key, value in env.items():
-        command += ["-e", key + "=" + value]
-    command += [image, "/usr/local/lib/browser-platform/environment.py", "verify"]
-    verified = docker(command, timeout=60)
-    if verified.returncode or "ENVIRONMENT_ARTIFACT_OK" not in verified.stdout:
-        raise SystemExit("image rejected the artifact or acceptance report: " + verified.stderr.strip())
-    mounts += addon_mounts
-    script = '#!/usr/bin/env bash\nset -euo pipefail\nexec /usr/local/bin/browser-platform-camoufox "${SEALSKIN_URL:-about:blank}"\n'
-    wayland_script = '#!/usr/bin/env bash\necho "ENVIRONMENT_CONFIG_DRIFT: X11 is required" >&2\nexit 1\n'
-    definition = {
-        "id": args.app_id, "name": "Camoufox Personal (" + artifact["spec"]["id"] + ")",
-        "logo": "", "url": "https://camoufox.com/", "provider": "docker",
-        "source": args.store, "source_app_id": "firefox", "app_template": args.template,
-        "users": [args.username], "groups": [], "home_directories": True, "auto_update": False,
-        "is_meta_app": False,
-        "provider_config": {
-            **policy_reference,
-            "image": image, "port": 3000, "type": "browser", "url_support": True,
-            "open_support": False, "extensions": [], "nvidia_support": False, "dri3_support": False,
-            "autostart": True,
-            "custom_autostart_script_b64": base64.b64encode(script.encode()).decode(),
-            "custom_autostart_wayland_script_b64": base64.b64encode(wayland_script.encode()).decode(),
-            "env": [{"name": key, "value": value} for key, value in sorted(env.items())],
-            # The Docker provider shallow-merges these kwargs. Additional mounts
-            # preserve the separate Home/shared-files volumes managed by SealSkin.
-            "docker_overrides": {
-                **network_overrides, "mounts": mounts, "mem_limit": "1536m",
-                "nano_cpus": 1500000000, "pids_limit": 512, "shm_size": "256m",
-                "security_opt": ["no-new-privileges:true"],
-                "labels": {"browser-platform.application": args.app_id,
-                           "browser-platform.environment": artifact["spec"]["id"]},
-            },
-        },
-    }
+    definition = build_definition(
+        app_id=args.app_id, artifact_path=artifact_path, report_path=report_path, artifact=artifact,
+        env=env, image=image, username=args.username, store=args.store, template=args.template,
+        network_overrides=network_overrides, policy_reference=policy_reference, addon_mounts=addon_mounts,
+        verify=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("xb") as stream:
         stream.write(encode(definition))

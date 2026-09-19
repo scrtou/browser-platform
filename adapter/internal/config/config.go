@@ -93,13 +93,16 @@ type Config struct {
 	// ProxyTemplate enables R6D proxy drafts: the fixed owner, Relay/probe
 	// image digests and approved probe URL every generated policy shares.
 	ProxyTemplate *profile.ProxyTemplate `json:"proxy_template,omitempty"`
-	SealSkin      SealSkin               `json:"sealskin"`
-	SealSkinAdmin *SealSkinAdmin         `json:"sealskin_admin,omitempty"`
-	Health        Health                 `json:"health"`
-	Startup       Startup                `json:"startup"`
-	Access        *access.Config         `json:"access,omitempty"`
-	Limits        profile.Limits         `json:"limits"`
-	Profiles      []profile.Definition   `json:"profiles"`
+	// EnvironmentJobSpool is the private directory shared with the host-side
+	// custom fingerprint job runner (R6E); it requires environment_catalog.
+	EnvironmentJobSpool string               `json:"environment_job_spool,omitempty"`
+	SealSkin            SealSkin             `json:"sealskin"`
+	SealSkinAdmin       *SealSkinAdmin       `json:"sealskin_admin,omitempty"`
+	Health              Health               `json:"health"`
+	Startup             Startup              `json:"startup"`
+	Access              *access.Config       `json:"access,omitempty"`
+	Limits              profile.Limits       `json:"limits"`
+	Profiles            []profile.Definition `json:"profiles"`
 }
 
 func Load(path string) (Config, error) {
@@ -129,6 +132,7 @@ func Load(path string) (Config, error) {
 	cfg.ControlSocket = resolvePath(baseDir, cfg.ControlSocket)
 	cfg.ProfileDirectory = resolvePath(baseDir, cfg.ProfileDirectory)
 	cfg.EnvironmentCatalog = resolvePath(baseDir, cfg.EnvironmentCatalog)
+	cfg.EnvironmentJobSpool = resolvePath(baseDir, cfg.EnvironmentJobSpool)
 	if cfg.SealSkin.LifecycleEnabled && cfg.ControlSocket == "" && cfg.StateFile != "" {
 		cfg.ControlSocket = cfg.StateFile + ".control.sock"
 	}
@@ -176,6 +180,9 @@ func (cfg Config) Validate() error {
 	}
 	if cfg.EnvironmentCatalog != "" && (cfg.SealSkinAdmin == nil || cfg.SealSkinAdmin.Username == "" || cfg.SealSkinAdmin.ClientPrivateKeyFile == "") {
 		return errors.New("environment_catalog requires a separate sealskin_admin identity")
+	}
+	if cfg.EnvironmentJobSpool != "" && cfg.EnvironmentCatalog == "" {
+		return errors.New("environment_job_spool requires environment_catalog")
 	}
 	if cfg.ProxyTemplate != nil {
 		if cfg.EnvironmentCatalog == "" {

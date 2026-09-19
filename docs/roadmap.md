@@ -92,10 +92,10 @@ R5C 的顺序子项中，[R5C1 DIRECT](work-items/R5C1-2026-09-14-direct-isolati
 - 验证实际浏览器发布升级/回退，恢复匹配的 Home、镜像和产物快照，记录第三方站点登录结果。
 - 完善监控、告警、容量实测、日志保留与灾备演练。
 - 根据使用需要增加 Trilium Dashboard；Persona Studio 与替代 Broker 只在明确需求或维护成本需要时评估。
-- [R6 远程浏览器管理面](work-items/R6-2026-09-16-environment-management.md)：2026-09-17 按用户需求修订为第 2 版设计——面板可新增/删除/修改远程浏览器，每个浏览器配置代理（不配置即受管理 DIRECT）、指纹（固化目录或自定义生成作业）、固定入口 URL 与访问账号密码；契约见[管理面规格](specs/proxy-environment/management.md)。第 1 步 R6A、第 2 步 R6B 与第 3 步 [R6C](work-items/R6C-2026-09-18-create-delete-launch.md) 已完成候选代码与隔离测试（未部署）；第 4 步 [R6D](work-items/R6D-2026-09-18-proxy-drafts.md) 同日完成候选代码与隔离测试（未部署，真实上游代理归 R6F）；下一项为 R6E，R6F 未开始。
+- [R6 远程浏览器管理面](work-items/R6-2026-09-16-environment-management.md)：2026-09-17 按用户需求修订为第 2 版设计——面板可新增/删除/修改远程浏览器，每个浏览器配置代理（不配置即受管理 DIRECT）、指纹（固化目录或自定义生成作业）、固定入口 URL 与访问账号密码；契约见[管理面规格](specs/proxy-environment/management.md)。第 1 步 R6A、第 2 步 R6B 与第 3 步 [R6C](work-items/R6C-2026-09-18-create-delete-launch.md) 已完成候选代码与隔离测试（未部署）；第 4 步 [R6D](work-items/R6D-2026-09-18-proxy-drafts.md) 同日完成候选代码与隔离测试（未部署，真实上游代理归 R6F）；第 5 步 [R6E](work-items/R6E-2026-09-18-custom-fingerprint-jobs.md) 于 2026-09-19 完成候选代码、执行器与隔离验证（未部署）；下一项为 R6F。
 - R6 实施顺序（第 2 版）：R6A 只读列表 → R6B Profile 目录、账号角色与关闭按钮 → R6C 新增/删除浏览器（固化指纹 + DIRECT/现有代理修订，含 DIRECT 生产前置）→ R6D 代理草稿、隔离探针与修订 → R6E 自定义指纹生成/验收作业 → R6F 组合 QA、真实客户端、生产候选与回退。每个子项都须保留固定 Profile URL、Home 独占、Guard/Relay 无直连和现有生命周期所有权。
 
-完成条件：运维流程可由文档重现，升级/恢复有证据，容量上限来自测量；UI 只显示有新鲜证据支持的状态；管理面通过账号/能力、代理凭据、指纹修订、关闭清理和回退验收。R4B 已收尾；用户于 2026-09-17 决定不等待 R2 剩余的退出登录/Debian 13，R6 按上述第 2 版顺序实施。R6A–R6D 已收尾未部署；下一项为 R6E，R6F 仍未开始。
+完成条件：运维流程可由文档重现，升级/恢复有证据，容量上限来自测量；UI 只显示有新鲜证据支持的状态；管理面通过账号/能力、代理凭据、指纹修订、关闭清理和回退验收。R4B 已收尾；用户于 2026-09-17 决定不等待 R2 剩余的退出登录/Debian 13，R6 按上述第 2 版顺序实施。R6A–R6E 已收尾未部署；下一项为 R6F。
 
 <a id="release-criteria"></a>
 ## 版本定义与发布门槛
