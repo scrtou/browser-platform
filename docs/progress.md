@@ -48,7 +48,7 @@ R5A 的恢复检查发现并修复 TERM 丢失最近 localStorage 写入的问�
 | 对象 | 已安装或配置 | 实际生效范围 |
 | --- | --- | --- |
 | SealSkin 控制服务 | `0.3.2-entry-auth-v1-2ba57382ce75c8f9`，镜像 `sha256:9aac4402…` | 生产已重建；密封 Session、显示材料、网络生命周期和入口私有 HTTPS 生效，正式 Caddy/Docker/VPS 重启后同容器恢复 |
-| Adapter | R6F 当前运行摘要 `7f699ce3…`（candidate-13） | systemd 用户服务 active+enabled；原登录/授权/交接保持，管理面安全子集、私有 Profile 目录和管理员角色已生效；现有环境的创建/删除、真实代理和自定义指纹组合已临时验证并清理 |
+| Adapter | R6F 当前运行摘要 `7f699ce3…`（candidate-14 复核） | systemd 用户服务 active+enabled；原登录/授权/交接保持，管理面安全子集、私有 Profile 目录和管理员角色已生效；现有环境的创建/删除、真实代理和自定义指纹组合已临时验证并清理 |
 | 当前 Work | `firefox-work` / Home `work`，兼容镜像 `sha256:ec848635…` | 1 record/1 Worker、资源 0、退出/显示能力 1；旧代次已正常停止，Home 保留；Docker/VPS 重启后同 ID 恢复，关机时正常退出 |
 | 当前 Personal | `camoufox-personal-r9-fill-r1` / Home `personal-camoufox-r9`，镜像 `sha256:10f6420a…` | 1 record/1 Worker，5 resources/1 Relay/1 Guard/2 networks，network phase running；旧 `personal`/r7 Home 保留；Docker/VPS 重启后同 ID/镜像按 Relay → Guard → Worker 顺序恢复 |
 | Personal 显示环境 | zh-TW、Asia/Taipei、1920×1080、DPR 1、r9 去边框桌面与 fill-r10 全视区映射 | 已部署生产；Linux、Mac QA 与目标 Mac 生产入口复测通过 |
@@ -152,4 +152,4 @@ R5C2 已补公开委派、真实 180 秒 TTL 及 DIRECT 网站、控制器引导
 | 2026-09-17 | R4B 生产迁移、目标 Mac 生产复测与正式 Caddy/Docker/VPS 重启 | [R4B 验收](../infra/sealskin/target-client-migration-acceptance-2026-09-15.md)；控制服务 `0.3.2-entry-auth-v1`、Adapter candidate-4、Work 兼容镜像与 r9/fill-r10 Personal 已生效，已收尾；退出登录/Debian 13 归 R2 |
 | 2026-09-17 | R6A 授权环境列表与只读环境摘要（管理面第 1 步） | [R6A 验收](../infra/sealskin/environment-list-acceptance-2026-09-17.md)；候选代码、Go 隔离测试与 race 通过，未部署生产；后续 R6B 已收尾 |
 | 2026-09-18 | R6B Profile 目录、账号角色、管理员面板与关闭按钮（管理面第 2 步） | [R6B 验收](../infra/sealskin/environment-directory-acceptance-2026-09-17.md)；candidate-2 的 147 项 Go 测试、vet、gofmt、race 与生产配置只读加载通过，DEV-045–047 已解决；候选未部署，下一项 R6C 已完成并收尾 |
-| 2026-09-19 | R6F 管理面安全子集生产部署与现有环境组合验证 | [R6F 阶段验收](../infra/sealskin/r6f-release-combination-acceptance-2026-09-19.md)；首轮 candidate-10 后当前 Adapter 摘要 `7f699ce3…`、Profile 目录和 owner 管理员角色已生效，原 Personal/Work Home/Session/绑定保持；现有环境 overlay 已安装并通过固化/自定义指纹浏览器创建、启动、健康/代理探测、删除清理；组合根恢复、真实 Mac 自定义 artifact、Profile 生命周期写操作和实际回退仍待验证 |
+| 2026-09-19 | R6F 管理面安全子集生产部署与现有环境组合验证 | [R6F 阶段验收](../infra/sealskin/r6f-release-combination-acceptance-2026-09-19.md)；首轮 candidate-10 后当前 Adapter 摘要 `7f699ce3…`（candidate-14 复核）、Profile 目录和 owner 管理员角色已生效，原 Personal/Work Home/Session/绑定保持；现有环境 overlay 已安装并通过固化/自定义指纹浏览器创建、启动、健康/代理探测、删除清理；组合根恢复、真实 Mac 自定义 artifact、Profile 生命周期写操作和实际回退仍待验证 |

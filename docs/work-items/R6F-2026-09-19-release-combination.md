@@ -34,7 +34,7 @@
 | P/N/C/S/E/H 适用矩阵 | R5A–R5E 工具与 R6D/R6E 入口 | 复用工具但重建 R6F 版本/资源绑定；不得扩大旧报告范围 | 未验证 |
 | 真实客户端 | Trilium WebView / macOS 15.1 | 用户截图确认原 `owner` 登录、Personal/Work 列表、账号区、安全子集表单和未启用提示正常；随后提交 Personal 名称修改，服务器确认 `revision=2`，再临时修改并恢复起始页，最终 `revision=4`、起始页原值和运行绑定保持；创建 `test` 普通账号，仅分配 Personal；`test` 可进入 Personal、访问 `/manage/` 被拒绝且看不到 Work；新增/删除、代理、指纹未显示 | 页面、能力门控、名称修改、起始页修改/恢复、创建账号和普通账号三项边界通过；停启/关闭及账号密码操作未测 |
 | 备份/恢复与日志脱敏 | `secure-backup.py`、R5E 恢复工具、候选日志 | 固定 age v1.2.1 的 checks 镜像回归为 115 passed/0 failed；包含 legacy CLI 真实 Unix socket、加密归档、verify、离线 restore 与敏感输出扫描。临时 Profile 的停止/删除清理已完成，R6F 组合根的加密归档/离线恢复尚未执行 | 固定工具回归和临时清理通过；组合恢复待测 |
-| 回退演练与生产候选 | R4B release tooling、候选 manifest、回退配置 | 首轮 `candidate-10` 后当前运行 Adapter 摘要为 `7f699ce3…`，与 `candidate-13` 复核候选一致；控制器 overlay `r6f-existing-overlay-recheck` 已安装并重启 `sealskin`，生产服务 active/enabled，正确 Host 路由的 health/ready 均为 200；候选/旧 Adapter/配置/状态/账号表回退材料仍保留 | overlay 安装和当前运行态复核通过；未执行破坏性实际回退，组合根恢复仍待测 |
+| 回退演练与生产候选 | R4B release tooling、候选 manifest、回退配置 | 首轮 `candidate-10` 后当前运行 Adapter 摘要为 `7f699ce3…`，与 `candidate-14` 复核候选一致；控制器 overlay `r6f-existing-overlay-recheck` 已安装并重启 `sealskin`，生产服务 active/enabled，正确 Host 路由的 health/ready 均为 200；候选/旧 Adapter/配置/状态/账号表回退材料仍保留 | overlay 安装和当前运行态复核通过；未执行破坏性实际回退，组合根恢复仍待测 |
 
 ## 文档与收尾
 
