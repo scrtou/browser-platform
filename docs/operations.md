@@ -31,7 +31,7 @@ curl -fsS --resolve mybrowser.azhen.de:443:127.0.0.1 https://mybrowser.azhen.de/
 
 R5D 的 [入口授权](../infra/sealskin/entry-auth/README.md) 已通过独立验收，并随 R4B 共享组合部署。两个公开域名都经过 Adapter；普通健康路径不提供 Profile 数据，`/browser/{profile}/health` 要求当前登录和 Profile 授权。账号表变更、注销、到期或业务绑定变化只撤销显示；查看/停止 Worker 仍通过原运维 socket。账号管理使用 `profile-accounts`，密码经标准输入，不放入命令参数。R4B 上线或重启后可运行 `python3 infra/sealskin/checks/check-r4b-production-live.py --output <新的私有目录>` 做脱敏只读复核；输出目录必须不存在。
 
-2026-09-19 生产已启用 R6 管理面安全子集。管理员登录后访问 `https://mybrowser.azhen.de/manage/`；当前可查看 Personal/Work、管理入口账号、修改名称与起始页、停用/启用和安全关闭。未配置完整后端的新增/归档删除、代理草稿和自定义指纹不显示，直接请求也返回 404。`owner` 已无损提升为管理员，原密码和 Profile 授权不变。执行停用或安全关闭会产生真实生产副作用，实测前须明确选定 Profile；仅打开页面、查看列表和编辑框不会启动、停止或探测浏览器。
+2026-09-19 生产已启用 R6 管理面安全子集，并在维护窗口安装现有环境控制器 overlay。管理员登录后访问 `https://mybrowser.azhen.de/manage/`；可查看 Personal/Work、管理入口账号、修改名称与起始页、停用/启用和安全关闭。新增/归档删除、代理草稿和自定义指纹曾在维护窗口对临时 Profile 完成创建、启动、探测和清理，当前不应把该临时组合证据扩大为长期开放或真实客户端通过。`owner` 已无损提升为管理员，原密码和 Profile 授权不变；QA 管理员账号已禁用。执行停用或安全关闭会产生真实生产副作用，实测前须明确选定 Profile；仅打开页面、查看列表和编辑框不会启动、停止或探测浏览器。
 
 R5C1 候选中的 DIRECT 报告增加 `network_mode=direct` 和必需的 `egress` 分项，`proxy` 为 `not_applicable / DIRECT_NO_UPSTREAM`。`DIRECT_OK` 只表示经专属网关的 HTTPS 探测通过；未执行探测、地址证据缺失或端点异常保持 unknown，不能据此声称地区/公开 DNS 一致性通过。候选未部署，生产旧 Work 不具有该隔离保证。
 

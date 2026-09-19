@@ -13,7 +13,7 @@
 
 `https://mysession.azhen.de/` 承载 SealSkin 会话与显示通道。入口会自动跳转并授权，不把 Session URL 保存到永久笔记。Work 现使用带正常退出和显示认证能力的兼容 Firefox/Wayland 代次；Personal 已切换到 r9/fill-r10、新 Home 与受管理代理。旧 Personal、r7 和 Work Home、加密备份及回退材料仍保留；部署范围见 [开发进度](progress.md#deployment)。
 
-[入口登录](../infra/sealskin/entry-auth/README.md) 已随 R4B 上线。仍保存上述固定地址；首次进入或登录到期时先登录，再进入获授权的 Profile。入口首页可退出登录，退出会断开该登录的画面，浏览器数据保留。再次登录后打开固定入口可重新连接；打开第二个完整画面会接管前一个画面的控制。服务器端生产登录、交接与最终 Session 已通过；用户也已在目标 Mac/Trilium 确认正式登录、Personal 铺满/点击/图片预览和 Work 打开正常。R6F 已把管理面安全子集部署到 `/manage/`；2026-09-19 用户在目标 Mac/Trilium 使用原 `owner` 账号成功进入，页面显示 Personal/Work、账号管理和修改/停启/安全关闭操作，并明确提示新增与归档删除未启用；代理和自定义指纹入口未显示。随后完成名称/起始页可逆修改、账号创建及普通账号边界实测；未触发停用、启用、安全关闭或账号密码操作。
+[入口登录](../infra/sealskin/entry-auth/README.md) 已随 R4B 上线。仍保存上述固定地址；首次进入或登录到期时先登录，再进入获授权的 Profile。入口首页可退出登录，退出会断开该登录的画面，浏览器数据保留。再次登录后打开固定入口可重新连接；打开第二个完整画面会接管前一个画面的控制。服务器端生产登录、交接与最终 Session 已通过；用户也已在目标 Mac/Trilium 确认正式登录、Personal 铺满/点击/图片预览和 Work 打开正常。R6F 已把管理面安全子集部署到 `/manage/`；2026-09-19 用户在目标 Mac/Trilium 使用原 `owner` 账号成功进入，页面显示 Personal/Work、账号管理和修改/停启/安全关闭操作，并完成名称/起始页可逆修改、账号创建及普通账号边界实测。新增/归档删除、代理和自定义指纹随后只在维护窗口对临时 Profile 做过服务器端组合验证，未在 Mac/Trilium 上验收；未触发生产 Personal/Work 的停用、启用或安全关闭。
 
 ## 常用操作
 
