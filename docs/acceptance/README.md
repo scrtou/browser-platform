@@ -8,6 +8,7 @@
 
 | 日期 / 记录 | 验证内容 | 范围与后续关系 |
 | --- | --- | --- |
+| 2026-09-19 · [R6F 组合 QA、真实客户端、生产候选与回退阶段](../../infra/sealskin/r6f-release-combination-acceptance-2026-09-19.md) | 当前 R6 源码 Go vet/test/race、固定 r9 artifact 单元、备份测试（114 passed/1 failed）、只读生产边界、隔离候选二进制与历史回退包核对 | R6F 仍进行中；真实组合、真实 Mac、完整恢复/回退和生产安装未测；历史 release-ready-2 因输入摘要漂移拒绝复用，见 DEV-052 |
 | 2026-09-18–19 · [R6E 自定义指纹生成与验收作业](../../infra/sealskin/custom-fingerprint-acceptance-2026-09-18.md) | 9 个 Go 包 249 项测试、vet、gofmt、checks 镜像 race；主机 21 项 Python 测试；一次真实隔离作业（固定 r9 镜像、生成 1 次、10 次重建完整验收、目录追加、夹具清理） | 候选代码只在隔离 spool/目录验证，执行器未装为服务，生产仍为 candidate-4；真实客户端使用自定义产物与 R6F 组合 QA 未测，不得部署 |
 | 2026-09-18 · [R6D 代理草稿、隔离探针与 proxy_required 修订](../../infra/sealskin/proxy-drafts-acceptance-2026-09-18.md) | 9 个 Go 包 243 项测试、vet、gofmt、checks 镜像 race；控制器补丁 545 项 pytest（含本机 fake socks5/HTTP/HTTPS 代理探针、Store 导入、策略追加）；草稿版本/撤销/幂等与面板边界 | 候选代码与第二层控制器补丁只在隔离环境验证，生产仍为 candidate-4；真实上游代理、真实代次、R6E/R6F 未测，不得部署 |
 | 2026-09-18 · [R6C 新增/删除浏览器、Home 归档与 launch plan](../../infra/sealskin/environment-create-delete-acceptance-2026-09-18.md) | 9 个 Go 包 234 项测试、vet、gofmt、race；固定环境目录、管理员应用安装/删除、Home 创建/控制器归档、Stop/资源保护、删除审计状态和一次性 launch plan；控制器补丁 `pytest` 归档/幂等测试通过 | 候选代码与第二层控制器补丁只在隔离环境验证，生产仍为 candidate-4；DIRECT 主机前置、R6D/R6E/R6F 及真实 Home/客户端未测，不得部署 |

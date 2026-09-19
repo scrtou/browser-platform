@@ -8,6 +8,7 @@
 
 | 编号 | 工作项 | 差异 | 处理方式 | 状态 |
 | --- | --- | --- | --- | --- |
+| [DEV-2026-09-19-052](DEV-2026-09-19-052-stale-release-package.md) | [R6F](../work-items/R6F-2026-09-19-release-combination.md) | R4B `release-ready-2` 准备摘要早于当前 r9 生产配置/状态写入，旧包复核拒绝 live input drift | 保留旧包为回退材料；R6F 重新构建并绑定当前输入，生产不变 | 待处理 |
 | [DEV-2026-09-18-051](DEV-2026-09-18-051-environment-job-runner.md) | [R6E](../work-items/R6E-2026-09-18-custom-fingerprint-jobs.md) | 规格要求“服务端”在隔离容器中生成/验收自定义指纹；Adapter 无 Docker 权限且不应成为第二个容器所有者，完整验收需要一次性网络与 QA 夹具 | Adapter 只写私有 spool 请求并读状态；主机执行器持 Docker 组一次处理一个作业（只读根/无网络/限额生成、有界重试、完整验收、镜像 verify 后原子追加目录），失败保留证据不发布 | 已解决（候选，未部署） |
 | [DEV-2026-09-18-050](DEV-2026-09-18-050-proxy-draft-probe-scope.md) | [R6D](../work-items/R6D-2026-09-18-proxy-drafts.md) | 规格要求草稿探针在隔离网络中验证并给出出口地区；草稿阶段没有 generation/Guard/Relay，出口地区依赖运行中代次的一致性报告 | 修订实现范围：控制器进程内有界协议/TLS 探针，冻结公网 IPv4、拒绝私网；启动门槛仍由 Guard 探针与一致性策略承担 | 已解决（候选补丁，真实上游未测） |
 | [DEV-2026-09-18-049](DEV-2026-09-18-049-proxy-secret-import-channel.md) | [R6D](../work-items/R6D-2026-09-18-proxy-drafts.md) | 规格要求 Adapter 经 tmpfs 调用同一导入路径并写策略注册表；Store/注册表只在控制器容器内，Adapter 无挂载也不应持有主密钥 | 第二层补丁增加管理员加密接口：Store 导入只返回引用、策略只追加并按控制器规则计算摘要；Adapter 不落盘凭据 | 已解决（候选补丁，未部署） |
