@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "revision": 25,
+  "revision": 31,
   "browsers": [
     {
       "id": "browser-712e9fafa857",
@@ -95,6 +95,28 @@
       },
       "revision": 4,
       "updated_at": "2026-09-19T08:56:20.134040972Z",
+      "updated_by": "r6f-qa-admin",
+      "status": "deleted"
+    },
+    {
+      "id": "browser-ebe9deb3fa49",
+      "label": "R6F生命周期临时浏览器",
+      "application_id": "app-ebe9deb3fa49",
+      "home_name": "browser-ebe9deb3fa49-home",
+      "start_url": "https://example.com/",
+      "wayland_mode": false,
+      "network_policy_id": "browser-ebe9deb3fa49-proxy-r1",
+      "network_policy_sha256": "168ddf061775b8e8bec6d29105e130f17c4396ed63294344bdb162565abf2411",
+      "network_mode": "proxy_required",
+      "environment_artifact_id": "env-tw-camoufox-r9",
+      "environment_artifact_sha256": "b8d98426224be7abc5904c20f2ccf5283298930fc09f228b642d39cd8f322e95",
+      "environment_source": "frozen",
+      "required_runtime_capabilities": {
+        "browser_shutdown_version": 1,
+        "session_auth_version": 1
+      },
+      "revision": 6,
+      "updated_at": "2026-09-19T15:18:12.626785115Z",
       "updated_by": "r6f-qa-admin",
       "status": "deleted"
     },
