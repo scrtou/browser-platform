@@ -334,12 +334,15 @@ func (s *Service) ProbeProxyDraft(ctx context.Context, profileID, draftID string
 	return s.summaryOf(draft), nil
 }
 
-func (s *Service) emptyRuntime(ctx context.Context, profileID string) error {
-	result, err := s.Stop(ctx, profileID)
+// requireStoppedRuntime is a read-only gate for network revision changes.
+// Applying a proxy/DIRECT selection must never stop a browser implicitly:
+// operators use the explicit Stop action first, then retry the apply.
+func (s *Service) requireStoppedRuntime(ctx context.Context, profileID string) error {
+	result, err := s.Inspect(ctx, profileID)
 	if err != nil {
 		return err
 	}
-	if result.Status != state.StatusStopped || result.Workers != 0 || result.Resources != 0 {
+	if result.Status != state.StatusStopped || result.Records != 0 || result.Workers != 0 || result.Resources != 0 {
 		return ErrBrowserBusy
 	}
 	return nil
@@ -370,7 +373,7 @@ func (s *Service) ApplyProxyDraft(ctx context.Context, profileID string, expecte
 	if draft.summary.ProbeStatus != "passed" {
 		return Record{}, ErrProxyDraftNotProbed
 	}
-	if err := s.emptyRuntime(ctx, profileID); err != nil {
+	if err := s.requireStoppedRuntime(ctx, profileID); err != nil {
 		return Record{}, err
 	}
 	policyID := fmt.Sprintf("%s-proxy-r%d", profileID, draft.summary.SecretVersion)
@@ -418,7 +421,7 @@ func (s *Service) SetBrowserDirect(ctx context.Context, profileID string, expect
 	if record.Revision != expectedRevision {
 		return Record{}, ErrRevisionMismatch
 	}
-	if err := s.emptyRuntime(ctx, profileID); err != nil {
+	if err := s.requireStoppedRuntime(ctx, profileID); err != nil {
 		return Record{}, err
 	}
 	updated, err := s.switchNetwork(ctx, record, NetworkBinding{Mode: "direct", PolicyID: policyID, PolicySHA256: policySHA256}, actor, idempotencyKey, 0)

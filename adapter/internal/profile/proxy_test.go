@@ -171,15 +171,27 @@ func TestProxyDraftProbeApplyAndDirectSwitch(t *testing.T) {
 	if _, err := service.ApplyProxyDraft(context.Background(), record.ID, current.Revision-1, draft.ID, "root", "apply-1"); !errors.Is(err, ErrRevisionMismatch) {
 		t.Fatalf("stale revision: %v", err)
 	}
-	fake.snapshot.Records = []sealskin.RuntimeRecord{{SessionID: "foreign"}}
-	if _, err := service.ApplyProxyDraft(context.Background(), record.ID, current.Revision, draft.ID, "root", "apply-1"); !errors.Is(err, ErrOwnershipUnknown) {
+	fake.snapshot.BrowserShutdownVersion, fake.snapshot.SessionAuthVersion = 1, 1
+	plan, err := service.IssueLaunchPlan(context.Background(), "alice", record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.EnsureWithLaunchPlan(context.Background(), "alice", record.ID, plan.Token); err != nil {
+		t.Fatal(err)
+	}
+	stopCalls := fake.stopCalls
+	if _, err := service.ApplyProxyDraft(context.Background(), record.ID, current.Revision, draft.ID, "root", "apply-1"); !errors.Is(err, ErrBrowserBusy) {
 		t.Fatalf("busy runtime: %v", err)
+	}
+	if fake.stopCalls != stopCalls {
+		t.Fatalf("proxy apply implicitly stopped a running browser: before=%d after=%d", stopCalls, fake.stopCalls)
 	}
 	if admin.appendCalls != 0 || admin.patchCalls != 0 {
 		t.Fatal("network mutations ran while the runtime was not empty")
 	}
-	fake.snapshot = emptyRuntime()
-	fake.snapshot.HomeName = record.HomeName
+	if result, err := service.Stop(context.Background(), record.ID); err != nil || result.Status != "stopped" {
+		t.Fatalf("explicit stop before proxy apply: %+v %v", result, err)
+	}
 	admin.appendErr = errors.New("registry unavailable")
 	if _, err := service.ApplyProxyDraft(context.Background(), record.ID, current.Revision, draft.ID, "root", "apply-1"); err == nil {
 		t.Fatal("append failure was accepted")
@@ -212,12 +224,13 @@ func TestProxyDraftProbeApplyAndDirectSwitch(t *testing.T) {
 	if _, ok := service.ProxyDraft(record.ID); ok {
 		t.Fatal("applied draft still visible")
 	}
-	plan, err := service.IssueLaunchPlan(context.Background(), "alice", record.ID)
+	plan, err = service.IssueLaunchPlan(context.Background(), "alice", record.ID)
 	if err != nil || plan.Revision != applied.Revision {
 		t.Fatalf("launch plan after switch: %+v %v", plan, err)
 	}
 	launched := false
-	fake.snapshot.BrowserShutdownVersion, fake.snapshot.SessionAuthVersion = 1, 1
+	fake.snapshot.HomeName = record.HomeName
+	fake.snapshot.BrowserShutdownVersion, fake.snapshot.SessionAuthVersion, fake.snapshot.NetworkRuntimeVersion = 1, 1, 1
 	fake.launchHook = func(request sealskin.LaunchURLRequest) {
 		launched = request.NetworkPolicyID == applied.NetworkPolicyID && request.NetworkPolicySHA256 == applied.NetworkPolicySHA256
 	}
@@ -227,12 +240,16 @@ func TestProxyDraftProbeApplyAndDirectSwitch(t *testing.T) {
 	if !launched {
 		t.Fatal("next generation did not use the new policy revision")
 	}
-	fake.snapshot.Records = []sealskin.RuntimeRecord{{SessionID: "foreign"}}
-	if _, err := service.SetBrowserDirect(context.Background(), record.ID, applied.Revision, "direct-r1", strings.Repeat("c", 64), "root", "direct-1"); !errors.Is(err, ErrOwnershipUnknown) {
+	stopCalls = fake.stopCalls
+	if _, err := service.SetBrowserDirect(context.Background(), record.ID, applied.Revision, "direct-r1", strings.Repeat("c", 64), "root", "direct-1"); !errors.Is(err, ErrBrowserBusy) {
 		t.Fatalf("direct switch while running: %v", err)
 	}
-	fake.snapshot = emptyRuntime()
-	fake.snapshot.HomeName = record.HomeName
+	if fake.stopCalls != stopCalls {
+		t.Fatalf("DIRECT apply implicitly stopped a running browser: before=%d after=%d", stopCalls, fake.stopCalls)
+	}
+	if result, err := service.Stop(context.Background(), record.ID); err != nil || result.Status != "stopped" {
+		t.Fatalf("explicit stop before DIRECT apply: %+v %v", result, err)
+	}
 	if _, err := service.SetBrowserDirect(context.Background(), record.ID, applied.Revision, "direct-r1", "nothex", "root", "direct-1"); !errors.Is(err, ErrManagedPolicyRequired) {
 		t.Fatalf("invalid DIRECT reference: %v", err)
 	}
