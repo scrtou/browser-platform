@@ -32,14 +32,14 @@ func newHealthService(t *testing.T) (*Service, *state.Store, *lifecycleFake, *ti
 	return service, store, fake, &now
 }
 
-func TestHealthyRunningProfileBindsJournalAndObservation(t *testing.T) {
+func TestRunningProfileWithoutManagedEgressIsDegradedAndReadOnly(t *testing.T) {
 	service, store, fake, _ := newHealthService(t)
 	report, err := service.Health(context.Background(), "personal", HealthOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	binding, _, _ := store.Get("personal")
-	if report.Overall != OverallHealthy || report.Stale || report.Cached {
+	if report.Overall != OverallDegraded || report.NetworkMode != "unmanaged" || report.Stale || report.Cached {
 		t.Fatalf("report=%+v", report)
 	}
 	if report.Binding.OperationID != binding.OperationID || report.Binding.SessionID != binding.SessionID || report.Binding.Status != state.StatusRunning {
@@ -49,16 +49,20 @@ func TestHealthyRunningProfileBindsJournalAndObservation(t *testing.T) {
 		t.Fatalf("freshness/environment: %+v", report)
 	}
 	for name, code := range map[string]string{"entry": "ADAPTER_OK", "control": "CONTROL_OK", "session": "SESSION_RUNNING", "worker": "WORKER_RUNNING",
-		"browser": "BROWSER_RUNNING", "display": "DISPLAY_READY", "proxy": "PROXY_NOT_CONFIGURED", "freshness": "REPORT_FRESH"} {
+		"browser": "BROWSER_RUNNING", "display": "DISPLAY_READY", "proxy": "PROXY_NOT_CONFIGURED", "egress": "EGRESS_NOT_CONFIGURED", "freshness": "REPORT_FRESH"} {
 		if got := check(t, report, name); got.Code != code {
 			t.Fatalf("%s=%+v want %s", name, got, code)
 		}
 	}
-	if report.Recovery != nil || fake.launches != 1 || fake.stopCalls != 0 || fake.observeCalls != 1 || fake.observeUpstream[0] {
-		t.Fatalf("healthy report side effects: recovery=%+v launches=%d stops=%d observe=%d", report.Recovery, fake.launches, fake.stopCalls, fake.observeCalls)
+	if egress := check(t, report, "egress"); egress.Required || egress.Status != CheckWarn {
+		t.Fatalf("egress=%+v", egress)
+	}
+	if report.Recovery == nil || report.Recovery.Blocking || report.Recovery.Code != "EGRESS_NOT_CONFIGURED" ||
+		fake.launches != 1 || fake.stopCalls != 0 || fake.observeCalls != 1 || fake.observeUpstream[0] {
+		t.Fatalf("unmanaged report side effects: recovery=%+v launches=%d stops=%d observe=%d", report.Recovery, fake.launches, fake.stopCalls, fake.observeCalls)
 	}
 	public := report.Public()
-	if public.Binding.OperationID != "" || public.Binding.SessionID != "" || public.Overall != OverallHealthy {
+	if public.Binding.OperationID != "" || public.Binding.SessionID != "" || public.Overall != OverallDegraded {
 		t.Fatalf("public report: %+v", public.Binding)
 	}
 }
@@ -289,8 +293,11 @@ func TestLegacyGenerationUnderNewPolicyIsDegradedNotUnhealthy(t *testing.T) {
 		t.Fatal("test precondition: legacy binding has no policy")
 	}
 	proxy := check(t, report, "proxy")
-	if report.Overall != OverallDegraded || proxy.Status != CheckWarn || proxy.Required || proxy.Code != "PROXY_LEGACY_GENERATION" {
+	if report.Overall != OverallDegraded || report.NetworkMode != "unmanaged" || proxy.Status != CheckWarn || proxy.Required || proxy.Code != "PROXY_LEGACY_GENERATION" {
 		t.Fatalf("report=%+v", report)
+	}
+	if egress := check(t, report, "egress"); egress.Code != "EGRESS_UNMANAGED_GENERATION" || egress.Status != CheckWarn || egress.Required {
+		t.Fatalf("egress=%+v", egress)
 	}
 	if report.Recovery == nil || report.Recovery.Blocking || fake.observeUpstream[0] {
 		t.Fatalf("legacy recovery=%+v upstream=%v", report.Recovery, fake.observeUpstream)
@@ -360,9 +367,9 @@ func TestControlOutageTimeoutAndExpiryAreUnknownNotOffline(t *testing.T) {
 	}
 	fake.observeErr = nil
 	*now = now.Add(HealthMinInterval + time.Second)
-	healthy, err := service.Health(context.Background(), "personal", HealthOptions{Force: true})
-	if err != nil || healthy.Overall != OverallHealthy {
-		t.Fatalf("healthy report=%+v err=%v", healthy, err)
+	recovered, err := service.Health(context.Background(), "personal", HealthOptions{Force: true})
+	if err != nil || recovered.Overall != OverallDegraded || check(t, recovered, "egress").Code != "EGRESS_NOT_CONFIGURED" {
+		t.Fatalf("recovered report=%+v err=%v", recovered, err)
 	}
 	*now = now.Add(HealthTTL + time.Second)
 	expired, err := service.Health(context.Background(), "personal", HealthOptions{CachedOnly: true})

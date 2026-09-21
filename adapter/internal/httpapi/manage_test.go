@@ -332,7 +332,7 @@ func TestManagementEnvironmentJobsFormListAndCatalogSelect(t *testing.T) {
 	page := httptest.NewRecorder()
 	server.ServeHTTP(page, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/", nil), "root", grants))
 	body := page.Body.String()
-	for _, want := range []string{`<select name="environment_artifact_id"`, `env-custom-0123456789abcdef · en-US · America/New_York · 1920x1080@1 · custom`, "自定义指纹作业", "job-ffffffffffffffff", "ENVIRONMENT_ACCEPTANCE_FAILED · exit 1", "产物 cccccccccccc…", "生成尝试 2"} {
+	for _, want := range []string{`<select name="environment_artifact_id"`, `env-custom-0123456789abcdef · en-US · America/New_York · 1920x1080@1 · custom`, "指纹作业"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("page lacks %q: %s", want, body)
 		}
@@ -340,9 +340,17 @@ func TestManagementEnvironmentJobsFormListAndCatalogSelect(t *testing.T) {
 	if strings.Contains(body, `name="environment_artifact_id" maxlength`) {
 		t.Fatal("free-text artifact input rendered although the catalog is available")
 	}
+	jobsPage := httptest.NewRecorder()
+	server.ServeHTTP(jobsPage, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/?tab=jobs", nil), "root", grants))
+	jobsBody := jobsPage.Body.String()
+	for _, want := range []string{"job-ffffffffffffffff", "ENVIRONMENT_ACCEPTANCE_FAILED · exit 1", "产物 cccccccccccc…", "生成尝试 2"} {
+		if !strings.Contains(jobsBody, want) {
+			t.Fatalf("jobs tab lacks %q: %s", want, jobsBody)
+		}
+	}
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, manageForm(url.Values{"locale": {"en-US"}, "languages": {" en-US, en "}, "timezone": {"America/New_York"}, "screen_width": {"1920"}, "screen_height": {"1080"}, "dpr": {"1"}, "window_width": {"1600"}, "window_height": {"900"}}, "root", grants, "https://adapter.example/manage/environment-jobs"))
-	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/manage/?notice=job_created" || len(profiles.requests) != 1 || profiles.actors[0] != "root" {
+	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/manage/?tab=jobs&notice=job_created" || len(profiles.requests) != 1 || profiles.actors[0] != "root" {
 		t.Fatalf("create: %d %s requests=%+v", response.Code, response.Header().Get("Location"), profiles.requests)
 	}
 	got := profiles.requests[0]
@@ -357,13 +365,13 @@ func TestManagementEnvironmentJobsFormListAndCatalogSelect(t *testing.T) {
 	profiles.createErr = profile.ErrEnvironmentJobInvalid
 	response = httptest.NewRecorder()
 	server.ServeHTTP(response, manageForm(url.Values{"locale": {"x"}, "languages": {"x"}, "timezone": {"UTC"}, "screen_width": {"abc"}, "screen_height": {"1080"}, "dpr": {"1"}}, "root", grants, "https://adapter.example/manage/environment-jobs"))
-	if response.Header().Get("Location") != "/manage/?notice=job_invalid" || profiles.requests[2].ScreenWidth != -1 {
+	if response.Header().Get("Location") != "/manage/?tab=jobs&notice=job_invalid" || profiles.requests[2].ScreenWidth != -1 {
 		t.Fatalf("invalid: %s %+v", response.Header().Get("Location"), profiles.requests[2])
 	}
 	profiles.createErr = profile.ErrEnvironmentJobsBusy
 	response = httptest.NewRecorder()
 	server.ServeHTTP(response, manageForm(url.Values{"locale": {"en-US"}, "languages": {"en-US"}, "timezone": {"UTC"}, "screen_width": {"1920"}, "screen_height": {"1080"}, "dpr": {"1"}}, "root", grants, "https://adapter.example/manage/environment-jobs"))
-	if response.Header().Get("Location") != "/manage/?notice=job_busy" {
+	if response.Header().Get("Location") != "/manage/?tab=jobs&notice=job_busy" {
 		t.Fatalf("busy: %s", response.Header().Get("Location"))
 	}
 	list := httptest.NewRecorder()
@@ -524,5 +532,292 @@ func TestManagementBrowserFormsUpdateStopAndRespectCapabilities(t *testing.T) {
 	server.ServeHTTP(response, httptest.NewRequest(http.MethodPost, target, strings.NewReader("action=stop")))
 	if response.Code != http.StatusNotFound || len(profiles.stopCalls) != 3 {
 		t.Fatalf("POST without gateway grants: %d", response.Code)
+	}
+}
+
+type fakeFullManagementService struct {
+	*fakeProxyDrafts
+	jobs    []profile.EnvironmentJobSummary
+	jobsErr error
+}
+
+func (f *fakeFullManagementService) CreateEnvironmentJob(_ context.Context, _ string, _ profile.EnvironmentJobRequest) (profile.EnvironmentJobSummary, error) {
+	return profile.EnvironmentJobSummary{}, nil
+}
+
+func (f *fakeFullManagementService) EnvironmentJobs() ([]profile.EnvironmentJobSummary, error) {
+	return f.jobs, f.jobsErr
+}
+
+func TestManagementRedesignedUIStructureAndContracts(t *testing.T) {
+	summary := sampleSummary("personal")
+	summary.ConfiguredNetworkMode = "direct"
+	base := &fakeProfiles{environments: map[string]profile.EnvironmentSummary{"personal": summary}, stopResult: profile.LifecycleResult{Status: state.StatusStopped}}
+	drafts := &fakeProxyDrafts{fakeBrowserManager: &fakeBrowserManager{fakeProfiles: base, capabilities: profile.ManagementCapabilities{CreateDelete: true, ProxyDrafts: true, EnvironmentJobs: true}}, drafts: map[string]profile.ProxyDraftSummary{}}
+	profiles := &fakeFullManagementService{fakeProxyDrafts: drafts}
+	server := New(profiles, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})
+	grants := []access.Grant{{Profile: "personal", Capabilities: []string{"view", "manage", "stop"}}}
+
+	page := httptest.NewRecorder()
+	server.ServeHTTP(page, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/?notice=updated", nil), "root", grants))
+	if page.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", page.Code)
+	}
+	body := page.Body.String()
+
+	// 1. Semantic landmarks: header, main, section, footer
+	for _, tag := range []string{"<header", "<main", "<section", "<footer"} {
+		if !strings.Contains(body, tag) {
+			t.Fatalf("page missing semantic tag %q", tag)
+		}
+	}
+
+	// 2. Responsive viewport
+	if !strings.Contains(body, `<meta name="viewport" content="width=device-width,initial-scale=1">`) {
+		t.Fatal("page missing responsive viewport meta tag")
+	}
+
+	// 3. Feedback region with role=status
+	if !strings.Contains(body, `role="status"`) || !strings.Contains(body, "已保存。") {
+		t.Fatal("notice feedback region with role=status is missing")
+	}
+
+	// 4. Browser cards instead of 9-column desktop table
+	if !strings.Contains(body, "browser-card") {
+		t.Fatal("browser card structure missing")
+	}
+
+	// 5. Explicit visible labels
+	if !strings.Contains(body, `<label for="label-personal">`) || !strings.Contains(body, `<label for="url-personal">`) {
+		t.Fatal("explicit form labels missing")
+	}
+
+	// 6. Dangerous operations zone with visible idempotency key label
+	if !strings.Contains(body, "danger-zone") || !strings.Contains(body, "危险操作") || !strings.Contains(body, `<label for="del-key-personal">`) {
+		t.Fatal("danger zone or visible idempotency label missing")
+	}
+
+	// 7. Details for advanced network configuration
+	if !strings.Contains(body, "<details") || !strings.Contains(body, "配置代理 / 切回 DIRECT") {
+		t.Fatal("advanced network details element missing")
+	}
+
+	// 8. Key routes and fields preserved across tabs
+	for _, fragment := range []string{
+		`action="/manage/browsers"`,
+		`action="/manage/browsers/personal"`,
+		`action="/auth/logout"`,
+		`name="csrf"`,
+		`name="idempotency_key"`,
+		`name="revision"`,
+	} {
+		if !strings.Contains(body, fragment) {
+			t.Fatalf("page missing required form contract fragment %q", fragment)
+		}
+	}
+
+	jobsPage := httptest.NewRecorder()
+	server.ServeHTTP(jobsPage, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/?tab=jobs", nil), "root", grants))
+	if !strings.Contains(jobsPage.Body.String(), `action="/manage/environment-jobs"`) {
+		t.Fatal("jobs tab missing environment-jobs action")
+	}
+
+	accountsPage := httptest.NewRecorder()
+	server.ServeHTTP(accountsPage, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/?tab=accounts", nil), "root", grants))
+	if !strings.Contains(accountsPage.Body.String(), `action="/manage/accounts"`) {
+		t.Fatal("accounts tab missing accounts action")
+	}
+}
+
+func TestManagementTabsNavigationFallbackReauthAndRedirects(t *testing.T) {
+	summary := sampleSummary("personal")
+	summary.ConfiguredNetworkMode = "direct"
+	base := &fakeProfiles{
+		environments: map[string]profile.EnvironmentSummary{"personal": summary},
+		stopResult:   profile.LifecycleResult{Status: state.StatusStopped},
+	}
+	drafts := &fakeProxyDrafts{
+		fakeBrowserManager: &fakeBrowserManager{
+			fakeProfiles: base,
+			capabilities: profile.ManagementCapabilities{CreateDelete: true, ProxyDrafts: true, EnvironmentJobs: true},
+		},
+		drafts: map[string]profile.ProxyDraftSummary{},
+	}
+	profiles := &fakeFullManagementService{
+		fakeProxyDrafts: drafts,
+		jobs: []profile.EnvironmentJobSummary{
+			{ID: "job-test-1", Status: "running", Locale: "en-US", Timezone: "UTC"},
+		},
+	}
+	server := New(profiles, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})
+	grants := []access.Grant{{Profile: "personal", Capabilities: []string{"view", "manage", "stop"}}}
+
+	// 1. Default tab (GET /manage/) -> browsers tab
+	{
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/", nil), "root", grants))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `<nav class="nav-tabs" aria-label="管理功能">`) {
+			t.Fatal("missing nav-tabs landmark")
+		}
+		if !strings.Contains(body, `href="/manage/?tab=browsers" class="tab-item active" aria-current="page"`) {
+			t.Fatal("browsers tab missing active aria-current on default")
+		}
+		if strings.Contains(body, `href="/manage/?tab=jobs" class="tab-item active"`) || strings.Contains(body, `href="/manage/?tab=accounts" class="tab-item active"`) {
+			t.Fatal("non-active tab marked active")
+		}
+		// Accessible navigation: NO fake ARIA tabs widget roles
+		for _, fakeARIA := range []string{`role="tablist"`, `role="tab"`, `role="tabpanel"`} {
+			if strings.Contains(body, fakeARIA) {
+				t.Fatalf("found fake ARIA role %q", fakeARIA)
+			}
+		}
+		// Render only active pane: browsers present, jobs/accounts absent
+		if !strings.Contains(body, `<section class="section-browsers"`) {
+			t.Fatal("missing browsers section")
+		}
+		if strings.Contains(body, `<section class="section-jobs"`) || strings.Contains(body, `<section class="section-accounts"`) {
+			t.Fatal("inactive sections rendered on browsers tab")
+		}
+		// Confirm password link with encoded next to active fixed tab
+		if !strings.Contains(body, `href="/auth/reauth?next=%2Fmanage%2F%3Ftab%3Dbrowsers"`) {
+			t.Fatal("browsers tab missing top bar confirm-password link returning to browsers")
+		}
+	}
+
+	// 2. Explicit tab: jobs tab
+	{
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/?tab=jobs", nil), "root", grants))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `href="/manage/?tab=jobs" class="tab-item active" aria-current="page"`) {
+			t.Fatal("jobs tab missing active aria-current")
+		}
+		if !strings.Contains(body, `<section class="section-jobs"`) {
+			t.Fatal("missing jobs section on jobs tab")
+		}
+		if strings.Contains(body, `<section class="section-browsers"`) || strings.Contains(body, `<section class="section-accounts"`) {
+			t.Fatal("inactive sections rendered on jobs tab")
+		}
+		if !strings.Contains(body, `href="/auth/reauth?next=%2Fmanage%2F%3Ftab%3Djobs"`) {
+			t.Fatal("jobs tab missing top bar confirm-password link returning to jobs")
+		}
+	}
+
+	// 3. Explicit tab: accounts tab
+	{
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/?tab=accounts", nil), "root", grants))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `href="/manage/?tab=accounts" class="tab-item active" aria-current="page"`) {
+			t.Fatal("accounts tab missing active aria-current")
+		}
+		if !strings.Contains(body, `<section class="section-accounts"`) {
+			t.Fatal("missing accounts section on accounts tab")
+		}
+		if strings.Contains(body, `<section class="section-browsers"`) || strings.Contains(body, `<section class="section-jobs"`) {
+			t.Fatal("inactive sections rendered on accounts tab")
+		}
+		if !strings.Contains(body, `href="/auth/reauth?next=%2Fmanage%2F%3Ftab%3Daccounts"`) {
+			t.Fatal("accounts tab missing confirm-password link returning to accounts")
+		}
+	}
+
+	// 4. Invalid tab fallback to browsers
+	for _, invalidTab := range []string{"unknown", "hack", "admin", "123", "../", "%3Cscript%3Ealert(1)%3C%2Fscript%3E"} {
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/?tab="+invalidTab, nil), "root", grants))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `href="/manage/?tab=browsers" class="tab-item active" aria-current="page"`) {
+			t.Fatalf("invalid tab %q did not fall back to browsers tab", invalidTab)
+		}
+		if !strings.Contains(body, `<section class="section-browsers"`) || strings.Contains(body, `<section class="section-jobs"`) || strings.Contains(body, `<section class="section-accounts"`) {
+			t.Fatalf("invalid tab %q rendered wrong panes", invalidTab)
+		}
+	}
+
+	// 5. Unavailable jobs capability fallback to browsers
+	{
+		disabledBase := &fakeProfiles{environments: map[string]profile.EnvironmentSummary{"personal": summary}}
+		disabledDrafts := &fakeProxyDrafts{
+			fakeBrowserManager: &fakeBrowserManager{
+				fakeProfiles: disabledBase,
+				capabilities: profile.ManagementCapabilities{CreateDelete: true, ProxyDrafts: true, EnvironmentJobs: false},
+			},
+			drafts: map[string]profile.ProxyDraftSummary{},
+		}
+		disabledServer := New(&fakeFullManagementService{fakeProxyDrafts: disabledDrafts}, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})
+		rec := httptest.NewRecorder()
+		disabledServer.ServeHTTP(rec, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/?tab=jobs", nil), "root", grants))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		body := rec.Body.String()
+		if strings.Contains(body, `href="/manage/?tab=jobs"`) {
+			t.Fatal("unavailable jobs tab link rendered in nav")
+		}
+		if !strings.Contains(body, `href="/manage/?tab=browsers" class="tab-item active" aria-current="page"`) {
+			t.Fatal("requesting unavailable jobs did not fall back to browsers tab")
+		}
+		if !strings.Contains(body, `<section class="section-browsers"`) || strings.Contains(body, `<section class="section-jobs"`) {
+			t.Fatal("unavailable jobs tab rendered wrong pane")
+		}
+	}
+
+	// 6. POST redirect routing by request path
+	// A listing failure also makes jobs unavailable without exposing internal errors.
+	{
+		profiles.jobsErr = errors.New("private-job-spool-detail")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/?tab=jobs", nil), "root", grants))
+		body := rec.Body.String()
+		if rec.Code != http.StatusOK || !strings.Contains(body, `<section class="section-browsers"`) || strings.Contains(body, `href="/manage/?tab=jobs"`) || strings.Contains(body, "private-job-spool-detail") {
+			t.Fatal("failed jobs listing did not safely fall back to browsers")
+		}
+		profiles.jobsErr = nil
+	}
+
+	// 6a. Browser action keeps exact old /manage/?notice=...
+	{
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, manageForm(url.Values{"action": {"stop"}}, "root", grants, "https://adapter.example/manage/browsers/personal"))
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/manage/?notice=stopped" {
+			t.Fatalf("browser action redirect: %d %s", rec.Code, rec.Header().Get("Location"))
+		}
+	}
+	// 6b. Job action redirects to /manage/?tab=jobs&notice=...
+	{
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, manageForm(url.Values{"locale": {"en-US"}, "languages": {"en-US"}, "timezone": {"UTC"}, "screen_width": {"1920"}, "screen_height": {"1080"}, "dpr": {"1"}}, "root", grants, "https://adapter.example/manage/environment-jobs"))
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/manage/?tab=jobs&notice=job_created" {
+			t.Fatalf("job action redirect: %d %s", rec.Code, rec.Header().Get("Location"))
+		}
+	}
+	// 6c. Notice preservation on landing: tab=jobs with notice renders notice and jobs pane
+	{
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/?tab=jobs&notice=job_created", nil), "root", grants))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `role="status"`) || !strings.Contains(body, "自定义指纹作业已排队") {
+			t.Fatal("notice missing on jobs tab landing")
+		}
+		if !strings.Contains(body, `<section class="section-jobs"`) || strings.Contains(body, `<section class="section-browsers"`) {
+			t.Fatal("wrong pane on jobs tab with notice")
+		}
 	}
 }

@@ -26,11 +26,21 @@ spec.loader.exec_module(checks)
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument(
+        "--completed-evidence",
+        type=Path,
+        help="PASS summary for a focused QA run (defaults to ROOT/live-results.json)",
+    )
     args = parser.parse_args()
     root = args.root.resolve()
-    assert root.name == "qa" and (root / "live-results.json").is_file(), (
-        "Explicit completed QA evidence is required"
-    )
+    evidence = (args.completed_evidence or (root / "live-results.json")).resolve()
+    assert (
+        root.name == "qa"
+        and evidence.is_relative_to(root.parent)
+        and evidence.is_file()
+        and not evidence.is_symlink()
+        and json.loads(evidence.read_text()).get("result") == "PASS"
+    ), "Explicit completed PASS QA evidence is required"
     config = json.loads((root / "adapter-config.json").read_text())
     assert (
         config["sealskin"]["username"] == "network-qa"
@@ -152,6 +162,7 @@ def main():
             path.unlink()
     result = {
         "result": "PASS",
+        "completed_evidence": str(evidence.relative_to(root.parent)),
         "generation_resources": 0,
         "qa_containers": 0,
         "qa_networks": 0,

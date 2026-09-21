@@ -597,10 +597,16 @@ func evaluateRunning(definition Definition, binding state.Binding, observed *sea
 	}
 	switch {
 	case binding.NetworkPolicyID == "" && definition.NetworkPolicyID != "":
+		report.NetworkMode = "unmanaged"
 		list.add("proxy", CheckWarn, false, "PROXY_LEGACY_GENERATION",
 			"当前代次在策略 "+definition.NetworkPolicyID+" 生效前启动，未受管理网络保护；停止后新建会话才采用该策略")
+		list.add("egress", CheckWarn, false, "EGRESS_UNMANAGED_GENERATION",
+			"当前代次没有受管理公网路径；无法从运行健康推断 DNS、HTTPS 或出口可用")
 	case binding.NetworkPolicyID == "":
+		report.NetworkMode = "unmanaged"
 		list.add("proxy", CheckNotApplicable, false, "PROXY_NOT_CONFIGURED", "该 Profile 未配置受管理网络策略")
+		list.add("egress", CheckWarn, false, "EGRESS_NOT_CONFIGURED",
+			"该 Profile 没有受管理公网路径；浏览器和显示正常不代表网站可访问")
 	default:
 		network := observed.Network
 		if network != nil && network.Mode == "direct" {
@@ -708,6 +714,11 @@ func selectRecovery(list *checkList, definition Definition) *Recovery {
 	case (worker != nil && worker.Status == CheckFail) || (session != nil && session.Status == CheckFail):
 		return &Recovery{Code: firstFailure(list), Title: "运行实例已消失或异常", Blocking: false, Steps: []string{
 			"入口不会自动重建；由运维执行 reconcile-profile 对账，确认后 stop-profile 再重新打开入口",
+		}}
+	case egress != nil && egress.Status == CheckWarn && (egress.Code == "EGRESS_NOT_CONFIGURED" || egress.Code == "EGRESS_UNMANAGED_GENERATION"):
+		return &Recovery{Code: egress.Code, Title: "公网网络尚未受管理", Blocking: false, Steps: []string{
+			"运行和显示状态与公网连通性分开；当前结果不能证明 DNS、HTTPS 或出口可用",
+			"由管理员选择已验收代理或受管理 DIRECT，并在浏览器停止且资源为零后应用到下一代次",
 		}}
 	}
 	for _, check := range list.checks {

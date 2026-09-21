@@ -245,10 +245,22 @@ func (s *Server) managePage(writer http.ResponseWriter, request *http.Request) {
 			jobs = listed
 		}
 	}
+	activeTab := "browsers"
+	switch request.URL.Query().Get("tab") {
+	case "jobs":
+		if hasJobs {
+			activeTab = "jobs"
+		}
+	case "accounts":
+		activeTab = "accounts"
+	}
+	reauthURL := "/auth/reauth?next=" + url.QueryEscape("/manage/?tab="+activeTab)
 	data := struct {
 		Subject      string
 		GeneratedAt  string
 		Notice       string
+		ActiveTab    string
+		ReauthURL    string
 		Rows         []manageRow
 		Accounts     []accountRow
 		ProfileIDs   []string
@@ -260,7 +272,8 @@ func (s *Server) managePage(writer http.ResponseWriter, request *http.Request) {
 		JobsEnabled  bool
 		CreateDelete bool
 	}{Subject: access.Subject(request), GeneratedAt: time.Now().UTC().Format(time.RFC3339), Notice: notices[request.URL.Query().Get("notice")],
-		Rows: rows, Accounts: accountRows(accounts, profileIDs), ProfileIDs: profileIDs, EntryOrigin: s.publicOrigin.String(), CSRF: access.CSRF(request), ProxyDrafts: hasDrafts,
+		ActiveTab: activeTab, ReauthURL: reauthURL, Rows: rows, Accounts: accountRows(accounts, profileIDs), ProfileIDs: profileIDs,
+		EntryOrigin: s.publicOrigin.String(), CSRF: access.CSRF(request), ProxyDrafts: hasDrafts,
 		Artifacts: artifacts, Jobs: jobs, JobsEnabled: hasJobs && capabilities.EnvironmentJobs, CreateDelete: capabilities.CreateDelete}
 	if err := manageTemplate.Execute(writer, data); err != nil {
 		s.logger.Error("render environment list", "error", err)
@@ -347,7 +360,23 @@ func manageRowFor(entry environmentEntry) manageRow {
 }
 
 func (s *Server) redirectManage(writer http.ResponseWriter, request *http.Request, notice string) {
-	http.Redirect(writer, request, "/manage/?notice="+url.QueryEscape(notice), http.StatusSeeOther)
+	tab := ""
+	switch {
+	case strings.HasPrefix(request.URL.Path, "/manage/environment-jobs"):
+		tab = "jobs"
+	case strings.HasPrefix(request.URL.Path, "/manage/accounts"):
+		tab = "accounts"
+	}
+	target := "/manage/"
+	switch {
+	case tab != "" && notice != "":
+		target = "/manage/?tab=" + tab + "&notice=" + url.QueryEscape(notice)
+	case tab != "":
+		target = "/manage/?tab=" + tab
+	case notice != "":
+		target = "/manage/?notice=" + url.QueryEscape(notice)
+	}
+	http.Redirect(writer, request, target, http.StatusSeeOther)
 }
 
 func (s *Server) manageCreateBrowser(writer http.ResponseWriter, request *http.Request) {
@@ -901,117 +930,780 @@ var manageTemplate = template.Must(template.New("manage").Parse(strings.TrimSpac
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>管理面板</title>
+  <title>远程浏览器管理</title>
   <style>
-    body { font: 15px system-ui, sans-serif; margin: 2rem; color: #202124; max-width: 80rem; }
-    h1 { font-size: 1.3rem; } h2 { font-size: 1.1rem; margin-top: 2rem; }
-    table { border-collapse: collapse; width: 100%; font-size: .88rem; }
-    td, th { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid #ddd; vertical-align: top; }
-    .meta { color: #5f6368; font-size: .82rem; }
-    .stale, .blocking, .off { color: #b3261e; }
-    .notice { background: #e8f0fe; padding: .6rem .8rem; border-radius: 4px; }
-    form.inline { display: inline; margin: 0 .2rem 0 0; }
-    input[type=text], input[type=url], input[type=password], textarea, select { font: inherit; padding: .25rem .4rem; width: 14rem; box-sizing: border-box; }
-    details { margin-top: .3rem; } details form { margin: .3rem 0; }
-    button { font: inherit; padding: .3rem .7rem; }
-    .actions form { margin: .25rem 0; }
-    label.chk { display: inline-block; margin-right: .6rem; }
+    :root {
+      --bg-page: #f0f2f5;
+      --bg-card: #ffffff;
+      --bg-subtle: #f8f9fa;
+      --border-color: #dadce0;
+      --border-subtle: #e8eaed;
+      --border-focus: #1a73e8;
+      --text-primary: #202124;
+      --text-secondary: #5f6368;
+      --color-primary: #1a73e8;
+      --color-primary-hover: #1557b0;
+      --color-success: #0d652d;
+      --color-success-bg: #e6f4ea;
+      --color-warning: #b06000;
+      --color-warning-bg: #fef7e0;
+      --color-warning-border: #fde68a;
+      --color-danger: #b3261e;
+      --color-danger-bg: #fce8e6;
+      --color-danger-border: #f5c2c7;
+      --radius: 6px;
+      --shadow-card: 0 1px 3px rgba(60,64,67,0.08), 0 1px 2px rgba(60,64,67,0.04);
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      margin: 0;
+      padding: 1.5rem;
+      background: var(--bg-page);
+      color: var(--text-primary);
+      max-width: 82rem;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    a { color: var(--color-primary); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible {
+      outline: 2px solid var(--border-focus);
+      outline-offset: 2px;
+    }
+    h1, h2, h3, h4, h5 { color: var(--text-primary); margin: 0; }
+    .meta { color: var(--text-secondary); font-size: 0.82rem; }
+    .stale, .blocking, .off { color: var(--color-danger); }
+    .inline { display: inline; margin: 0; }
+    .app-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 1.5rem;
+      margin-bottom: 1.25rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border-color);
+    }
+    .header-main { flex: 1; min-width: 0; }
+    .app-title { font-size: 1.35rem; font-weight: 700; margin-bottom: 0.35rem; }
+    .header-meta { margin: 0; }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+    }
+    .header-link {
+      font-size: 0.88rem;
+      padding: 0.35rem 0.6rem;
+      border-radius: var(--radius);
+    }
+    .logout-form { display: inline; margin: 0; }
+    .notice {
+      background: #e8f0fe;
+      color: #174ea6;
+      border: 1px solid #d2e3fc;
+      padding: 0.75rem 1rem;
+      border-radius: var(--radius);
+      margin-bottom: 1.5rem;
+      font-weight: 500;
+    }
+    .nav-tabs {
+      display: flex;
+      gap: 0.5rem;
+      border-bottom: 2px solid var(--border-color);
+      margin-bottom: 1.5rem;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      flex-wrap: wrap;
+    }
+    .tab-item {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.55rem 1.1rem;
+      font-size: 0.95rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+      text-decoration: none;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+      white-space: nowrap;
+      border-radius: var(--radius) var(--radius) 0 0;
+      transition: color 0.15s ease, border-color 0.15s ease;
+    }
+    .tab-item:hover {
+      color: var(--color-primary);
+      text-decoration: none;
+      background: var(--bg-subtle);
+    }
+    .tab-item.active {
+      color: var(--color-primary);
+      font-weight: 600;
+      border-bottom-color: var(--color-primary);
+      background: var(--bg-card);
+    }
+    .section-browsers, .section-jobs, .section-accounts { margin-bottom: 2rem; }
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+    .section-title { font-size: 1.15rem; font-weight: 600; }
+    .panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-card);
+      padding: 1.25rem;
+      margin-bottom: 1.25rem;
+    }
+    .panel-header { margin-bottom: 1rem; }
+    .panel-title { font-size: 1.05rem; font-weight: 600; margin-bottom: 0.25rem; }
+    .callout-panel { background: #fef7e0; border-color: #fde68a; }
+    .browser-card-list { display: flex; flex-direction: column; gap: 1.25rem; }
+    .browser-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-card);
+      padding: 1.25rem;
+    }
+    .browser-card.is-disabled { border-left: 4px solid var(--text-secondary); }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 1rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid var(--border-subtle);
+      margin-bottom: 0.85rem;
+      flex-wrap: wrap;
+    }
+    .card-header-main { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
+    .card-title { font-size: 1.15rem; font-weight: 600; }
+    .card-profile-id { font-size: 0.85rem; }
+    .card-badges { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      font-size: 0.78rem;
+      font-weight: 500;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      border: 1px solid transparent;
+      line-height: 1.3;
+    }
+    .badge-count { background: #e8eaed; color: #3c4043; font-size: 0.82rem; }
+    .badge-success { background: var(--color-success-bg); color: var(--color-success); border-color: #ceead6; }
+    .badge-disabled { background: #f1f3f4; color: #5f6368; border-color: #dadce0; }
+    .badge-status { background: #e8f0fe; color: #174ea6; border-color: #d2e3fc; }
+    .badge-stale { background: var(--color-danger-bg); color: var(--color-danger); border-color: #fad2cf; }
+    .badge-role { background: #f1f3f4; color: #3c4043; border-color: #dadce0; }
+    .badge-warning { background: var(--color-warning-bg); color: var(--color-warning); border-color: var(--color-warning-border); }
+    .card-entry {
+      background: var(--bg-subtle);
+      border-radius: var(--radius);
+      padding: 0.65rem 0.85rem;
+      margin-bottom: 1rem;
+      font-size: 0.88rem;
+    }
+    .entry-line { display: flex; align-items: baseline; gap: 0.4rem; word-break: break-all; }
+    .entry-label { font-weight: 600; flex-shrink: 0; }
+    .entry-url { color: var(--color-primary); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; word-break: break-all; overflow-wrap: break-word; }
+    .entry-accounts { margin-top: 0.25rem; }
+    .overview-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.85rem;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius);
+      padding: 0.85rem;
+      margin-bottom: 1rem;
+    }
+    .overview-item { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; word-break: break-word; }
+    .overview-label { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-secondary); }
+    .overview-value { font-size: 0.88rem; }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+    .form-row {
+      display: flex;
+      gap: 0.75rem;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      margin-bottom: 0.75rem;
+    }
+    .form-field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      flex: 1;
+      min-width: 180px;
+    }
+    .form-field label, .field-label {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .form-field-action { flex-shrink: 0; }
+    .field-help { font-size: 0.8rem; color: var(--text-secondary); margin: 0.25rem 0 0.5rem 0; }
+    input[type=text], input[type=url], input[type=password], select, textarea {
+      font: inherit;
+      font-size: 0.88rem;
+      padding: 0.4rem 0.6rem;
+      min-height: 38px;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      background: #fff;
+      color: var(--text-primary);
+      width: 100%;
+      box-sizing: border-box;
+    }
+    textarea { min-height: 52px; resize: vertical; }
+    fieldset {
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      padding: 0.6rem 0.85rem;
+      margin: 0.5rem 0 0.75rem 0;
+    }
+    legend { font-size: 0.82rem; font-weight: 600; padding: 0 0.35rem; }
+    .chk {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      margin-right: 0.85rem;
+      margin-bottom: 0.35rem;
+      font-size: 0.88rem;
+      cursor: pointer;
+    }
+    .chk input { margin: 0; }
+    .checkbox-group, .radio-group { display: flex; flex-wrap: wrap; align-items: center; }
+    .form-actions { margin-top: 0.5rem; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font: inherit;
+      font-size: 0.88rem;
+      font-weight: 500;
+      min-height: 38px;
+      padding: 0.4rem 0.9rem;
+      border-radius: var(--radius);
+      border: 1px solid transparent;
+      cursor: pointer;
+      text-decoration: none;
+      box-sizing: border-box;
+      white-space: nowrap;
+    }
+    .btn-primary { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
+    .btn-primary:hover { background: var(--color-primary-hover); }
+    .btn-secondary { background: #fff; color: var(--text-primary); border-color: var(--border-color); }
+    .btn-secondary:hover { background: #f1f3f4; }
+    .btn-warning { background: var(--color-warning-bg); color: var(--color-warning); border-color: var(--color-warning-border); }
+    .btn-warning:hover { background: #fef3c7; }
+    .btn-danger { background: var(--color-danger-bg); color: var(--color-danger); border-color: var(--color-danger-border); }
+    .btn-danger:hover { background: #f8d7da; }
+    .btn-sm { min-height: 30px; padding: 0.2rem 0.6rem; font-size: 0.82rem; }
+    .card-settings, .card-lifecycle {
+      padding-top: 0.75rem;
+      border-top: 1px solid var(--border-subtle);
+      margin-bottom: 0.75rem;
+    }
+    .settings-title { font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-secondary); }
+    .lifecycle-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+    .network-details {
+      margin-top: 0.75rem;
+      border-top: 1px solid var(--border-subtle);
+      padding-top: 0.75rem;
+    }
+    .details-summary {
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--color-primary);
+      user-select: none;
+    }
+    .details-content {
+      margin-top: 0.75rem;
+      padding: 1rem;
+      background: var(--bg-subtle);
+      border-radius: var(--radius);
+      border: 1px solid var(--border-color);
+    }
+    .sub-form-title { font-size: 0.88rem; font-weight: 600; margin: 0 0 0.5rem 0; }
+    .draft-status-panel {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      padding: 0.5rem 0.75rem;
+      background: #fff;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      margin-bottom: 0.75rem;
+    }
+    .draft-form-wrapper, .direct-form-wrapper, .apply-draft-wrapper {
+      margin-top: 0.75rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid var(--border-color);
+    }
+    .danger-zone {
+      margin-top: 1rem;
+      padding: 0.85rem 1rem;
+      border: 1px solid var(--color-danger-border);
+      border-radius: var(--radius);
+      background: #fffafa;
+    }
+    .danger-title { font-size: 0.9rem; font-weight: 600; color: var(--color-danger); margin-bottom: 0.25rem; }
+    .table-container {
+      width: 100%;
+      overflow-x: auto;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      background: #fff;
+      margin-bottom: 1.5rem;
+      box-shadow: var(--shadow-card);
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; text-align: left; }
+    th, td { padding: 0.65rem 0.85rem; border-bottom: 1px solid var(--border-color); vertical-align: top; }
+    th { background: var(--bg-subtle); font-weight: 600; font-size: 0.82rem; color: var(--text-secondary); white-space: nowrap; }
+    tr:last-child td { border-bottom: none; }
+    .inline-input-group { display: flex; gap: 0.35rem; align-items: center; }
+    .inline-input-group input { width: 13rem; }
+    .account-btn-group { display: flex; gap: 0.35rem; margin-top: 0.35rem; flex-wrap: wrap; }
+    .grants-checkboxes { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-bottom: 0.35rem; }
+    .app-footer {
+      margin-top: 2.5rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border-color);
+      text-align: center;
+    }
+    @media (max-width: 1099px) {
+      .overview-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 699px) {
+      body { padding: 1rem; }
+      .app-header { flex-direction: column; align-items: stretch; gap: 1rem; }
+      .header-actions { justify-content: flex-start; }
+      .nav-tabs { gap: 0.25rem; margin-bottom: 1rem; }
+      .tab-item { padding: 0.45rem 0.75rem; font-size: 0.88rem; }
+      .overview-grid { grid-template-columns: 1fr; }
+      .form-row { flex-direction: column; align-items: stretch; }
+      .form-field { width: 100%; min-width: unset; }
+      .form-field-action { width: 100%; }
+      .form-field-action button { width: 100%; }
+    }
   </style>
 </head>
 <body>
-  <h1>管理面板</h1>
-  <p class="meta">管理员 {{.Subject}} · 生成时间 {{.GeneratedAt}} · 列表只读取最近一次健康采样，过期即标为 stale；关闭按钮走已验证的停止流程，不删除 Home。</p>
-  {{if .Notice}}<p class="notice">{{.Notice}}</p>{{end}}
-  <h2>远程浏览器</h2>
-  {{if .CreateDelete}}<p class="meta">新增浏览器只接受固化环境目录中的 artifact 和受管理网络策略；DIRECT 也必须经过控制器网关。</p>
-  <form method="post" action="/manage/browsers"><input type="hidden" name="csrf" value="{{.CSRF}}">
-    <input type="text" name="label" maxlength="64" placeholder="名称" required>
-    <input type="url" name="start_url" maxlength="2048" placeholder="起始页 URL" required>
-    {{if .Artifacts}}<select name="environment_artifact_id" required>{{range .Artifacts}}<option value="{{.ID}}">{{.ID}}{{if .Locale}} · {{.Locale}}{{end}}{{if .Timezone}} · {{.Timezone}}{{end}}{{if .Screen}} · {{.Screen}}{{end}} · {{.Source}}</option>{{end}}</select>
-    {{else}}<input type="text" name="environment_artifact_id" maxlength="128" placeholder="固化 artifact ID" required>{{end}}
-    <select name="network_mode"><option value="direct">受管理 DIRECT</option><option value="proxy_required">现有代理策略</option></select>
-    <input type="text" name="network_policy_id" maxlength="128" placeholder="策略 ID" required>
-    <input type="text" name="network_policy_sha256" maxlength="64" placeholder="策略 SHA-256" required>
-    <input type="text" name="idempotency_key" maxlength="128" placeholder="幂等键" required>
-    <div>{{range .Accounts}}<label class="chk"><input type="checkbox" name="accounts" value="{{.ID}}"> {{.ID}}</label>{{end}}</div>
-    <button>新增浏览器</button>
-  </form>{{else}}<p class="meta">新增与归档删除尚未启用；现有浏览器仍可修改、停用或安全关闭。</p>{{end}}
-  {{if .Rows}}<table>
-    <tr><th>浏览器</th><th>入口 URL / 账号</th><th>记录状态</th><th>健康（采样时间）</th><th>网络</th><th>显示 / 语言 / 时区</th><th>应用 / Home</th><th>环境产物</th><th>操作</th></tr>
-    {{range .Rows}}<tr>
-      <td>{{.Label}}{{if ne .Label .ProfileID}}<div class="meta">{{.ProfileID}}</div>{{end}}{{if .Available}}{{if not .Enabled}}<div class="off">已停用</div>{{end}}<div class="meta">修订 {{.Revision}}</div>{{end}}</td>
-      <td><a href="{{.EntryPath}}">{{$.EntryOrigin}}{{.EntryPath}}</a><div class="meta">账号：{{if .Accounts}}{{.Accounts}}{{else}}（未分配）{{end}}</div></td>
-      {{if .Available}}<td>{{.Status}}</td>
-      <td>{{if .Observed}}{{.Health}}{{if .Stale}} <span class="stale">已过期</span>{{end}}{{if .HealthCode}}<div class="meta{{if .Blocking}} blocking{{end}}">{{.HealthCode}}{{if .HealthTitle}} · {{.HealthTitle}}{{end}}</div>{{end}}<div class="meta">{{.Checked}}</div>{{else}}<span class="meta">未观测</span>{{end}}</td>
-      <td>{{.Network}}{{if .ProxyUpstream}}<div class="meta">{{.ProxyUpstream}}</div>{{else if eq .ConfiguredNetwork "direct"}}<div class="meta">受管理 DIRECT</div>{{end}}
-        {{if and $.ProxyDrafts .Managed .Manage}}{{with .Draft}}<div class="meta">草稿 {{.Protocol}}://{{.Host}}:{{.Port}} · {{.Auth}} · {{if .Expired}}已过期{{else}}{{.ProbeStatus}}{{if .ProbeCode}} {{.ProbeCode}}{{end}}{{end}}</div>
-          {{if not .Expired}}<form method="post" action="/manage/browsers/{{.ProfileID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="proxy_probe"><input type="hidden" name="draft_id" value="{{.ID}}"><button>探针</button></form>{{end}}{{end}}
-          {{if and .Draft (not .Draft.Expired) (eq .Draft.ProbeStatus "passed")}}<form method="post" action="/manage/browsers/{{.ProfileID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="proxy_apply"><input type="hidden" name="draft_id" value="{{.Draft.ID}}"><input type="hidden" name="revision" value="{{.Revision}}"><input type="text" name="idempotency_key" maxlength="128" placeholder="幂等键" required><button>应用到下一代次</button></form>{{end}}
-          <details><summary class="meta">配置代理 / 切回 DIRECT</summary>
-          <form method="post" action="/manage/browsers/{{.ProfileID}}" autocomplete="off"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="proxy_draft">
-            <select name="protocol"><option value="socks5">socks5</option><option value="http">http</option><option value="https">https</option></select>
-            <select name="auth"><option value="username_password">用户名/密码 (socks5)</option><option value="basic">basic (http/https)</option><option value="none">无认证</option></select>
-            <input type="text" name="host" maxlength="253" placeholder="代理主机（公网）" required> <input type="text" name="port" maxlength="5" placeholder="端口" required>
-            <input type="text" name="username" maxlength="4096" placeholder="用户名" autocomplete="off"> <input type="password" name="password" maxlength="4096" placeholder="密码" autocomplete="new-password">
-            <textarea name="upstream_ca_pem" rows="2" placeholder="HTTPS 代理 CA（可选，PEM）"></textarea> <button>创建草稿</button></form>
-          <form method="post" action="/manage/browsers/{{.ProfileID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="network_direct"><input type="hidden" name="revision" value="{{.Revision}}">
-            <input type="text" name="network_policy_id" maxlength="128" placeholder="DIRECT 策略 ID" required> <input type="text" name="network_policy_sha256" maxlength="64" placeholder="策略 SHA-256" required> <input type="text" name="idempotency_key" maxlength="128" placeholder="幂等键" required><button>切回 DIRECT</button></form>
-          </details>{{end}}</td><td>{{.Display}}{{if .Locale}}<div class="meta">{{.Locale}}</div>{{end}}</td><td class="meta">{{.Home}}</td><td class="meta">{{if .Environment}}{{.Environment}}{{else}}—{{end}}</td>
-      <td class="actions">
-        {{if .Manage}}<form method="post" action="/manage/browsers/{{.ProfileID}}"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="update"><input type="hidden" name="revision" value="{{.Revision}}">
-          <input type="text" name="label" value="{{.Label}}" maxlength="64" placeholder="名称"> <input type="url" name="start_url" value="{{.StartURL}}" maxlength="2048" placeholder="起始页 URL"> <button>保存</button></form>
-        {{if .Enabled}}<form method="post" action="/manage/browsers/{{.ProfileID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="disable"><input type="hidden" name="revision" value="{{.Revision}}"><button>停用</button></form>
-        {{else}}<form method="post" action="/manage/browsers/{{.ProfileID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="enable"><input type="hidden" name="revision" value="{{.Revision}}"><button>启用</button></form>{{end}}{{end}}
-        {{if and .StopAllowed .Running}}<form method="post" action="/manage/browsers/{{.ProfileID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="stop"><button>安全关闭</button></form>{{end}}
-        {{if and $.CreateDelete .Manage}}<form method="post" action="/manage/browsers/{{.ProfileID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="delete"><input type="text" name="idempotency_key" maxlength="128" placeholder="幂等键" required><button>归档并删除</button></form>{{end}}
-      </td>
-      {{else}}<td colspan="7" class="meta">摘要暂不可用</td>{{end}}
-    </tr>{{end}}
-  </table>{{else}}<p>没有配置远程浏览器。</p>{{end}}
-  {{if .JobsEnabled}}<h2>自定义指纹作业</h2>
-  <p class="meta">只提交高层字段；服务端在隔离容器中一次生成完整产物并执行完整验收（两个 QA Home 各 10 次重建），通过后才进入上方目录。当前适配器只支持 Linux、DPR 1；一次只运行一个作业。</p>
-  <form method="post" action="/manage/environment-jobs"><input type="hidden" name="csrf" value="{{.CSRF}}">
-    <input type="text" name="locale" maxlength="35" placeholder="locale（如 en-US）" required> <input type="text" name="languages" maxlength="200" placeholder="languages，逗号分隔，首项须等于 locale" required>
-    <input type="text" name="timezone" maxlength="64" placeholder="IANA 时区（如 America/New_York）" required>
-    <input type="text" name="screen_width" maxlength="4" value="1920" required> <input type="text" name="screen_height" maxlength="4" value="1080" required> <input type="hidden" name="dpr" value="1">
-    <input type="text" name="window_width" maxlength="4" placeholder="窗口宽（默认同屏幕）"> <input type="text" name="window_height" maxlength="4" placeholder="窗口高（默认同屏幕）">
-    <button>提交作业</button>
-  </form>
-  {{if .Jobs}}<table>
-    <tr><th>作业</th><th>请求</th><th>状态</th><th>结果</th></tr>
-    {{range .Jobs}}<tr>
-      <td>{{.ID}}<div class="meta">{{.EnvironmentID}}</div><div class="meta">{{.Actor}} · {{.RequestedAt}}</div></td>
-      <td>{{.Locale}} · {{.Timezone}}<div class="meta">{{.Screen}} · 窗口 {{.Window}}</div></td>
-      <td>{{.Status}}{{if .Phase}} · {{.Phase}}{{end}}{{if .Code}}<div class="meta{{if eq .Status "failed"}} blocking{{end}}">{{.Code}}{{if .Message}} · {{.Message}}{{end}}</div>{{end}}{{if .UpdatedAt}}<div class="meta">{{.UpdatedAt}}</div>{{end}}</td>
-      <td class="meta">{{if .ArtifactSHA256}}产物 {{slice .ArtifactSHA256 0 12}}…{{end}}{{if .AcceptanceSHA256}}<div>报告 {{slice .AcceptanceSHA256 0 12}}…</div>{{end}}{{if .Attempts}}<div>生成尝试 {{.Attempts}}</div>{{end}}</td>
-    </tr>{{end}}
-  </table>{{else}}<p class="meta">没有作业。</p>{{end}}{{end}}
-  <h2>访问账号</h2>
-  <p class="meta">浏览器入口账号只能登录被分配的浏览器；管理员账号可进入本面板。禁用/启用账号、修改角色、重置他人密码前须 <a href="/auth/reauth?next=/manage/">确认密码</a>（5 分钟内有效）。</p>
-  {{if .Accounts}}<table>
-    <tr><th>账号</th><th>角色</th><th>状态</th><th>可登录的浏览器</th><th>操作</th></tr>
-    {{range .Accounts}}<tr>
-      <td>{{.ID}}</td><td>{{.Role}}</td><td>{{if .Disabled}}<span class="off">已禁用</span>{{else}}启用{{end}}</td>
-      <td><form method="post" action="/manage/accounts/{{.ID}}"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="grants">
-        {{$row := .}}{{range .AllProfiles}}<label class="chk"><input type="checkbox" name="profiles" value="{{.}}"{{if index $row.Grants .}} checked{{end}}> {{.}}</label>{{end}} <button>保存分配</button></form></td>
-      <td class="actions">
-        <form method="post" action="/manage/accounts/{{.ID}}"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="reset_password"><input type="password" name="password" minlength="12" maxlength="256" placeholder="新密码（12–256 字节）" autocomplete="new-password"> <button>重置密码</button></form>
-        {{if .Disabled}}<form method="post" action="/manage/accounts/{{.ID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="enable"><button>启用</button></form>
-        {{else}}<form method="post" action="/manage/accounts/{{.ID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="disable"><button>禁用</button></form>{{end}}
-        <form method="post" action="/manage/accounts/{{.ID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="role"><input type="hidden" name="role" value="{{if eq .Role "admin"}}user{{else}}admin{{end}}"><button>{{if eq .Role "admin"}}改为入口账号{{else}}改为管理员{{end}}</button></form>
-      </td>
-    </tr>{{end}}
-  </table>{{else}}<p class="meta">账号表暂不可读。</p>{{end}}
-  <h3>新增账号</h3>
-  <form method="post" action="/manage/accounts"><input type="hidden" name="csrf" value="{{.CSRF}}">
-    <input type="text" name="account" maxlength="32" pattern="[a-z0-9][a-z0-9_-]{0,31}" placeholder="账号 ID（小写字母、数字、_-）" required>
-    <input type="password" name="password" minlength="12" maxlength="256" placeholder="密码（12–256 字节）" autocomplete="new-password" required>
-    <label class="chk"><input type="radio" name="role" value="user" checked> 浏览器入口账号</label><label class="chk"><input type="radio" name="role" value="admin"> 管理员（需先确认密码）</label>
-    <div>{{range .ProfileIDs}}<label class="chk"><input type="checkbox" name="profiles" value="{{.}}"> {{.}}</label>{{end}}</div>
-    <button>创建账号</button>
-  </form>
-  <p class="meta"><a href="/manage/environments">JSON</a> · <a href="/">返回首页</a> · <a href="/auth/password">修改我的密码</a></p>
-  <form method="post" action="/auth/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button>退出登录</button></form>
+  <header class="app-header">
+    <div class="header-main">
+      <h1 class="app-title">远程浏览器管理</h1>
+      <p class="header-meta meta">管理员 {{.Subject}} · 列表只读取最近一次健康采样，过期即标为 stale；关闭按钮走已验证的停止流程，不删除 Home。</p>
+    </div>
+    <div class="header-actions">
+      <a href="/" class="header-link">返回首页</a>
+      <a href="{{.ReauthURL}}" class="header-link">确认密码</a>
+      <a href="/auth/password" class="header-link">修改我的密码</a>
+      <a href="/manage/environments" class="header-link">JSON</a>
+      <form method="post" action="/auth/logout" class="logout-form"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit" class="btn btn-secondary btn-sm">退出登录</button></form>
+    </div>
+  </header>
+
+  <main class="app-main">
+    {{if .Notice}}<div class="notice" role="status">{{.Notice}}</div>{{end}}
+
+    <nav class="nav-tabs" aria-label="管理功能">
+      <a href="/manage/?tab=browsers" class="tab-item{{if eq .ActiveTab "browsers"}} active{{end}}"{{if eq .ActiveTab "browsers"}} aria-current="page"{{end}}>浏览器</a>
+      {{if .JobsEnabled}}
+      <a href="/manage/?tab=jobs" class="tab-item{{if eq .ActiveTab "jobs"}} active{{end}}"{{if eq .ActiveTab "jobs"}} aria-current="page"{{end}}>指纹作业</a>
+      {{end}}
+      <a href="/manage/?tab=accounts" class="tab-item{{if eq .ActiveTab "accounts"}} active{{end}}"{{if eq .ActiveTab "accounts"}} aria-current="page"{{end}}>访问账号</a>
+    </nav>
+
+    {{if eq .ActiveTab "browsers"}}
+    <section class="section-browsers" aria-labelledby="browsers-heading">
+      <div class="section-header">
+        <h2 id="browsers-heading" class="section-title">远程浏览器</h2>
+        {{if .Rows}}<span class="badge badge-count">{{len .Rows}} 个环境</span>{{end}}
+      </div>
+
+      {{if .CreateDelete}}
+      <div class="panel create-browser-panel">
+        <div class="panel-header">
+          <h3 class="panel-title">新增浏览器</h3>
+          <p class="meta">新增浏览器只接受固化环境目录中的 artifact 和受管理网络策略；DIRECT 也必须经过控制器网关。</p>
+        </div>
+        <form method="post" action="/manage/browsers" class="browser-create-form"><input type="hidden" name="csrf" value="{{.CSRF}}">
+          <div class="form-grid">
+            <div class="form-field">
+              <label for="cb-label">名称</label>
+              <input id="cb-label" type="text" name="label" maxlength="64" placeholder="例如：开发环境" required>
+            </div>
+            <div class="form-field">
+              <label for="cb-start-url">起始页 URL</label>
+              <input id="cb-start-url" type="url" name="start_url" maxlength="2048" placeholder="起始页 URL" required>
+            </div>
+            <div class="form-field">
+              <label for="cb-env-artifact">环境产物</label>
+              {{if .Artifacts}}<select name="environment_artifact_id" id="cb-env-artifact" required>{{range .Artifacts}}<option value="{{.ID}}">{{.ID}}{{if .Locale}} · {{.Locale}}{{end}}{{if .Timezone}} · {{.Timezone}}{{end}}{{if .Screen}} · {{.Screen}}{{end}} · {{.Source}}</option>{{end}}</select>
+              {{else}}<input id="cb-env-artifact" type="text" name="environment_artifact_id" maxlength="128" placeholder="固化 artifact ID" required>{{end}}
+            </div>
+            <div class="form-field">
+              <label for="cb-network-mode">网络模式</label>
+              <select id="cb-network-mode" name="network_mode"><option value="direct">受管理 DIRECT</option><option value="proxy_required">现有代理策略</option></select>
+            </div>
+            <div class="form-field">
+              <label for="cb-network-policy-id">策略 ID</label>
+              <input id="cb-network-policy-id" type="text" name="network_policy_id" maxlength="128" placeholder="策略 ID" required>
+            </div>
+            <div class="form-field">
+              <label for="cb-network-policy-sha">策略 SHA-256</label>
+              <input id="cb-network-policy-sha" type="text" name="network_policy_sha256" maxlength="64" placeholder="策略 SHA-256" required>
+            </div>
+            <div class="form-field">
+              <label for="cb-idempotency-key">幂等键</label>
+              <input id="cb-idempotency-key" type="text" name="idempotency_key" maxlength="128" placeholder="幂等键" required>
+            </div>
+          </div>
+          <fieldset class="form-field accounts-fieldset">
+            <legend class="field-label">分配可登录账号</legend>
+            <div class="checkbox-group">{{range .Accounts}}<label class="chk"><input type="checkbox" name="accounts" value="{{.ID}}"> {{.ID}}</label>{{end}}</div>
+          </fieldset>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary">新增浏览器</button>
+          </div>
+        </form>
+      </div>
+      {{else}}
+      <div class="panel callout-panel">
+        <p class="meta">新增与归档删除尚未启用；现有浏览器仍可修改、停用或安全关闭。</p>
+      </div>
+      {{end}}
+
+      {{if .Rows}}
+      <div class="browser-card-list">
+        {{range .Rows}}
+        <article class="browser-card{{if not .Enabled}} is-disabled{{end}}">
+          <header class="card-header">
+            <div class="card-header-main">
+              <h3 class="card-title">{{.Label}}</h3>
+              {{if ne .Label .ProfileID}}<span class="meta card-profile-id">{{.ProfileID}}</span>{{end}}
+            </div>
+            <div class="card-badges">
+              {{if .Available}}
+                {{if .Enabled}}<span class="badge badge-success">已启用</span>{{else}}<span class="badge badge-disabled off">已停用</span>{{end}}
+                <span class="badge badge-status">{{.Status}}</span>
+                <span class="meta card-revision">修订 {{.Revision}}</span>
+              {{else}}
+                <span class="badge badge-warning">摘要暂不可用</span>
+              {{end}}
+            </div>
+          </header>
+
+          <div class="card-entry">
+            <div class="entry-line"><span class="entry-label">入口：</span><a href="{{.EntryPath}}" class="entry-url">{{$.EntryOrigin}}{{.EntryPath}}</a></div>
+            <div class="entry-accounts meta">账号：{{if .Accounts}}{{.Accounts}}{{else}}（未分配）{{end}}</div>
+          </div>
+
+          {{if .Available}}
+          <div class="overview-grid">
+            <div class="overview-item">
+              <span class="overview-label">健康状态</span>
+              <div class="overview-value">
+                {{if .Observed}}
+                  <span class="health-overall">{{.Health}}</span>
+                  {{if .Stale}} <span class="badge badge-stale stale">已过期</span>{{end}}
+                  {{if .HealthCode}}<div class="meta{{if .Blocking}} blocking{{end}}">{{.HealthCode}}{{if .HealthTitle}} · {{.HealthTitle}}{{end}}</div>{{end}}
+                  <div class="meta">{{.Checked}}</div>
+                {{else}}
+                  <span class="meta">未观测</span>
+                {{end}}
+              </div>
+            </div>
+            <div class="overview-item">
+              <span class="overview-label">网络</span>
+              <div class="overview-value">
+                <div>{{.Network}}</div>
+                {{if .ProxyUpstream}}<div class="meta">{{.ProxyUpstream}}</div>{{else if eq .ConfiguredNetwork "direct"}}<div class="meta">受管理 DIRECT</div>{{end}}
+              </div>
+            </div>
+            <div class="overview-item">
+              <span class="overview-label">显示 / 语言 / 时区</span>
+              <div class="overview-value">
+                <div>{{.Display}}</div>
+                {{if .Locale}}<div class="meta">{{.Locale}}</div>{{end}}
+              </div>
+            </div>
+            <div class="overview-item">
+              <span class="overview-label">环境产物</span>
+              <div class="overview-value meta">{{if .Environment}}{{.Environment}}{{else}}—{{end}}</div>
+            </div>
+            <div class="overview-item">
+              <span class="overview-label">应用 / Home</span>
+              <div class="overview-value meta">{{.Home}}</div>
+            </div>
+          </div>
+
+          {{if .Manage}}
+          <div class="card-settings">
+            <h4 class="settings-title">常用设置</h4>
+            <form method="post" action="/manage/browsers/{{.ProfileID}}" class="settings-form">
+              <input type="hidden" name="csrf" value="{{$.CSRF}}">
+              <input type="hidden" name="action" value="update">
+              <input type="hidden" name="revision" value="{{.Revision}}">
+              <div class="form-row">
+                <div class="form-field">
+                  <label for="label-{{.ProfileID}}">名称</label>
+                  <input id="label-{{.ProfileID}}" type="text" name="label" value="{{.Label}}" maxlength="64" placeholder="名称">
+                </div>
+                <div class="form-field">
+                  <label for="url-{{.ProfileID}}">起始页 URL</label>
+                  <input id="url-{{.ProfileID}}" type="url" name="start_url" value="{{.StartURL}}" maxlength="2048" placeholder="起始页 URL">
+                </div>
+                <div class="form-field-action">
+                  <button type="submit" class="btn btn-secondary">保存设置</button>
+                </div>
+              </div>
+            </form>
+          </div>
+          {{end}}
+
+          <div class="card-lifecycle">
+            <h4 class="settings-title">生命周期操作</h4>
+            <div class="lifecycle-actions">
+              {{if .Manage}}
+                {{if .Enabled}}
+                <form method="post" action="/manage/browsers/{{.ProfileID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="disable"><input type="hidden" name="revision" value="{{.Revision}}"><button type="submit" class="btn btn-warning">停用</button></form>
+                {{else}}
+                <form method="post" action="/manage/browsers/{{.ProfileID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="enable"><input type="hidden" name="revision" value="{{.Revision}}"><button type="submit" class="btn btn-primary">启用</button></form>
+                {{end}}
+              {{end}}
+              {{if and .StopAllowed .Running}}
+              <form method="post" action="/manage/browsers/{{.ProfileID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="stop"><button type="submit" class="btn btn-warning">安全关闭</button></form>
+              {{end}}
+            </div>
+          </div>
+
+          {{if and $.ProxyDrafts .Managed .Manage}}
+          <details class="network-details"{{if .Draft}} open{{end}}>
+            <summary class="details-summary">配置代理 / 切回 DIRECT</summary>
+            <div class="details-content">
+              {{with .Draft}}
+              <div class="draft-status-panel">
+                <div class="draft-info meta">草稿 {{.Protocol}}://{{.Host}}:{{.Port}} · {{.Auth}} · {{if .Expired}}已过期{{else}}{{.ProbeStatus}}{{if .ProbeCode}} {{.ProbeCode}}{{end}}{{end}}</div>
+                {{if not .Expired}}
+                <form method="post" action="/manage/browsers/{{.ProfileID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="proxy_probe"><input type="hidden" name="draft_id" value="{{.ID}}"><button type="submit" class="btn btn-secondary btn-sm">探针</button></form>
+                {{end}}
+              </div>
+              {{end}}
+
+              {{if and .Draft (not .Draft.Expired) (eq .Draft.ProbeStatus "passed")}}
+              <div class="apply-draft-wrapper">
+                <form method="post" action="/manage/browsers/{{.ProfileID}}" class="apply-draft-form">
+                  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+                  <input type="hidden" name="action" value="proxy_apply">
+                  <input type="hidden" name="draft_id" value="{{.Draft.ID}}">
+                  <input type="hidden" name="revision" value="{{.Revision}}">
+                  <div class="form-row">
+                    <div class="form-field">
+                      <label for="apply-key-{{.ProfileID}}">幂等键</label>
+                      <input id="apply-key-{{.ProfileID}}" type="text" name="idempotency_key" maxlength="128" placeholder="幂等键" required>
+                    </div>
+                    <div class="form-field-action">
+                      <button type="submit" class="btn btn-primary">应用到下一代次</button>
+                    </div>
+                  </div>
+                  <p class="field-help meta">探针已通过；下一次启动将应用新代理，需要最近确认过密码。</p>
+                </form>
+              </div>
+              {{end}}
+
+              <div class="draft-form-wrapper">
+                <h5 class="sub-form-title">创建新代理草稿</h5>
+                <form method="post" action="/manage/browsers/{{.ProfileID}}" autocomplete="off" class="proxy-draft-form">
+                  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+                  <input type="hidden" name="action" value="proxy_draft">
+                  <div class="form-grid">
+                    <div class="form-field">
+                      <label for="proto-{{.ProfileID}}">协议</label>
+                      <select id="proto-{{.ProfileID}}" name="protocol"><option value="socks5">socks5</option><option value="http">http</option><option value="https">https</option></select>
+                    </div>
+                    <div class="form-field">
+                      <label for="auth-{{.ProfileID}}">认证方式</label>
+                      <select id="auth-{{.ProfileID}}" name="auth"><option value="username_password">用户名/密码 (socks5)</option><option value="basic">basic (http/https)</option><option value="none">无认证</option></select>
+                    </div>
+                    <div class="form-field">
+                      <label for="host-{{.ProfileID}}">代理主机（公网）</label>
+                      <input id="host-{{.ProfileID}}" type="text" name="host" maxlength="253" placeholder="代理主机（公网）" required>
+                    </div>
+                    <div class="form-field">
+                      <label for="port-{{.ProfileID}}">端口</label>
+                      <input id="port-{{.ProfileID}}" type="text" name="port" maxlength="5" placeholder="端口" required>
+                    </div>
+                    <div class="form-field">
+                      <label for="user-{{.ProfileID}}">用户名</label>
+                      <input id="user-{{.ProfileID}}" type="text" name="username" maxlength="4096" placeholder="用户名" autocomplete="off">
+                    </div>
+                    <div class="form-field">
+                      <label for="pass-{{.ProfileID}}">密码</label>
+                      <input id="pass-{{.ProfileID}}" type="password" name="password" maxlength="4096" placeholder="密码" autocomplete="new-password">
+                    </div>
+                  </div>
+                  <div class="form-field">
+                    <label for="ca-{{.ProfileID}}">HTTPS 代理 CA（可选，PEM）</label>
+                    <textarea id="ca-{{.ProfileID}}" name="upstream_ca_pem" rows="2" placeholder="HTTPS 代理 CA（可选，PEM）"></textarea>
+                  </div>
+                  <div class="form-actions">
+                    <button type="submit" class="btn btn-secondary">创建草稿</button>
+                  </div>
+                </form>
+              </div>
+
+              <div class="direct-form-wrapper">
+                <h5 class="sub-form-title">切回 DIRECT 策略</h5>
+                <form method="post" action="/manage/browsers/{{.ProfileID}}" class="direct-switch-form">
+                  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+                  <input type="hidden" name="action" value="network_direct">
+                  <input type="hidden" name="revision" value="{{.Revision}}">
+                  <div class="form-grid">
+                    <div class="form-field">
+                      <label for="dir-pol-{{.ProfileID}}">DIRECT 策略 ID</label>
+                      <input id="dir-pol-{{.ProfileID}}" type="text" name="network_policy_id" maxlength="128" placeholder="DIRECT 策略 ID" required>
+                    </div>
+                    <div class="form-field">
+                      <label for="dir-sha-{{.ProfileID}}">策略 SHA-256</label>
+                      <input id="dir-sha-{{.ProfileID}}" type="text" name="network_policy_sha256" maxlength="64" placeholder="策略 SHA-256" required>
+                    </div>
+                    <div class="form-field">
+                      <label for="dir-key-{{.ProfileID}}">幂等键</label>
+                      <input id="dir-key-{{.ProfileID}}" type="text" name="idempotency_key" maxlength="128" placeholder="幂等键" required>
+                    </div>
+                  </div>
+                  <div class="form-actions">
+                    <button type="submit" class="btn btn-secondary">切回 DIRECT</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </details>
+          {{end}}
+
+          {{if and $.CreateDelete .Manage}}
+          <div class="danger-zone">
+            <h4 class="danger-title">危险操作</h4>
+            <p class="field-help meta">停止浏览器、归档对应 Home 并撤销访问授权；此操作不可逆，需要最近确认过密码。</p>
+            <form method="post" action="/manage/browsers/{{.ProfileID}}" class="delete-form">
+              <input type="hidden" name="csrf" value="{{$.CSRF}}">
+              <input type="hidden" name="action" value="delete">
+              <div class="form-row">
+                <div class="form-field">
+                  <label for="del-key-{{.ProfileID}}">幂等键</label>
+                  <input id="del-key-{{.ProfileID}}" type="text" name="idempotency_key" maxlength="128" placeholder="幂等键" required>
+                </div>
+                <div class="form-field-action">
+                  <button type="submit" class="btn btn-danger">归档并删除</button>
+                </div>
+              </div>
+            </form>
+          </div>
+          {{end}}
+          {{else}}
+          <div class="card-unavailable"><p class="meta">摘要暂不可用</p></div>
+          {{end}}
+        </article>
+        {{end}}
+      </div>
+      {{else}}
+      <p class="meta">没有配置远程浏览器。</p>
+      {{end}}
+    </section>
+    {{else if and (eq .ActiveTab "jobs") .JobsEnabled}}
+    <section class="section-jobs" aria-labelledby="jobs-heading">
+      <div class="section-header"><h2 id="jobs-heading" class="section-title">自定义指纹作业</h2></div>
+      <p class="meta">只提交高层字段；服务端在隔离容器中一次生成完整产物并执行完整验收（两个 QA Home 各 10 次重建），通过后可在“浏览器”页新增浏览器时选择该产物。当前适配器只支持 Linux、DPR 1；一次只运行一个作业。</p>
+      <div class="panel create-job-panel">
+        <form method="post" action="/manage/environment-jobs" class="job-create-form"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="dpr" value="1">
+          <div class="form-grid">
+            <div class="form-field"><label for="job-locale">Locale</label><input id="job-locale" type="text" name="locale" maxlength="35" placeholder="例如：en-US" required></div>
+            <div class="form-field"><label for="job-languages">Languages</label><input id="job-languages" type="text" name="languages" maxlength="200" placeholder="逗号分隔，首项须等于 locale" required></div>
+            <div class="form-field"><label for="job-tz">IANA 时区</label><input id="job-tz" type="text" name="timezone" maxlength="64" placeholder="例如：America/New_York" required></div>
+            <div class="form-field"><label for="job-sw">屏幕宽</label><input id="job-sw" type="text" name="screen_width" maxlength="4" value="1920" required></div>
+            <div class="form-field"><label for="job-sh">屏幕高</label><input id="job-sh" type="text" name="screen_height" maxlength="4" value="1080" required></div>
+            <div class="form-field"><label for="job-ww">窗口宽（默认同屏幕）</label><input id="job-ww" type="text" name="window_width" maxlength="4" placeholder="窗口宽（默认同屏幕）"></div>
+            <div class="form-field"><label for="job-wh">窗口高（默认同屏幕）</label><input id="job-wh" type="text" name="window_height" maxlength="4" placeholder="窗口高（默认同屏幕）"></div>
+          </div>
+          <div class="form-actions"><button type="submit" class="btn btn-primary">提交作业</button></div>
+        </form>
+      </div>
+      {{if .Jobs}}
+      <div class="table-container">
+        <table class="jobs-table">
+          <thead><tr><th>作业</th><th>请求</th><th>状态</th><th>结果</th></tr></thead>
+          <tbody>
+            {{range .Jobs}}<tr>
+              <td><div class="job-id">{{.ID}}</div><div class="meta">{{.EnvironmentID}}</div><div class="meta">{{.Actor}} · {{.RequestedAt}}</div></td>
+              <td><div>{{.Locale}} · {{.Timezone}}</div><div class="meta">{{.Screen}} · 窗口 {{.Window}}</div></td>
+              <td><div>{{.Status}}{{if .Phase}} · {{.Phase}}{{end}}</div>{{if .Code}}<div class="meta{{if eq .Status "failed"}} blocking{{end}}">{{.Code}}{{if .Message}} · {{.Message}}{{end}}</div>{{end}}{{if .UpdatedAt}}<div class="meta">{{.UpdatedAt}}</div>{{end}}</td>
+              <td class="meta">{{if .ArtifactSHA256}}<div>产物 {{slice .ArtifactSHA256 0 12}}…</div>{{end}}{{if .AcceptanceSHA256}}<div>报告 {{slice .AcceptanceSHA256 0 12}}…</div>{{end}}{{if .Attempts}}<div>生成尝试 {{.Attempts}}</div>{{end}}</td>
+            </tr>{{end}}
+          </tbody>
+        </table>
+      </div>
+      {{else}}<p class="meta">没有作业。</p>{{end}}
+    </section>
+    {{else if eq .ActiveTab "accounts"}}
+    <section class="section-accounts" aria-labelledby="accounts-heading">
+      <div class="section-header"><h2 id="accounts-heading" class="section-title">访问账号</h2></div>
+      <p class="meta">浏览器入口账号只能登录被分配的浏览器；管理员账号可进入本面板。禁用/启用账号、修改角色、重置他人密码前须 <a href="{{.ReauthURL}}">确认密码</a>（5 分钟内有效）。</p>
+      {{if .Accounts}}
+      <div class="table-container">
+        <table class="accounts-table">
+          <thead><tr><th>账号</th><th>角色</th><th>状态</th><th>可登录的浏览器</th><th>操作</th></tr></thead>
+          <tbody>
+            {{range .Accounts}}<tr>
+              <td><strong>{{.ID}}</strong></td>
+              <td><span class="badge badge-role">{{.Role}}</span></td>
+              <td>{{if .Disabled}}<span class="badge badge-disabled off">已禁用</span>{{else}}<span class="badge badge-success">启用</span>{{end}}</td>
+              <td><form method="post" action="/manage/accounts/{{.ID}}" class="grants-form"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="grants"><div class="grants-checkboxes">{{$row := .}}{{range .AllProfiles}}<label class="chk"><input type="checkbox" name="profiles" value="{{.}}"{{if index $row.Grants .}} checked{{end}}> {{.}}</label>{{end}}</div><button type="submit" class="btn btn-secondary btn-sm">保存分配</button></form></td>
+              <td class="account-actions-cell actions">
+                <form method="post" action="/manage/accounts/{{.ID}}" class="pwd-reset-form"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="reset_password"><label for="pwd-{{.ID}}" class="field-label">新密码</label><div class="inline-input-group"><input id="pwd-{{.ID}}" type="password" name="password" minlength="12" maxlength="256" placeholder="12–256 字节" autocomplete="new-password"><button type="submit" class="btn btn-secondary btn-sm">重置密码</button></div></form>
+                <div class="account-btn-group">
+                  {{if .Disabled}}<form method="post" action="/manage/accounts/{{.ID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="enable"><button type="submit" class="btn btn-secondary btn-sm">启用</button></form>
+                  {{else}}<form method="post" action="/manage/accounts/{{.ID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="disable"><button type="submit" class="btn btn-warning btn-sm">禁用</button></form>{{end}}
+                  <form method="post" action="/manage/accounts/{{.ID}}" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="role"><input type="hidden" name="role" value="{{if eq .Role "admin"}}user{{else}}admin{{end}}"><button type="submit" class="btn btn-secondary btn-sm">{{if eq .Role "admin"}}改为入口账号{{else}}改为管理员{{end}}</button></form>
+                </div>
+              </td>
+            </tr>{{end}}
+          </tbody>
+        </table>
+      </div>
+      {{else}}<p class="meta">账号表暂不可读。</p>{{end}}
+
+      <div class="panel create-account-panel">
+        <h3 class="panel-title">新增账号</h3>
+        <form method="post" action="/manage/accounts" class="account-create-form"><input type="hidden" name="csrf" value="{{.CSRF}}">
+          <div class="form-grid">
+            <div class="form-field"><label for="na-acc">账号 ID</label><input id="na-acc" type="text" name="account" maxlength="32" pattern="[a-z0-9][a-z0-9_-]{0,31}" placeholder="账号 ID（小写字母、数字、_-）" required></div>
+            <div class="form-field"><label for="na-pwd">密码</label><input id="na-pwd" type="password" name="password" minlength="12" maxlength="256" placeholder="密码（12–256 字节）" autocomplete="new-password" required></div>
+          </div>
+          <fieldset class="form-field"><legend>角色</legend><div class="radio-group"><label class="chk"><input type="radio" name="role" value="user" checked> 浏览器入口账号</label><label class="chk"><input type="radio" name="role" value="admin"> 管理员（需先确认密码）</label></div></fieldset>
+          <fieldset class="form-field"><legend>可登录的浏览器</legend><div class="checkbox-group">{{range .ProfileIDs}}<label class="chk"><input type="checkbox" name="profiles" value="{{.}}"> {{.}}</label>{{end}}</div></fieldset>
+          <div class="form-actions"><button type="submit" class="btn btn-primary">创建账号</button></div>
+        </form>
+      </div>
+    </section>
+    {{end}}
+  </main>
+
+  <footer class="app-footer">
+    <p class="meta">远程浏览器管理 · 生成时间 {{.GeneratedAt}} · 列表只读取最近一次健康采样，过期即标为 stale；关闭按钮走已验证的停止流程，不删除 Home。</p>
+  </footer>
 </body>
 </html>
 `)))

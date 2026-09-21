@@ -114,6 +114,20 @@ func TestManagementBehindTheRealGateway(t *testing.T) {
 	if strings.Contains(page.Body.String(), "password_hash") || strings.Contains(page.Body.String(), "pbkdf2") {
 		t.Fatal("page exposes verifiers")
 	}
+	// The new query selects only the view: every pane keeps the real admin gate.
+	for _, tab := range []string{"browsers", "jobs", "accounts"} {
+		target := "https://adapter.example/manage/?tab=" + tab
+		if do(http.MethodGet, target, nil).Code != http.StatusSeeOther || do(http.MethodGet, target, nil, alice).Code != http.StatusForbidden {
+			t.Fatalf("tab %s bypassed the login/admin gate", tab)
+		}
+		body := do(http.MethodGet, target, nil, bob).Body.String()
+		if strings.Contains(body, "password_hash") || strings.Contains(body, "pbkdf2") {
+			t.Fatalf("tab %s exposes verifiers", tab)
+		}
+		if tab == "accounts" && (!strings.Contains(body, `action="/manage/accounts/alice"`) || !strings.Contains(body, `action="/manage/accounts/bob"`)) {
+			t.Fatal("account row forms missing on the account tab")
+		}
+	}
 	csrf := func(cookie *http.Cookie) string {
 		entry := do(http.MethodGet, "https://adapter.example/manage/environments", nil, cookie)
 		var value environmentList
@@ -127,7 +141,7 @@ func TestManagementBehindTheRealGateway(t *testing.T) {
 	token := csrf(bob)
 	// Create an entry account from the panel; it can log in and open its browser only.
 	created := do(http.MethodPost, "https://adapter.example/manage/accounts", url.Values{"csrf": {token}, "account": {"carol"}, "password": {"carol-synthetic-password"}, "role": {"user"}, "profiles": {"work"}}, bob)
-	if created.Code != http.StatusSeeOther || created.Header().Get("Location") != "/manage/?notice=account_created" {
+	if created.Code != http.StatusSeeOther || created.Header().Get("Location") != "/manage/?tab=accounts&notice=account_created" {
 		t.Fatalf("create account: %d %s %s", created.Code, created.Header().Get("Location"), created.Body.String())
 	}
 	if do(http.MethodGet, "https://adapter.example/manage/", nil, bob).Code != http.StatusOK {
@@ -140,13 +154,21 @@ func TestManagementBehindTheRealGateway(t *testing.T) {
 		t.Fatal("created entry account has the wrong reach")
 	}
 	// Creating an administrator requires a recent password confirmation.
-	if do(http.MethodPost, "https://adapter.example/manage/accounts", url.Values{"csrf": {token}, "account": {"dave"}, "password": {"dave-synthetic-password"}, "role": {"admin"}}, bob).Header().Get("Location") != "/manage/?notice=reauth" {
+	if do(http.MethodPost, "https://adapter.example/manage/accounts", url.Values{"csrf": {token}, "account": {"dave"}, "password": {"dave-synthetic-password"}, "role": {"admin"}}, bob).Header().Get("Location") != "/manage/?tab=accounts&notice=reauth" {
 		t.Fatal("administrator created without re-authentication")
 	}
-	if do(http.MethodPost, "https://adapter.example/auth/reauth", url.Values{"csrf": {token}, "password": {password}, "next": {"/manage/"}}, bob).Code != http.StatusSeeOther {
-		t.Fatal("reauth failed")
+	for _, tab := range []string{"browsers", "jobs", "accounts"} {
+		next := "/manage/?tab=" + tab
+		prompt := do(http.MethodGet, "https://adapter.example/auth/reauth?next="+url.QueryEscape(next), nil, bob)
+		if prompt.Code != http.StatusOK || !strings.Contains(prompt.Body.String(), `name="next" value="`+next+`"`) || !strings.Contains(prompt.Body.String(), `name="password"`) {
+			t.Fatalf("reauth form lost tab %s or password input", tab)
+		}
+		confirmed := do(http.MethodPost, "https://adapter.example/auth/reauth", url.Values{"csrf": {token}, "password": {password}, "next": {next}}, bob)
+		if confirmed.Code != http.StatusSeeOther || confirmed.Header().Get("Location") != next {
+			t.Fatalf("reauth did not return to %s", tab)
+		}
 	}
-	if do(http.MethodPost, "https://adapter.example/manage/accounts", url.Values{"csrf": {token}, "account": {"dave"}, "password": {"dave-synthetic-password"}, "role": {"admin"}}, bob).Header().Get("Location") != "/manage/?notice=account_created" {
+	if do(http.MethodPost, "https://adapter.example/manage/accounts", url.Values{"csrf": {token}, "account": {"dave"}, "password": {"dave-synthetic-password"}, "role": {"admin"}}, bob).Header().Get("Location") != "/manage/?tab=accounts&notice=account_created" {
 		t.Fatal("administrator not created after re-authentication")
 	}
 	// Stop through the real gateway, then confirm nothing launched or collected health.

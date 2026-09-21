@@ -12,6 +12,7 @@ import importlib.util
 import ipaddress
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -31,9 +32,19 @@ def main():
     parser.add_argument("--artifact", type=Path)
     parser.add_argument("--acceptance", type=Path)
     parser.add_argument("--clipboard-addon", type=Path)
+    parser.add_argument("--firefox-source-app", default="firefox-personal",
+                        help="installed production Firefox app to copy read-only into QA")
+    parser.add_argument("--firefox-managed-image",
+                        help="exact managed-network Work image ID for isolated QA")
+    parser.add_argument("--wayland", action="store_true",
+                        help="launch the Firefox QA worker in Wayland mode")
     args = parser.parse_args()
     if args.engine == "camoufox" and not (args.artifact and args.acceptance):
         parser.error("Camoufox requires its frozen artifact and complete acceptance report")
+    if args.engine != "firefox" and (args.wayland or args.firefox_source_app != "firefox-personal" or args.firefox_managed_image):
+        parser.error("Firefox source app and Wayland mode only apply to --engine firefox")
+    if args.firefox_managed_image and not re.fullmatch(r"sha256:[0-9a-f]{64}", args.firefox_managed_image):
+        parser.error("Firefox managed image must be an exact sha256 image ID")
     qa = args.root.resolve()
     project = Path(__file__).resolve().parents[3]
     spec = importlib.util.spec_from_file_location(
@@ -217,10 +228,28 @@ def main():
             private=admin["private_key"].encode(), public=admin["server_public_key"].encode(), port=8000)
         status, apps = production.call("GET", "/api/admin/apps/installed")
         assert status == 200
-        app = next(value for value in apps if value["id"] == "firefox-personal")
+        app = next(value for value in apps if value["id"] == args.firefox_source_app)
         app.update(id=app_id, name="Private Browser Network QA", users=["network-qa"], groups=[], auto_update=False)
         provider = app["provider_config"]
-        provider["image"] = checks.docker("image", "inspect", provider["image"], "--format", "{{.Id}}").stdout.strip()
+        source_image = checks.docker(
+            "image", "inspect", provider["image"], "--format", "{{.Id}}"
+        ).stdout.strip()
+        provider["image"] = source_image
+        if args.firefox_managed_image:
+            source_details = json.loads(checks.docker("image", "inspect", source_image).stdout)[0]
+            managed = json.loads(
+                checks.docker("image", "inspect", args.firefox_managed_image).stdout
+            )[0]
+            labels = managed.get("Config", {}).get("Labels") or {}
+            if (
+                managed["Id"] != args.firefox_managed_image
+                or labels.get("io.browser-platform.managed-firefox-network") != "1"
+                or labels.get("io.browser-platform.managed-firefox-network-base") != source_image
+                or managed["RootFS"]["Layers"][: len(source_details["RootFS"]["Layers"])]
+                != source_details["RootFS"]["Layers"]
+            ):
+                raise RuntimeError("managed Firefox image is not based on the selected production app")
+            provider["image"] = managed["Id"]
         script = "#!/bin/sh\nexec firefox --no-remote --profile /config/network-qa-profile --remote-debugging-port 9228 --new-window about:blank\n"
         provider["custom_autostart_script_b64"] = base64.b64encode(script.encode()).decode()
         provider["custom_autostart_wayland_script_b64"] = provider["custom_autostart_script_b64"]
@@ -328,7 +357,7 @@ def main():
         # browser's BCP 47 locale remains bound independently by the artifact.
         language="zh_TW.UTF-8",
         timezone="Asia/Taipei",
-        wayland_mode=False,
+        wayland_mode=args.wayland,
         launch_in_room_mode=False,
     )
     stop = {
@@ -359,6 +388,9 @@ def main():
             "profile": profile,
             "observer_ip": observer_ip,
             "engine": args.engine,
+            "source_app": args.firefox_source_app if args.engine == "firefox" else "",
+            "managed_image": provider["image"] if args.firefox_managed_image else "",
+            "wayland": args.wayland,
         },
     )
     check = ('import socket; s=socket.create_connection(("127.0.0.1",9228),timeout=1);s.close()'
@@ -376,6 +408,8 @@ def main():
             {
                 "private_observer": "ready",
                 "engine": args.engine,
+                "source_app": args.firefox_source_app if args.engine == "firefox" else "",
+                "wayland": args.wayland,
                 "browser": "ready",
                 "strict_test_CA_installed": True,
                 "production_mutations": 0,
