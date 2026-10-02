@@ -29,7 +29,7 @@ def main():
     spec.loader.exec_module(mod)
     checks = mod.Checks(qa)
     info = json.loads((qa / "browser-worker.json").read_text())
-    engine = info.get("engine", "firefox")
+    engine = info.get("native_engine", info.get("engine", "firefox"))
     upstream_protocol = info.get("upstream_protocol", "socks5")
     upstream_auth = info.get("upstream_auth", "username_password")
     upstream_event = {"socks5": "socks", "http": "http_connect", "https": "https_connect"}[upstream_protocol]
@@ -51,7 +51,11 @@ def main():
     observer = qa.parent / "observer"
     results = []
     desktop = None
-    if engine == "camoufox":
+    if info.get("native_engine"):
+        native_spec=importlib.util.spec_from_file_location("native_network",Path(__file__).with_name("native-network-client.py"))
+        native_module=importlib.util.module_from_spec(native_spec);native_spec.loader.exec_module(native_module)
+        desktop=native_module.NativeDesktop(worker,info["native_engine"])
+    elif engine == "camoufox":
         desktop_spec = importlib.util.spec_from_file_location("qa_desktop", Path(__file__).with_name("qa-desktop.py"))
         desktop_module = importlib.util.module_from_spec(desktop_spec)
         desktop_spec.loader.exec_module(desktop_module)
@@ -84,6 +88,8 @@ for p in Path('/proc').glob('[0-9]*'):
 assert len(out)==1
 print(json.dumps(out))
 """
+        if info.get("native_engine"):
+            source=source.replace("(b'--remote-debugging-port' in args and b'9228' in args)","any(a == b'--remote-debugging-port=9222' for a in args)").replace("(args[0].endswith(b'/camoufox') and b'--profile' in args)","False")
         return json.loads(mod.docker("exec", worker, "python3", "-c", source).stdout)
 
     def evaluate(expression, navigate=False):
@@ -228,16 +234,18 @@ print(json.dumps(out))
             initial["fetch"]
             and initial["aaaa"]
             and initial["websocket"]
-            and initial["webrtc"] == "undefined"
+            and initial["webrtc"] == ("function" if info.get("native_engine")=="chromix" else "undefined")
         )
+        if info.get("native_engine")=="chromix":
+            mod.write_json(output / "webrtc-candidates.json", desktop.assert_webrtc_confined())
         environment = json.loads(
             evaluate(
                 "JSON.stringify({locale:navigator.language,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,screen:screen.width+'x'+screen.height,dpr:devicePixelRatio})"
             )
         )
-        assert environment == dict(
+        assert environment == info.get("expected_environment", dict(
             locale="zh-TW", timezone="Asia/Taipei", screen="1920x1080", dpr=1
-        )
+        ))
         selected = [
             e
             for e in events()[start:]

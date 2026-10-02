@@ -18,6 +18,7 @@ import os
 import signal
 import shlex
 import socket
+import shutil
 import subprocess
 import sys
 import time
@@ -50,8 +51,13 @@ def events(path):
 
 
 class DirectChecks:
-    def __init__(self, qa, output):
+    def __init__(self, qa, output, native_engine=None):
         self.qa, self.output = qa.resolve(), output.resolve()
+        self.native_engine=native_engine
+        self.expected={"locale":"zh-TW","timezone":"Asia/Taipei","screen":"1920x1080","dpr":1}
+        if native_engine:
+            entry=json.loads((self.qa.parent/"entry.json").read_text());assert entry["browser_engine"]==native_engine
+            self.expected.update(locale=entry["locale"],timezone=entry["timezone"],screen=entry["screen"].split("@")[0])
         self.checks = network.Checks(self.qa)
         self.output.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.state_path = self.qa / "direct-state.json"
@@ -96,6 +102,10 @@ class DirectChecks:
         return self.state[key]["worker"]
 
     def control(self, key):
+        if self.native_engine:
+            ns=importlib.util.spec_from_file_location("native_direct",Path(__file__).with_name("native-network-client.py"));nm=importlib.util.module_from_spec(ns);ns.loader.exec_module(nm)
+            network.wait(lambda: network.docker("exec",self.worker(key),"python3","-c",'import socket;socket.create_connection(("127.0.0.1",9222),1).close()',check=False).returncode==0,"native DIRECT browser readiness",seconds=90)
+            return nm.NativeDesktop(self.worker(key),self.native_engine)
         return desktop.Desktop(self.worker(key))
 
     def stop(self, key):
@@ -119,7 +129,7 @@ class DirectChecks:
     def prepare(self):
         if not self.state.get("configured"):
             original = json.loads((self.qa / "browser-worker.json").read_text())
-            assert original["engine"] == "camoufox" and original["home"] == "network-qa-home-browser"
+            assert (original["engine"] == "camoufox" or original["engine"] == self.native_engine) and original["home"] == "network-qa-home-browser"
             body = json.loads((self.qa / "browser-stop.json").read_text())
             status, _ = self.checks.client.call("POST", "/api/profile-runtime/" + original["home"] + "/stop", body)
             assert status == 204
@@ -133,7 +143,7 @@ class DirectChecks:
             config = inspect("sealskin-network-qa")
             assert any(m["Source"] == HOST_SOURCE and m["Destination"] == HOST_TARGET and not m["RW"] for m in config["Mounts"])
             source = "from app.network_direct import parse_host_ipv4;from pathlib import Path;import json;print(json.dumps(parse_host_ipv4(Path(" + repr(HOST_TARGET) + ").read_text())))"
-            hosts = json.loads(network.docker("exec", "-w", "/app", "sealskin-network-qa", "python3", "-c", source).stdout)
+            hosts = json.loads(network.docker("exec", "sealskin-network-qa", "python3", "-c", source).stdout)
             addresses = sorted({row[4][0] for row in socket.getaddrinfo("example.com", 443, socket.AF_INET, socket.SOCK_STREAM)
                                 if ipaddress.IPv4Address(row[4][0]).is_global and row[4][0] not in hosts})
             assert addresses and FIXTURE_IP not in addresses + hosts
@@ -174,7 +184,7 @@ class DirectChecks:
                     self.install_ca(home)
                 request = dict(url="https://example.com/", application_id=app_id, home_name=home, profile_id=profile,
                     operation_id=uuid.uuid4().hex, network_policy_id=policy_id, network_policy_sha256=revision,
-                    language="zh_TW.UTF-8", timezone="Asia/Taipei", wayland_mode=False, launch_in_room_mode=False)
+                    language=self.expected["locale"].replace("-","_")+".UTF-8", timezone=self.expected["timezone"], wayland_mode=False, launch_in_room_mode=False)
                 stop = {name: request[name] for name in ("application_id", "profile_id", "operation_id", "network_policy_id", "network_policy_sha256")}
                 stop["bootstrap_url"] = request["url"]
                 self.state[key] = {"request": request, "stop": stop, "policy": policy, "app": app, "marker": uuid.uuid4().hex}
@@ -197,16 +207,17 @@ class DirectChecks:
             assert journal["policy"]["mode"] == journal["allocation"]["mode"] == "direct"
             assert all(not journal["policy"].get(name) for name in ("upstream_host", "username_file", "password_file", "username_secret_ref", "password_secret_ref"))
         network.write_json(self.qa / "browser-worker.json", {"instance_id": self.worker("a"), "home": self.state["a"]["request"]["home_name"],
-            "profile": self.state["a"]["request"]["profile_id"], "observer_ip": self.state["observer_ip"], "engine": "camoufox", "network_mode": "direct"})
+            "profile": self.state["a"]["request"]["profile_id"], "observer_ip": self.state["observer_ip"], "engine": self.native_engine or "camoufox", "network_mode": "direct", **({"native_engine":self.native_engine,"expected_environment":self.expected} if self.native_engine else {})})
         network.write_json(self.qa / "browser-stop.json", self.state["a"]["stop"])
         network.write_json(self.qa / "browser-launch.json", self.state["a"]["request"])
         self.passed("two explicit DIRECT generations start only after real public TLS and bypass preflight", browsers=2, externalUpstreams=0)
 
     def install_ca(self, home):
-        profile = self.qa / "storage/network-qa" / home / ".camoufox/profile"
+        profile = self.qa / "storage/network-qa" / home / {"camoufox":".camoufox/profile","firefox":".firefox/profile","chromix":".pki/nssdb"}.get(self.native_engine,".camoufox/profile")
         profile.mkdir(mode=0o700, parents=True, exist_ok=True)
         nss = self.qa.parent / "nss-tools/extracted/usr"
         command = ["/lib64/ld-linux-x86-64.so.2", "--library-path", str(nss / "lib/x86_64-linux-gnu"), str(nss / "bin/certutil")]
+        if shutil.which("certutil"):command=[shutil.which("certutil")]
         for args in (["-N", "--empty-password", "-d", "sql:" + str(profile)],
                      ["-A", "-d", "sql:" + str(profile), "-n", "Private Network QA CA", "-t", "C,,", "-i", str(self.observer / "ca.pem")]):
             assert subprocess.run(command + args, capture_output=True).returncode == 0
@@ -260,7 +271,7 @@ class DirectChecks:
                 network.write_json(self.case / (key + "-" + scheme + ".json"), result)
             control.navigate("https://entry.leak.qa.test/test")
             result = control.evaluate("({webrtc:typeof RTCPeerConnection,locale:navigator.language,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,screen:[screen.width,screen.height],dpr:devicePixelRatio})")
-            assert result == dict(webrtc="undefined", locale="zh-TW", timezone="Asia/Taipei", screen=[1920,1080], dpr=1)
+            assert result == dict(webrtc="function" if self.native_engine=="chromix" else "undefined", locale=self.expected["locale"], timezone=self.expected["timezone"], screen=[int(v) for v in self.expected["screen"].split("x")], dpr=1)
             network.write_json(self.case / (key + "-environment.json"), result)
             self.store_marker(key)
         dns_events = events(self.dns / "events.jsonl")
@@ -272,7 +283,7 @@ class DirectChecks:
             egress = json.loads(network.docker("network", "inspect", journal["allocation"]["egress_id"]).stdout)[0]
             address = relay["NetworkSettings"]["Networks"][egress["Name"]]["IPAddress"]
             assert all(any(e["event"] == kind and e.get("source") == address for e in observed) for kind in ("http", "https", "websocket"))
-        self.passed("both normal Camoufox browsers use DIRECT for HTTP HTTPS WS WSS", fixture="public /32 routed only inside QA namespaces", environmentUnchanged=True)
+        self.passed("both normal browsers use DIRECT for HTTP HTTPS WS WSS", fixture="public /32 routed only inside QA namespaces", environmentUnchanged=True)
 
     def store_marker(self, key):
         marker = self.state[key]["marker"]
@@ -516,6 +527,8 @@ for path in Path('/proc').glob('[0-9]*'):
 assert len(out)==1
 print(json.dumps(out))
 """
+        if self.native_engine:
+            source=source.replace("args[0].endswith(b'/camoufox') and b'--profile' in args", "any(a == b'--remote-debugging-port=9222' for a in args)")
         return json.loads(network.docker("exec", self.worker(key), "python3", "-c", source).stdout)
 
     def dns_faults(self):
@@ -559,7 +572,12 @@ print(json.dumps(out))
             assert control.evaluate("(async()=>{const r=await fetch(" + json.dumps(url) + ");const b=new Uint8Array(await r.arrayBuffer());return r.ok && !!(b[2]&4)})()")
             assert any(e["event"] == "dns" and e.get("transport") == "doh" and e["name"] == name for e in events(self.observer / "events.jsonl"))
             transport = control.evaluate("(async()=>{try{const t=new WebTransport('https://h3-'+qa.nonce+'.leak.qa.test/');const ok=await Promise.race([t.ready.then(()=>true,()=>false),new Promise(r=>setTimeout(()=>r(false),2500))]);t.close();return ok}catch(_){return false}})()")
-            assert transport is False and control.evaluate("typeof RTCPeerConnection") == "undefined"
+            assert transport is False
+            if self.native_engine=="chromix":
+                assert control.evaluate("typeof RTCPeerConnection")=="function"
+                network.write_json(self.case / "webrtc-candidates.json", control.assert_webrtc_confined())
+            else:
+                assert control.evaluate("typeof RTCPeerConnection")=="undefined"
             self.passed("page DoH stays inside DIRECT HTTPS while WebRTC and HTTP3 do not open a UDP path")
         finally:
             network.write_json(self.dns / "mode.json", {})
@@ -615,7 +633,7 @@ print(json.dumps(out))
         config["public_base_url"] = "https://" + self.state["host_ipv4"][0]
         config["profiles"] = [{"id":self.state[key]["request"]["profile_id"],
             "application_id":self.state[key]["request"]["application_id"], "home_name":self.state[key]["request"]["home_name"],
-            "start_url":"https://example.com/", "language":"zh_TW.UTF-8", "timezone":"Asia/Taipei", "wayland_mode":False,
+            "start_url":"https://example.com/", "language":self.expected["locale"].replace("-","_")+".UTF-8", "timezone":self.expected["timezone"], "wayland_mode":False,
             "network_policy_id":self.state[key]["request"]["network_policy_id"],
             "network_policy_sha256":self.state[key]["request"]["network_policy_sha256"]} for key in ("a", "b")]
         network.write_json(self.qa / "adapter-config.json", config)
@@ -648,7 +666,7 @@ print(json.dumps(out))
             network.write_json(self.case / (key + "-entry.json"), {"result":"PASS", "initialPageTitle":control.title(),
                 "uniqueLaunchContextPreserved":True, "reusedRequests":2, "hostStillDenied":True})
         network.write_json(self.qa / "browser-worker.json", {"instance_id":self.worker("a"), "home":self.state["a"]["request"]["home_name"],
-            "profile":self.state["a"]["request"]["profile_id"], "observer_ip":self.state["observer_ip"], "engine":"camoufox", "network_mode":"direct"})
+            "profile":self.state["a"]["request"]["profile_id"], "observer_ip":self.state["observer_ip"], "engine":self.native_engine or "camoufox", "native_engine":self.native_engine, "network_mode":"direct"})
         network.write_json(self.qa / "browser-stop.json", self.state["a"]["stop"])
         network.write_json(self.qa / "browser-launch.json", self.state["a"]["request"])
         self.attach_fixture()
@@ -928,8 +946,9 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     stages = ("prepare", "transports", "isolation", "dns_faults", "entry", "health", "gateway_faults", "recovery", "cleanup_retry")
     parser.add_argument("--stages", nargs="+", choices=stages, default=list(stages))
+    parser.add_argument("--native-engine", choices=("camoufox","chromix","firefox"))
     args = parser.parse_args()
-    checks = DirectChecks(args.root, args.output)
+    checks = DirectChecks(args.root, args.output, args.native_engine)
     for stage in args.stages:
         checks.run(stage)
 

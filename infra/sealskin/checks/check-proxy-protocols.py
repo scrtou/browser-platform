@@ -31,8 +31,8 @@ class Matrix:
         self.checks = network.Checks(self.qa)
         self.info = json.loads((self.qa / "browser-worker.json").read_text())
         self.request = json.loads((self.qa / "browser-launch.json").read_text())
-        assert (self.info["engine"], self.info["home"], self.info["profile"]) == (
-            "camoufox", "network-qa-home-browser", "network-qa-browser")
+        assert self.info["engine"] == "camoufox" or self.info.get("native_engine") == self.info["engine"] in ("chromix", "firefox")
+        assert (self.info["home"], self.info["profile"]) == ("network-qa-home-browser", "network-qa-browser")
         assert self.request["home_name"] == self.info["home"]
         assert self.request["application_id"] == "camoufox-network-qa-r4"
         self.observer = self.qa.parent / "observer"
@@ -116,7 +116,12 @@ class Matrix:
         network.write_json(self.qa / "browser-worker.json", self.info)
         network.write_json(case / "policy.json", {"id": policy_id, "sha256": revision, "policy": policy})
         network.write_json(case / "generation.json", snapshot)
-        self.control = desktop.Desktop(self.info["instance_id"])
+        if self.info.get("native_engine"):
+            ns=importlib.util.spec_from_file_location("native_network",Path(__file__).with_name("native-network-client.py"));nm=importlib.util.module_from_spec(ns);ns.loader.exec_module(nm)
+            self.control=nm.NativeDesktop(self.info["instance_id"],self.info["native_engine"])
+            network.wait(lambda: network.docker("exec", self.info["instance_id"], "python3", "-c", 'import socket;socket.create_connection(("127.0.0.1",9222),1).close()', check=False).returncode == 0, "native browser debug readiness", seconds=90)
+            self.control.navigate("https://entry.leak.qa.test/test")
+        else:self.control = desktop.Desktop(self.info["instance_id"])
         network.wait(lambda: network.docker("exec", "--user", "1000", "-e", "DISPLAY=:1", self.info["instance_id"],
             "xdotool", "getactivewindow", "getwindowname", check=False).stdout.startswith("Private browser network check"),
             "protocol QA browser", seconds=60)
@@ -215,7 +220,7 @@ class Matrix:
         events = self.events()[start:]
         (case / "observer-events.jsonl").write_text("".join(json.dumps(e) + "\n" for e in events))
         record = {"case": name, "result": "PASS", "protocol": protocol, "auth": auth,
-                  "browser": "camoufox", "networkChecks": len(network_results),
+                  "browser": self.info.get("native_engine", "camoufox"), "networkChecks": len(network_results),
                   "httpHttpsWsWss": True, "checkedAt": datetime.now(timezone.utc).isoformat()}
         self.results.append(record)
         network.write_json(self.output / "protocol-matrix.json", self.results)

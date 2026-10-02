@@ -38,8 +38,13 @@ def main():
                         help="exact managed-network Work image ID for isolated QA")
     parser.add_argument("--wayland", action="store_true",
                         help="launch the Firefox QA worker in Wayland mode")
+    parser.add_argument("--native-catalog-entry", type=Path, help="Private copied accepted native entry; never reads a production app")
     args = parser.parse_args()
-    if args.engine == "camoufox" and not (args.artifact and args.acceptance):
+    native_entry = json.loads(args.native_catalog_entry.read_text()) if args.native_catalog_entry else None
+    if native_entry:
+        assert native_entry["browser_engine"] in ("camoufox", "chromix", "firefox") and native_entry["status"] == "accepted"
+        args.engine = "camoufox"
+    if args.engine == "camoufox" and not native_entry and not (args.artifact and args.acceptance):
         parser.error("Camoufox requires its frozen artifact and complete acceptance report")
     if args.engine != "firefox" and (args.wayland or args.firefox_source_app != "firefox-personal" or args.firefox_managed_image):
         parser.error("Firefox source app and Wayland mode only apply to --engine firefox")
@@ -257,6 +262,9 @@ def main():
     status, _ = runtime.client.call("POST", "/api/homedirs", {"home_name": home})
     assert status == 201
     browser_profile = qa / "storage/network-qa" / home / (".camoufox/profile" if args.engine == "camoufox" else "network-qa-profile")
+    if native_entry:
+        paths={"camoufox":".camoufox/profile","firefox":".firefox/profile","chromix":".pki/nssdb"}
+        browser_profile=qa / "storage/network-qa" / home / paths[native_entry["browser_engine"]]
     browser_profile.mkdir(mode=0o700, parents=True)
     nss = qa.parent / "nss-tools/extracted/usr"
     command = [
@@ -265,6 +273,8 @@ def main():
         str(nss / "lib/x86_64-linux-gnu"),
         str(nss / "bin/certutil"),
     ]
+    if shutil.which("certutil"):
+        command=[shutil.which("certutil")]
     for extra in (
         ["-N", "--empty-password", "-d", "sql:" + str(browser_profile)],
         [
@@ -315,7 +325,16 @@ def main():
     registry = json.loads(registry_path.read_text())
     registry["policies"][policy_id] = policy
     checks.write_json(registry_path, registry)
-    if args.engine == "camoufox":
+    if native_entry:
+        assert args.native_catalog_entry.resolve().is_relative_to(qa.parent)
+        app=native_entry["application"]
+        app.update(id=app_id,name="Private Native Network QA",users=["network-qa"],groups=[],auto_update=False)
+        provider=app["provider_config"]
+        provider.update(network_policy_id=policy_id,network_policy_sha256=revision,custom_autostart_script_b64=base64.b64encode(b"#!/bin/sh\nexec /opt/camoufox-python/bin/python /qa-native/qa-browser.py\n").decode())
+        provider["docker_overrides"].update(mem_limit="1536m",nano_cpus=1500000000,shm_size="256m",pids_limit=512)
+        provider["docker_overrides"].setdefault("mounts",[]).append({"Type":"bind","Source":str(qa.parent/"native-source"),"Target":"/qa-native","ReadOnly":True})
+        checks.write_json(qa/"camoufox-app.json",app)
+    elif args.engine == "camoufox":
         definition = qa / "camoufox-app.json"
         command = [sys.executable, str(project / "infra/camoufox/prepare-sealskin.py"),
                    "--artifact", str(args.artifact.resolve()), "--acceptance", str(args.acceptance.resolve()),
@@ -355,8 +374,8 @@ def main():
         network_policy_sha256=revision,
         # SealSkin's language parameter becomes the POSIX LC_ALL value. The
         # browser's BCP 47 locale remains bound independently by the artifact.
-        language="zh_TW.UTF-8",
-        timezone="Asia/Taipei",
+        language=native_entry["locale"].replace("-","_")+".UTF-8" if native_entry else "zh_TW.UTF-8",
+        timezone=native_entry["timezone"] if native_entry else "Asia/Taipei",
         wayland_mode=args.wayland,
         launch_in_room_mode=False,
     )
@@ -387,7 +406,8 @@ def main():
             "home": home,
             "profile": profile,
             "observer_ip": observer_ip,
-            "engine": args.engine,
+            "engine": native_entry["browser_engine"] if native_entry else args.engine,
+            **({"native_engine":native_entry["browser_engine"],"expected_environment":{"locale":native_entry["locale"],"timezone":native_entry["timezone"],"screen":native_entry["screen"].split("@")[0],"dpr":1}} if native_entry else {}),
             "source_app": args.firefox_source_app if args.engine == "firefox" else "",
             "managed_image": provider["image"] if args.firefox_managed_image else "",
             "wayland": args.wayland,
@@ -396,6 +416,8 @@ def main():
     check = ('import socket; s=socket.create_connection(("127.0.0.1",9228),timeout=1);s.close()'
              if args.engine == "firefox" else
              'import subprocess; out=subprocess.check_output(["xdotool","getactivewindow","getwindowname"],env={"DISPLAY":":1"});assert b"Private browser network check" in out')
+    if native_entry:
+        check='import socket;socket.create_connection(("127.0.0.1",9222),1).close()'
     checks.wait(
         lambda: checks.docker(
             "exec", "--user", "1000", worker, "python3", "-c", check, check=False
@@ -407,7 +429,7 @@ def main():
         json.dumps(
             {
                 "private_observer": "ready",
-                "engine": args.engine,
+                "engine": native_entry["browser_engine"] if native_entry else args.engine,
                 "source_app": args.firefox_source_app if args.engine == "firefox" else "",
                 "wayland": args.wayland,
                 "browser": "ready",

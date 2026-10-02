@@ -24,6 +24,7 @@ from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--root", type=Path, required=True)
 parser.add_argument("--build", type=Path, required=True)
+parser.add_argument("--probe-image", default="lscr.io/linuxserver/sealskin:0.3.2-ls58@sha256:d52c155eb78882b27c7780e77df335939d46cd06a514c9fa310039307542ee6a", help="Explicit imported probe image ID or pinned original reference")
 parser.add_argument("--relay-image", required=True, help="Retained version tag from relay/build-guarded-image.py")
 parser.add_argument("--secret-runtime-root", type=Path, help="Existing private directory immediately below /dev/shm")
 parser.add_argument("--secret-key-directory", type=Path, help="Existing private directory mounted read-only into the controller")
@@ -129,7 +130,7 @@ release = json.loads((BUILD / "release.json").read_text())
 probe_id = docker(
     "image",
     "inspect",
-    "lscr.io/linuxserver/sealskin:0.3.2-ls58@sha256:d52c155eb78882b27c7780e77df335939d46cd06a514c9fa310039307542ee6a",
+    args.probe_image,
     "--format",
     "{{.Id}}",
 ).strip()

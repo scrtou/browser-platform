@@ -1,5 +1,7 @@
 # 文档导航
 
+当前工作：[R6AS 固定版本完整矩阵](work-items/R6AS-2026-10-02-fixed-version-matrix.md)进行中；R6AR 已部署收尾，当前补齐实际 Guard/Relay 网络与升级恢复证据。
+
 当前工作：[R6AR 缩放保存与旧 Work](work-items/R6AR-2026-10-02-display-persistence.md)已收尾并部署；旧 Work 与三引擎 30 个真实显示场景、完整 Go test/vet、针对性 race、保护发布和 128 文件异机增量通过。下一项为固定版本网络/升级恢复矩阵。
 
 当前工作：[R6AQ 共享 journald 预算](work-items/R6AQ-2026-10-02-journald-budget.md)已收尾并部署；512/64 MiB、30 天保留、有效配置/日志收发/保护核对通过，未 vacuum。下一项缩放百分比持久化与旧 Work 兼容。
