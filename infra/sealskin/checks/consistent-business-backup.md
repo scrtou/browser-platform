@@ -28,7 +28,7 @@ python3 infra/sealskin/checks/consistent-business-backup.py verify \
   --age /private/tools/age
 ```
 
-工具在加密前后核对完整名称/类型/权限/UID/GID/文件内容/链接文本，源发生变化则保留partial诊断，不发布最终归档。只排除`storage/<owner>/<home>/.XDG/wayland-<数字>`下无持久载荷的停止后Wayland socket，明确记录且不删除源节点；其他特殊节点拒绝。链接不跟随，已知Home/资产中的链接最后恢复，拒绝链接作为归档成员的父路径。
+工具在加密前后核对完整名称/类型/权限/UID/GID/文件内容/链接文本，源发生变化则保留partial诊断，不发布最终归档。只排除`storage/<owner>/<home>/.XDG/wayland-<数字>`下无持久载荷的停止后Wayland socket，明确记录且不删除源节点；其他特殊节点拒绝。链接不跟随，已知Home/资产及完整jobs中的链接最后恢复，拒绝链接作为归档成员的父路径。
 
 收据和独立保存的归档/manifest摘要共同作为传输核验输入。新目录解密身份必须单独传输；真实凭据、Home路径、文件清单、数据库结果等保存在被忽略的私有证据目录，不进入公开报告。
 
@@ -44,4 +44,8 @@ python3 infra/sealskin/checks/consistent-business-backup.py verify \
 
 ## 工具验证
 
-`test_consistent_business_backup.py`使用真实age和独立合成数据验证：往返/权限/链接/恢复标记与拒绝覆盖、未静止拒绝、篡改密文、错误密钥、错误manifest pin、精确socket排除及其他特殊节点拒绝、源别名/越界/重复前缀拒绝。本机及独立机各7项通过。Python3.11的流式tar不接受compresslevel参数，压缩层使用显式GzipFile；首次失败保留在R6AU私有记录。
+`test_consistent_business_backup.py`使用真实age和独立合成数据验证：往返/权限/链接/恢复标记与拒绝覆盖、未静止拒绝、篡改密文、错误密钥、错误manifest pin、精确socket排除及其他特殊节点拒绝、源别名/越界/重复前缀拒绝。增加作业链接往返/不读取外部目标、链接父节点拒绝与配置链接拒绝后，本机及独立机各10项通过。Python3.11的流式tar不接受compresslevel参数，压缩层使用显式GzipFile；首次失败保留在R6AU私有记录。
+
+恢复后可使用[逐文件与数据库读回](consistent-business-readback.py)、[离线Secret Store授权读回](consistent-business-secret-readback.py)及[无网络Worker副本检查](consistent-business-offline-workers.py)。三个工具限定R6AU私有恢复根，不能对生产路径执行；原恢复文件与可写QA副本分开。Worker检查使用新的合成显示令牌、不发布端口且使用Docker的none网络，不代表真实第三方登录验证。
+
+维护异常恢复必须等待Controller认证API返回正常应用列表；建立客户端时也可能因TLS服务初始化抛错，该阶段同样纳入有界重试。只有各原活动Profile新鲜healthy、原停用Profile保持停止，才声明生产恢复。

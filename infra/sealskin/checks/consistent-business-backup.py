@@ -69,7 +69,9 @@ def inventory(plan):
             elif stat.S_ISDIR(before.st_mode):
                 row['kind'] = 'directory'
             elif stat.S_ISLNK(before.st_mode):
-                require(prefix == 'storage' or prefix.startswith('assets/'), 'unexpected non-Home symlink')
+                # The full job spool includes stopped native QA Homes, whose
+                # font caches use links. Preserve their text without following.
+                require(prefix in {'storage', 'jobs'} or prefix.startswith('assets/'), 'unexpected source symlink')
                 row.update(kind='symlink', target=os.readlink(node))
             else:
                 raise ValueError('unsupported special source node')

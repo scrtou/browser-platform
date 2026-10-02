@@ -56,6 +56,34 @@ class BusinessBackupTest(unittest.TestCase):
         self.checkpoint.write_text(json.dumps({'result': 'QUIESCED', 'all_profiles_stopped': True, 'writers_stopped': False}))
         self.create(False); self.assertFalse(self.archive.exists())
 
+    def test_job_links_preserved_without_reading_targets(self):
+        jobs = self.root / 'jobs'; jobs.mkdir()
+        (jobs / 'font-cache-12').write_bytes(b'font cache')
+        (jobs / 'font-cache-9').symlink_to('font-cache-12')
+        outside = self.root / 'outside'; outside.write_bytes(b'not archived')
+        (jobs / 'external').symlink_to(outside)
+        self.plan.write_text(json.dumps({'jobs': str(jobs)}))
+        self.create(); self.restore()
+        self.assertEqual(os.readlink(self.target / 'jobs/font-cache-9'), 'font-cache-12')
+        manifest = json.loads((self.target / 'MANIFEST.json').read_text())
+        self.assertEqual(manifest['entries']['jobs/external']['kind'], 'symlink')
+        self.assertNotIn('jobs/outside', manifest['entries'])
+        self.assertEqual(outside.read_bytes(), b'not archived')
+
+    def test_job_link_cannot_be_archive_parent(self):
+        jobs = self.root / 'jobs'; jobs.mkdir()
+        outside = self.root / 'outside'; outside.mkdir()
+        (jobs / 'link').symlink_to(outside, target_is_directory=True)
+        child = self.root / 'child'; child.write_bytes(b'not written through link')
+        self.plan.write_text(json.dumps({'jobs': str(jobs), 'jobs/link/child': str(child)}))
+        self.create(); self.restore(False)
+        self.assertFalse(self.target.exists())
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_config_symlinks_still_rejected(self):
+        with self.assertRaises(ValueError):
+            m.inventory({'controller-config': str(self.storage)})
+
     def test_ciphertext_corruption_before_target_creation(self):
         self.create(); raw = bytearray(self.archive.read_bytes()); raw[-20] ^= 1; self.archive.write_bytes(raw)
         # Even when a matching transport checksum is supplied, age must reject it.
