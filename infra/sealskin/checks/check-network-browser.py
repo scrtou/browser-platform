@@ -89,7 +89,7 @@ assert len(out)==1
 print(json.dumps(out))
 """
         if info.get("native_engine"):
-            source=source.replace("(b'--remote-debugging-port' in args and b'9228' in args)","any(a == b'--remote-debugging-port=9222' for a in args)").replace("(args[0].endswith(b'/camoufox') and b'--profile' in args)","False")
+            source=native_module.process_identity_source(info["native_engine"])
         return json.loads(mod.docker("exec", worker, "python3", "-c", source).stdout)
 
     def evaluate(expression, navigate=False):
@@ -215,6 +215,8 @@ print(json.dumps(out))
         "--seconds",
         "300",
     ]
+    original = checks.identity(worker)
+    original_browser = browser_identity()
     capture = subprocess.Popen(
         ["sg", "docker", "-c", shlex.join(capture_args)],
         stdout=capture_log,
@@ -224,8 +226,6 @@ print(json.dumps(out))
         lambda: "wire_capture_ready" in capture_path.read_text(),
         "outbound metadata observer",
     )
-    original = checks.identity(worker)
-    original_browser = browser_identity()
     try:
         start = len(events())
         initial = json.loads(evaluate("qa.run()", navigate=True))

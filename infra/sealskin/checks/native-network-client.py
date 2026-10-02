@@ -24,6 +24,27 @@ class NativeDesktop:
         assert result==[], 'WEBRTC_UNPROXIED_CANDIDATE'
         return result
 
+def process_identity_source(engine):
+    """Observe the one native browser main process, excluding renderers.
+
+    The pinned Chromix build rewrites argv as a space-delimited process title.
+    Other engines retain NUL-separated argv. Only fixed QA flags are parsed.
+    """
+    assert engine in ('camoufox','chromix','firefox')
+    return """import json
+from pathlib import Path
+out=[]
+for process in Path('/proc').glob('[0-9]*'):
+ try:
+  args=process.joinpath('cmdline').read_bytes().split(bytes([0]))
+  if ENGINE=='chromix':args=b' '.join(args).split()
+  if b'--remote-debugging-port=9222' in args and not any(a.startswith(b'--type=') for a in args):
+   out.append([int(process.name),process.joinpath('stat').read_text().split()[21]])
+ except (OSError,IndexError):pass
+assert len(out)==1, 'NATIVE_MAIN_PROCESS_NOT_UNIQUE'
+print(json.dumps(out))
+""".replace('ENGINE',repr(engine))
+
 def inside():
     from browser_client import Browser
     request=json.load(sys.stdin)

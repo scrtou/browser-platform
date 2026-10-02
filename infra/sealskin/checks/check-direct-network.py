@@ -528,7 +528,8 @@ assert len(out)==1
 print(json.dumps(out))
 """
         if self.native_engine:
-            source=source.replace("args[0].endswith(b'/camoufox') and b'--profile' in args", "any(a == b'--remote-debugging-port=9222' for a in args)")
+            ns=importlib.util.spec_from_file_location("native_direct",Path(__file__).with_name("native-network-client.py"));nm=importlib.util.module_from_spec(ns);ns.loader.exec_module(nm)
+            source=nm.process_identity_source(self.native_engine)
         return json.loads(network.docker("exec", self.worker(key), "python3", "-c", source).stdout)
 
     def dns_faults(self):

@@ -11,3 +11,5 @@
 证据：私有 `r6as-fixed-matrix-20261002/camoufox/direct/recovery-1/`及原 `direct.log`。失败和未完成代次保留，修复完成后补录验证与清理结果。
 
 Camoufox修正后恢复/清理重测通过：两代次、浏览器进程和显示原地址保持，正常退出/恢复与三类存储通过，QA资源最终核验清零。其余原生引擎继续使用同工具验证。
+
+Chromix首组实测补充：`/proc/*/cmdline`重写成单个以空格分隔的进程标题，且renderer也携带调试端口；旧精确argv匹配无法识别主进程。QA只对Chromix规范化标题中的标志，并排除`--type=`子进程，仍断言唯一主进程PID/启动时间；Camoufox/Firefox保留原精确argv路径。身份观察提前到包捕获启动之前，避免身份断言失败留下观察进程。旧失败位于`chromix/protocols-1790951020/`。

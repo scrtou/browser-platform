@@ -55,8 +55,9 @@ assert len(out)==1
 print(json.dumps(out))
 """
         if worker_info.get("native_engine"):
-            assert worker_info["native_engine"] in ("camoufox", "chromix", "firefox")
-            script = script.replace("(b'--remote-debugging-port' in args and b'9228' in args)", "b'--remote-debugging-port=9222' in args")
+            native_spec=importlib.util.spec_from_file_location("native_recovery",Path(__file__).with_name("native-network-client.py"))
+            native=importlib.util.module_from_spec(native_spec);native_spec.loader.exec_module(native)
+            script=native.process_identity_source(worker_info["native_engine"])
         firefox = mod.docker("exec", worker, "python3", "-c", script).stdout
     direct = any(value.get("policy", {}).get("mode") == "direct" for value in live)
     direct_mounts = []
