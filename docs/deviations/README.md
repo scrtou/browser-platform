@@ -1,5 +1,45 @@
 # 设计偏差记录
 
+[DEV-128 灾备 QA Cookie 有效期](DEV-2026-10-02-128-recovery-cookie-lifetime.md)：已解决；一年期合成 sentinel 新检查点跨机读回/回退通过，历史过期证据保留。
+
+[DEV-127 原生异机恢复模块冲突](DEV-2026-10-02-127-remote-recovery-module-collision.md)：已解决，独立模块名加载后 Camoufox/Chromix 跨机恢复、重开和回退通过。
+
+- [DEV-126 控制器测试目录来源差异](DEV-2026-10-02-126-controller-test-source-provenance.md)：R6AK已解决，线上97文件匹配原发布审计，精确源码554项补测通过。
+
+- [DEV-125 固定容量未随机器变化](DEV-2026-10-02-125-fixed-capacity-machine-sizing.md)：R6AI已解决并部署，自动资源推导及人工覆盖。
+
+[DEV-124 删除密码确认弹窗](DEV-2026-10-02-124-delete-reauth-dialog.md)：R6AF已解决并部署。
+
+[DEV-123 弹窗布局与手机键盘](DEV-2026-10-02-123-dialog-password-layout.md)：R6AE已修复、验收并部署。
+
+[DEV-120](DEV-2026-10-02-120-reference-ui-health-summary.md)：已解决并部署；R6AA健康统计、搜索/弹窗和焦点修正通过真实UI与回归，原数据保持。
+
+[DEV-119](DEV-2026-10-01-119-chromix-fullscreen-sized-window.md)：已解决并部署；R6Z1修正同屏尺寸窗口，隔离及线上新任务完整验收通过，原失败记录保留。
+
+[DEV-118](DEV-2026-10-01-118-browser-network-select.md)：已解决并部署，R6X 单个浏览器网络下拉与安全/回显/布局回归通过。
+
+[DEV-117](DEV-2026-10-01-117-create-network-binding.md)：已解决并部署，创建完整绑定/持久重试/跨管理员缓存边界通过。
+
+- [DEV-114 计划状态对账](DEV-2026-10-01-114-plan-status-reconciliation.md)：已解决，R6T当前摘要/39项规格与运行版本对账完成，历史缺证保留。
+
+- [DEV-113 Firefox 固定小窗口输入](DEV-2026-10-01-113-firefox-fixed-input-probe.md)：已解决，R6S完整验收并限定部署；原失败证据保留。
+
+- [DEV-112 Chromix 固定小窗口被最大化](DEV-2026-10-01-112-chromix-fixed-window-rule.md)：已解决，R6S完整验收并限定部署；原失败证据保留。
+
+- [DEV-108 设备生成与显示尺寸耦合](DEV-2026-10-01-108-fingerprint-generation-screen-coupling.md)：已解决，R6S完整验收并限定部署；原失败证据保留。
+
+- [DEV-107 动态显示输入几何](DEV-2026-10-01-107-dynamic-input-geometry.md)：已解决，R6S完整验收并限定部署；原失败证据保留。
+
+- [DEV-106 空指纹页与Firefox默认组合](DEV-2026-10-01-106-template-empty-state-and-defaults.md)：已解决，R6S完整验收并限定部署；原失败证据保留。
+
+- [DEV-104 原生窗口能力](DEV-2026-10-01-104-native-window-capability.md)、[DEV-105 空目录发布](DEV-2026-10-01-105-empty-template-catalog.md)：R6R 已解决并部署。
+
+- [DEV-099 组合发布中断恢复](DEV-2026-10-01-099-template-publication-recovery.md)：已解决并部署，R6P；原产物/验收保持，真实中断与显式恢复通过。
+
+[DEV-098 模板作业执行器](DEV-2026-10-01-098-template-job-runner.md)：R6P 修复中。
+
+新增：[DEV-097 · UI scaling](DEV-2026-10-01-097-ui-scaling.md)，服务器修复已部署，待用户切换验证。
+
 [文档导航](../README.md) · [工作流程](../workflow.md) · [工作项](../work-items/README.md) · [当前架构](../design.md)
 
 实施或复核中发现设计与代码、配置、实际行为不一致时，立即使用 [模板](template.md) 建立记录。文件命名为 `DEV-YYYY-MM-DD-NNN-主题.md`，登记本索引并链接所属工作项。
@@ -8,6 +48,38 @@
 
 | 编号 | 工作项 | 差异 | 处理方式 | 状态 |
 | --- | --- | --- | --- | --- |
+| DEV-2026-10-01-088 | R6K | [Adapter 恢复依赖](DEV-2026-10-01-088-adapter-recovery-dependencies.md) | 补齐归档依赖及显式重绑检查 | 已解决（管理依赖范围） |
+| DEV-2026-10-01-087 | R6J1 | [日志候选目录权限](DEV-2026-10-01-087-log-candidate-directory-mode.md) | 逐文件复制并重验 | 已解决 |
+| [DEV-085 公网 WSS 空闲](DEV-2026-09-30-085-public-wss-idle.md) | [R7G](../work-items/R7G-2026-09-27-dynamic-upstream-hot-switch.md) | QA 等待超过端点 15 秒空闲限制 | 原连接定期 nonce 回显，无重连 | 已解决 |
+| [DEV-084 公网 QA DNS 入站](DEV-2026-09-30-084-public-qa-dns-ingress.md) | [R7G](../work-items/R7G-2026-09-27-dynamic-upstream-hot-switch.md) | IPv4 UDP 53 规则在 return 后不可达，TCP 53 未放行 | 用户已允许两条临时精确规则，执行并按 handle 回收 | 已解决 |
+| [DEV-083 恢复残留错误](DEV-2026-09-30-083-dynamic-recovery-stale-error.md) | [R7G](../work-items/R7G-2026-09-27-dynamic-upstream-hot-switch.md) | 旧回滚错误导致成功恢复后仍拒绝控制器接入 | 成功恢复后清除当前错误，失败保持 pending；四组实机恢复及 557/107 项回归通过 | 已解决（隔离候选） |
+| [DEV-082 动态回滚停止](DEV-2026-09-30-082-dynamic-fail-closed-stop.md) | [R7G](../work-items/R7G-2026-09-27-dynamic-upstream-hot-switch.md) | SDK 停止调用不兼容，恢复失败分支可能触及归属未证实资源 | 修复调用/归属/pending 并验证真实故障关闭 | 已解决（隔离候选） |
+| [DEV-081 动态 QA 执行通道](DEV-2026-09-30-081-dynamic-qa-exec.md) | [R7G](../work-items/R7G-2026-09-27-dynamic-upstream-hot-switch.md) | 既有 QA 未支持动态规则命令和 attached 回执 | 限定代次、镜像与命令，补齐真实集成 | 已解决（隔离候选） |
+| [DEV-2026-09-30-080](DEV-2026-09-30-080-final-source-snapshot-drift.md) | [R7F](../work-items/R7F-2026-09-23-production-release.md) | 旧发布源码副本的 4 个文件与最终 76 文件清单不符，当前仓库匹配 | 保留旧副本，新 76 文件源码以原工具链复建与运行二进制逐字节相同；109 文件材料校验通过 | 已解决（最终源码副本） |
+| [DEV-2026-09-30-079](DEV-2026-09-30-079-display-template-effect-label.md) | [R7F](../work-items/R7F-2026-09-23-production-release.md) | 显示模板仍以 X11/Selkies 命名，与效果名称契约不符 | 真实 Chromium 9 组复验通过，生产只修正 label；ID/revision、缩放和运行绑定保持 | 已解决（展示元数据） |
+| [DEV-2026-09-30-077](DEV-2026-09-30-077-launch-definition-lock.md) | [R7F](../work-items/R7F-2026-09-23-production-release.md) | Ensure 取锁前读取目录，等待期间可能跨过配置变更门禁 | 锁内读取目录与状态，确定性并发回归、全量 Go/race 与限定发布通过 | 已解决（已部署） |
+| [DEV-2026-09-29-076](DEV-2026-09-29-076-direct-capability-observation.md) | [R7F](../work-items/R7F-2026-09-23-production-release.md) | 控制器返回 DIRECT 能力，但 Adapter 解码与 inspect 映射漏掉字段 | 保留实际版本，旧控制器缺字段仍为 0；加密协议回归及限定 Adapter 发布复核 | 已解决（已部署） |
+| [DEV-2026-09-29-075](DEV-2026-09-29-075-release-status-drift.md) | [R7F](../work-items/R7F-2026-09-23-production-release.md) | 当前部署说明混杂旧 Adapter、Personal 状态和目录未部署结论 | 只读核对实际版本、资源、备份和绑定，更新现行入口并保留历史范围 | 已解决（当前摘要已同步） |
+| [DEV-2026-09-29-074](DEV-2026-09-29-074-environment-registration-template-metadata.md) | [R7F](../work-items/R7F-2026-09-23-production-release.md) | R6E 环境登记器未写 R7D 要求的浏览器模板一致性元数据，r10 直接登记后不能进入兼容目录 | 显式绑定模板及共用登记路径已修复；已有九项回归、r10 实际登记/绑定/启动，三个 accepted 条目七字段与原 artifact 派生值一致；客户端缺项归 DEV-073/R7F | 已解决（登记器元数据） |
+| [DEV-2026-09-29-073](DEV-2026-09-29-073-managed-browser-desktop-recovery.md) | [R7F](../work-items/R7F-2026-09-23-production-release.md) | 模板化 Camoufox 退出后，通用恢复提示错误引导从桌面启动未受管的系统 Firefox | 模板化 Profile 改用安全关闭与固定入口重建；r10 已部署，Mac 用户确认实际右键无 Firefox，Trilium 0.106.0 菜单无法检查；16:55 UTC “测试”BROWSER_EXITED，用户已确认主动关闭，当前状态保留 | 处理中 |
+| [DEV-2026-09-27-072](DEV-2026-09-27-072-dynamic-endpoint-lease.md) | [R7G](../work-items/R7G-2026-09-27-dynamic-upstream-hot-switch.md) | 既有规格冻结单 IP；动态 DNS 需要同一代次按 TTL 更新端点 | 增加显式动态 endpoint lease 与 Guard 原子切换；隔离 QA、公开解析和一次自然漂移/端口观察通过，生产前仍需 SOCKS5/客户端 QA | 候选及隔离 QA 已处理，客户端 QA 待完成 |
+| [DEV-2026-09-27-070](DEV-2026-09-27-070-private-recovery-key-transcript-exposure.md) | [R7F](../work-items/R7F-2026-09-23-production-release.md) | 旧管理员恢复 JSON 被完整读取，私钥进入本次私有操作会话输出 | 原 age 备份认证旧身份，现行接口明确 401；新恢复身份与 profile-admin 为 200，临时明文已清理、生产身份保持 | 已解决（旧身份拒绝已验证） |
+| [DEV-2026-09-30-078](DEV-2026-09-30-078-work-dns-probe-evidence.md) | [R7F](../work-items/R7F-2026-09-23-production-release.md) | Work 私有运行探针的 UDP DNS 报文无效，超时不能证明被阻止 | 有效查询得到明确拒绝；共享探针修正、3 项回归和当前组合正常/故障 QA 通过，失败与原证据保留 | 已解决（私有/共享工具及实际 QA） |
+| [DEV-2026-09-27-071](DEV-2026-09-27-071-legacy-managed-network-binding.md) | [R7F](../work-items/R7F-2026-09-23-production-release.md) | R6 旧目录的受管理策略缺少显式 `network_mode`，R7C 绑定被错误拒绝 | 仅对有效旧策略兼容迁为显式 `proxy_required`；代码/QA 与生产绑定通过，9 月 30 日 Personal 新代次 PROXY_OK、Worker HTTPS 通过 | 已解决（代码/QA/生产） |
+| [DEV-2026-09-27-069](DEV-2026-09-27-069-proxy-dns-address-drift.md) | [R7F](../work-items/R7F-2026-09-23-production-release.md) | Personal 旧数值代理地址漂移后不可达，当前原策略探针仍超时 | 经新备份/授权绑定现有 tw r1 恢复新代次 PROXY_OK，Mac 公网页面通过，原有书签/登录确认项不适用；后续动态轮换归 R7G | 已解决（本次生产恢复） |
+| [DEV-2026-09-23-068](DEV-2026-09-23-068-network-probe-time.md) | [R7E](../work-items/R7E-2026-09-23-management-network-home-ui.md) | R7C 未保存失败探针的结果时间 | 增加可选 `probe_at`，仅实际探针写入；旧记录不补造时间 | 已解决（候选未部署） |
+| [DEV-2026-09-22-067](DEV-2026-09-22-067-network-profile-mutation-boundaries.md) | [R7C](../work-items/R7C-2026-09-21-network-profile-catalog.md) | 停用/撤销表单要求幂等键但服务未使用；绑定与撤销缺少共享串行边界；创建/探测未执行方案要求的近期确认密码 | 持久幂等审计、统一目录变更互斥、所有敏感代理写入口重新认证；重复/冲突/并发/网关回归通过 | 已解决（候选未部署） |
+| [DEV-2026-09-21-066](DEV-2026-09-21-066-focused-network-qa-cleanup-evidence.md) | [R7B](../work-items/R7B-2026-09-21-managed-work-egress.md) | 网络 QA 清理器已支持浏览器专用运行，却只接受完整矩阵的固定 `live-results.json` 文件名 | 接受同证据根内显式、非链接且 `result=PASS` 的聚焦摘要；R7B 实际清理归零 | 已解决 |
+| [DEV-2026-09-21-065](DEV-2026-09-21-065-work-firefox-proxy-policy.md) | [R7B](../work-items/R7B-2026-09-21-managed-work-egress.md) | 现行 Work 镜像没有 Firefox SOCKS/远端 DNS 锁定配置；只绑定策略时浏览器直连并被 Guard 正确阻断 | 精确 Work 父层增加最小受管理网络层并完成隔离验收；生产绑定归 R7F | 已解决（候选未部署） |
+| [DEV-2026-09-21-064](DEV-2026-09-21-064-work-qa-launch-context.md) | [R7B](../work-items/R7B-2026-09-21-managed-work-egress.md) | 直接调用生命周期 API 后，QA 把 Launch Context URL 误当作 legacy Firefox 已完成导航，实际仍为 `about:blank` | 保持应用定义；进程就绪后用本机 BiDi 有界等待并显式导航；第六轮通过 | 已解决 |
+| [DEV-2026-09-21-063](DEV-2026-09-21-063-work-qa-firefox-argument.md) | [R7B](../work-items/R7B-2026-09-21-managed-work-egress.md) | R7B QA 未识别 Firefox 两种调试参数形式，且 root 无权读取普通用户进程环境时跳过整个进程 | 兼容参数形式；按进程 UID 验证 Wayland 环境/资源；第六轮与清理通过 | 已解决 |
+| [DEV-2026-09-20-061](DEV-2026-09-20-061-work-egress-unobserved.md) | [R7-DESIGN](../work-items/R7-DESIGN-2026-09-20-browser-workspace.md) / [R7A](../work-items/R7A-2026-09-21-work-egress-diagnosis.md) / [R7B](../work-items/R7B-2026-09-21-managed-work-egress.md) | 用户反馈 Work 无公网；无受管理策略/路由且旧镜像也缺少 Relay 锁定，healthy 未覆盖公网 | R7F 已部署，Work 新代次 DIRECT healthy、Worker HTTPS 与有效 DNS 拒绝通过；Mac 公网页面及当前组合独立重建/三类存储/实际回退通过；生产原 Home 正常重建/文件一致性与用户页面确认已补齐，原数据项不适用；完整客户端矩阵仍待验收 | 部分处理 |
+| [DEV-2026-09-20-062](DEV-2026-09-20-062-network-apply-implicit-stop.md) | [R7-DESIGN](../work-items/R7-DESIGN-2026-09-20-browser-workspace.md) / [R7C](../work-items/R7C-2026-09-21-network-profile-catalog.md) | 规格要求运行中拒绝网络应用，但 emptyRuntime 实际调用 Stop；现有测试仅覆盖 foreign Session | 改为只读空闲门槛并在整个绑定变更窗口持生命周期锁；运行中零 Stop/append/patch 回归及全量 race 通过 | 已解决（候选未部署） |
+| [DEV-2026-09-20-060](DEV-2026-09-20-060-ui-deployment-journal-time.md) | [R6H](../work-items/R6H-2026-09-20-management-ui-deployment.md) | Tab UI 发布的日志采集时间格式被 journalctl 拒绝，健康/绑定通过后仍触发自动回退 | 修复 UTC 时间格式，保留首轮与精确回退证据；attempt-2 全部检查通过，Tab 第二版已上线 | 已解决 |
+| [DEV-2026-09-20-058](DEV-2026-09-20-058-r4b-live-check-overlay-drift.md) | [R6F](../work-items/R6F-2026-09-19-release-combination.md) | R4B 只读生产检查器仍绑定历史控制器镜像；R6F overlay 已合法替换该镜像，检查器在镜像比对处拒绝 | 保留 R4B 检查器的严格历史范围；以当前 overlay 的明确手工 health/生命周期/回退/客户端证据完成 R6F，不伪造旧检查器通过 | 已解决（版本边界） |
+| [DEV-2026-09-20-059](DEV-2026-09-20-059-custom-profile-policy-binding.md) | [R6F](../work-items/R6F-2026-09-19-release-combination.md) | 新建自定义 Profile 复用 Personal 网络策略，控制器按 Profile/Application/Home 绑定返回 HTTP 422，固定入口显示 502；失败时资源归零 | 已追加独立策略并通过服务器及 Mac/Trilium 验收；Profile 随后资源归零、归档删除，应用/授权/secret 清理完成 | 已解决 |
+| [DEV-2026-09-20-057](DEV-2026-09-20-057-fixed-runtime-backup-evidence.md) | [R6F](../work-items/R6F-2026-09-19-release-combination.md) | 当前 Work 已固定并验收兼容镜像，但应用定义没有 Camoufox 环境 artifact/acceptance 字段；新格式备份会安全拒绝，旧格式又不允许当前 Store/账号/Session | 保留两种既有路径，增加显式固定运行证据模式；118 项回归及 Work 5,174 条目创建/verify/隔离 restore 通过，未激活恢复副本 | 已解决（工具/生产备份阶段） |
+| [DEV-2026-09-20-056](DEV-2026-09-20-056-control-cli-error-classification.md) | [R6F](../work-items/R6F-2026-09-19-release-combination.md) | 私有 control CLI 将 `resume` 的正常拒绝统一输出为 `profile adapter stopped`，无法区分 stopped 与 dormant，且误导服务运行态判断 | 增加稳定 control 错误码和独立命令失败日志，保留最终脱敏与旧 reply 兼容；固定 Go test/vet/gofmt/race 及新 CLI 对旧生产 reply 的 `PROFILE_NOT_DORMANT` 拒绝通过 | 已解决（候选，未部署） |
 | [DEV-2026-09-19-055](DEV-2026-09-19-055-encrypted-backup-account-version.md) | [R6F](../work-items/R6F-2026-09-19-release-combination.md) | `secure-backup.py` 只接受 version 1 账号表，当前 R6F 生产账号表已含 `role` 的 version 2 | 校验器接受 version 1/2 并按现行 admin/user 授权规则验证；固定 checks 回归及当前控制根 age 加密/verify/离线 restore 通过，真实生产 Home 备份仍需单独维护窗口 | 已解决（工具/组合 QA） |
 | [DEV-2026-09-19-053](DEV-2026-09-19-053-management-production-gating.md) | [R6F](../work-items/R6F-2026-09-19-release-combination.md) | 现有账号缺少不更换密码的角色升级 CLI；未配置控制器管理后端时页面仍显示新增/删除入口 | 无损角色修改与页面/写入口能力门控已回归并部署；生产安全子集启用，完整创建/删除/代理/指纹保持关闭 | 已解决（部分生产启用） |
 | [DEV-2026-09-19-054](DEV-2026-09-19-054-r6f-combination-runner-scope.md) | [R6F](../work-items/R6F-2026-09-19-release-combination.md) | 现有组合运行器硬编码旧 R5E QA 根、资源注册表和控制器身份，不能直接验证当前 R6F/r9 组合 | 按用户授权改为现有环境受控手工组合；overlay 已安装并完成固化/自定义指纹、代理探测和清理，自动运行器改造列为后续独立范围 | 已解决（现有环境范围） |
@@ -67,3 +139,43 @@
 已登记的偏差不表示已经完成全部代码与设计核对。计划内尚未实现的能力通常记录为工作项缺口；历史证据与现行行为差异先核对版本和适用范围。
 
 记录只保存脱敏事实、代码/规格链接和证据路径，不包含真实网页内容、凭据、私钥或授权 URL。解决后保留原问题与证据，补充最终处理，不覆盖历史失败。
+
+| [DEV-086 容量准入竞争](DEV-2026-10-01-086-capacity-admission-race.md) | [R6I](../work-items/R6I-2026-10-01-capacity.md) | 跨 Profile 检查/占用不原子 | 全局短准入锁、竞争回归与真实 HTTP 验证 | 已解决（未部署） |
+
+- [DEV-089 Chromix 候选继承旧引擎入口](DEV-2026-10-01-089-chromix-inherited-entrypoint.md)：已解决，专用入口修复后真实 Worker/管理创建通过。
+
+- [DEV-090 Chromix 包目录权限](DEV-2026-10-01-090-chromix-package-directory-mode.md)：已解决，软件目录 0755 修复后非 root 浏览器与持久化验收通过。
+
+- [DEV-091 部署就绪检查 Host](DEV-2026-10-01-091-deployment-readiness-host.md)：已解决；首次自动回退，正式 Host 修正后部署通过。
+
+- [DEV-092 创建表单不兼容组合](DEV-2026-10-01-092-create-template-combination.md)：已解决，R6U 两下拉联动、服务端显示派生与明确错误提示已验收部署；不追认原用户失败原因。
+
+- [DEV-093 Chromix CJK 配置遗漏](DEV-2026-10-01-093-chromix-cjk-fontconfig.md)：已解决；生产应用 cjk-r2，用户确认中文正常。
+
+- [DEV-094 编辑模板回显](DEV-2026-10-01-094-edit-template-selection.md)：已解决/已部署；按行级绑定选中，缺失绑定明确占位。
+
+- [DEV-095 旧 Work 显示偏好](DEV-2026-10-01-095-legacy-display-preference.md)：旧自动分辨率支持待后续；当前页面/提交明确限制固定模板。
+
+- [DEV-096 自动分辨率上限](DEV-2026-10-01-096-auto-resolution-limit.md)：已解决并部署；前后端同步实际尺寸，超大 Retina 画面与输入重验通过。
+
+- [DEV-100 有数据的模板组合窄窗口布局](DEV-2026-10-01-100-template-combination-responsive.md)：已解决并部署，有数据的六组页面检查通过。
+
+- [DEV-101 Chromix 自定义多语言](DEV-2026-10-01-101-chromix-custom-languages.md)：R6R 已解决并部署。
+
+- [DEV-102 原生 Firefox 窗口放置](DEV-2026-10-01-102-native-firefox-window-placement.md)：R6R 已解决并部署。
+
+- [DEV-103 生成器镜像标签复用](DEV-2026-10-01-103-generator-image-tag-reuse.md)：R6R 构建器修复已验收并部署。
+
+- [DEV-109 冻结执行器客户端依赖](DEV-2026-10-01-109-frozen-runner-client-cache.md)：已解决，R6S完整验收并限定部署；原失败证据保留。
+
+- [DEV-110 浏览器探针就绪](DEV-2026-10-01-110-browser-probe-readiness.md)：已解决，R6S完整验收并限定部署；原失败证据保留。
+
+- [DEV-111 Chromix缩放画布观察](DEV-2026-10-01-111-chromix-scaling-canvas-observation.md)：已解决，R6S完整验收并限定部署；原失败证据保留。
+
+- [DEV-115 UI跳转验收传输](DEV-2026-10-01-115-ui-redirect-fixture.md)：已解决；隔离回环HTTP服务完整提交/303/GET、前后导航验收通过。
+
+- [DEV-116 数字输入样式](DEV-2026-10-01-116-display-number-input-style.md)：已解决；显示模板数字输入样式补齐，三宽度高度及截图复查通过。
+
+- [DEV-121：侧栏折叠布局与键盘可达性](DEV-2026-10-02-121-workspace-sidebar-collapse.md) · R6AB已修复部署。
+
+- [DEV-122：列表管理弹窗渐进增强与焦点](DEV-2026-10-02-122-management-list-dialog.md) · R6AC已修复部署。

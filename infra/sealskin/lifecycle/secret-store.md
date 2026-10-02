@@ -1,5 +1,9 @@
 # Secret Store 与加密恢复
 
+R6AP 已补[独立机器恢复](../r6ap-remote-recovery-acceptance-2026-10-02.md)：密钥/当前账号与撤销独立输入、恢复锁和拒绝门槛、三引擎数据及回退通过；真实配置/Store/密钥依赖只离线核对，未在异机激活生产身份。
+
+2026-09-30 [服务器发布包定版](../r7f-server-release-seal-acceptance-2026-09-30.md) 已纳入最新 Work 5,938 条目恢复点、Personal 1,204 条目恢复点与历史 Work 5,195 条目恢复点及对应回执；另有当前应用/目录/策略的加密只读观察，不是同一时点在线控制状态备份。恢复工具随包保存，独立 age identity 不入包；还原到新私有目录并继续进行当前授权/撤销审查。
+
 [生命周期](README.md) · [Relay](../../../relay/README.md) · [R5B 工作项](../../../docs/work-items/R5B-2026-09-14-secret-store.md) · [安全规格](../../../docs/specs/proxy-environment/specification.md#50-secrets--proxy-credential-security)
 
 R5B 增加 FileSecretStore、Relay 代次租约和 age 加密备份。候选代码和 [独立 QA](../secret-store-acceptance-2026-09-14.md) 已通过，资源和临时密钥已清理，生产尚未使用。控制能力为 `secret_store_version: 1`，Relay 镜像必须声明 `io.browser-platform.secret-lease=1`。R5D 的组合候选已使用包含正常退出和显示认证的 r7；R2A 另补本文的旧部署加密路径，不能据此把旧生产视为已采用 Store。
@@ -10,7 +14,7 @@ R5B 增加 FileSecretStore、Relay 代次租约和 age 加密备份。候选代�
 
 每个版本用 AES-256-GCM 加密；随机 nonce、版本、Store 身份和授权元数据共同参与认证。版本不可覆盖。授权精确绑定 `owner`（SealSkin 身份）、`profile`、`home`、`app`，任一不符都拒绝。主密钥是独立目录中的 32 字节随机文件，Store metadata 只保存随机 Store ID 和密钥摘要。路径必须规范，目录/文件归执行 UID 所有，目录 `0700`、文件 `0600`；密钥/凭据文件拒绝符号链接、多重硬链接和超长输入。
 
-Store 固定在 `<SealSkin metadata>/proxy-secret-store/`，含 `store.json`、`versions/`、`revocations/` 和进程间锁。撤销 tombstone 永久禁用对应版本，不依赖主密钥解密；不要删除它来恢复旧凭据。恢复时的 `.recovery-pending` 标记拒绝解析和新增版本，直到离线合并当前撤销状态。
+Store 固定在 `<SealSkin metadata>/proxy-secret-store/`，含 `store.json`、`versions/`、`revocations/`、按需建立的 `authorizations/` 和进程间锁。撤销 tombstone 永久禁用对应版本，不依赖主密钥解密；不要删除它来恢复旧凭据。恢复时的 `.recovery-pending` 标记拒绝解析和新增版本，直到离线合并当前撤销状态。
 
 ## 配置与导入
 
@@ -54,9 +58,13 @@ POST /api/admin/profile-secrets/revoke
 
 ## 加密备份与恢复
 
+2026-09-30 [DEV-070 补证](../../../docs/deviations/DEV-2026-09-27-070-private-recovery-key-transcript-exposure.md)已完成：原 R6F age 归档中的旧 `admin` 身份在现行控制器明确返回 401，当前恢复身份与 profile-admin 返回 200。历史归档保持原内容；恢复时仍需核对现行授权和恢复身份，不能把旧授权表或旧管理员材料回放成当前信任。验证过程只在进程内使用密钥，未输出密钥或其摘要，临时解密数据已清理。
+
 [secure-backup.py](secure-backup.py) 固定使用 **age v1.2.1** 的 X25519 接收者。创建时直接 tar → age，不生成磁盘明文归档；验证/恢复先在私有 tmpfs 中完成整个 age 流的认证和所有成员/摘要检查，才创建新的恢复目录。暂存容量必须覆盖未压缩归档；当前归档上限 8 GiB，超限拒绝。必须保存独立的 age 恢复 identity。账号表校验同时接受无角色的 version 1 和带 `admin`/`user` 角色的 version 2；version 1 不得混入角色，普通入口账号必须至少有一个 Profile 授权，管理员可以没有授权。
 
 `create` 支持当前 `/config/.config/sealskin` 部署布局，先后通过 Adapter 控制 socket 核对目标 Profile 已停止、清单为空，并比较来源前后快照。维护期间应保持该 Profile 停止且不修改控制配置。包中包括 Home、Adapter 配置/journal/客户端私钥/服务公钥、固定环境产物和验收报告、Store/主密钥、控制授权与操作元数据、实际 `/config/ssl` 和管理员恢复材料；必要服务密钥缺失时拒绝。服务镜像和客户端代码仍由固定版本构建/发布材料提供，包不包含 Docker 镜像层。
+
+没有环境 artifact 字段、但已经以完整 `sha256:` 镜像部署的兼容应用，只能显式使用 `--fixed-runtime-evidence`：`--artifact` 须为把 `imageId` 和逐文件摘要绑定到该镜像的原始构建记录，`--acceptance` 须为 `status=PASS` 且把同一 Profile 的 running Worker 绑定到同一镜像的实际运行报告。标签镜像、已有环境字段、镜像漂移、缺失文件摘要或非 PASS 报告均拒绝；此模式不自动降级，不补造环境报告，归档中标记 `fixed-runtime-image/v1`。当前 Work 的适用范围与真实备份结果见 [DEV-057](../../../docs/deviations/DEV-2026-09-20-057-fixed-runtime-backup-evidence.md)。
 
 R5E 补充 `control/coherence-assets/`，并在创建和解密验证时逐项核对策略引用的环境、成功报告及可选 GeoIP 文件：路径须为控制器固定资产目录内的直接文件，摘要、私有权限与大小限制须匹配。缺失或漂移拒绝，不能通过关闭策略补救。对应 [DEV-038](../../../docs/deviations/DEV-2026-09-15-038-coherence-backup-assets.md) 的 101 项新旧备份回归已通过；[R5E](../release-combination-acceptance-2026-09-15.md) 已通过单 QA Home 的新私有根实际浏览器恢复，备份后撤销及禁用账号保持；生产 S05 仍待 R2。
 
@@ -67,6 +75,14 @@ python3 secure-backup.py create --age /private/tools/age \
   --artifact /private/environment.json --acceptance /private/acceptance.json \
   --master-key-file /private/master-key/master.key \
   --recipient "$BP_AGE_RECIPIENT" --output /private/backups/personal.age
+
+# 仅适用于上述已经验收、且应用固定完整镜像 ID 的兼容运行时：
+python3 secure-backup.py create --fixed-runtime-evidence --age /private/tools/age \
+  --config /private/adapter-config.json --profile work \
+  --storage /private/storage --sealskin-config /private/config/.config/sealskin \
+  --artifact /private/work-build.json --acceptance /private/work-live-pass.json \
+  --master-key-file /private/master-key/master.key \
+  --recipient "$BP_AGE_RECIPIENT" --output /private/backups/work.age
 
 python3 secure-backup.py verify --age /private/tools/age \
   --archive /private/backups/personal.age --identity /private/recovery/identity.txt \
@@ -132,6 +148,28 @@ python3 infra/sealskin/lifecycle/secure-backup.py create-legacy \
 
 R2B 已发现停止后的旧 Wayland Home 可能保留 `.XDG/wayland-<数字>` socket，当前修复与验收见 [DEV-039](../../../docs/deviations/DEV-2026-09-15-039-legacy-wayland-backup-socket.md)。运行时 socket 不属于浏览器持久数据；备份将只排除这个精确位置和类型，记录并复核排除清单，未知特殊类型仍拒绝。不能靠删除真实 Home 节点绕过失败。
 
-`test_secure_backup.py` 和 `test_secure_backup_legacy.py` 使用真实 age，后者覆盖旧 journal、运行快照、命令行往返和模式降级拒绝；Docker/API 清单除注明的生产只读快照外均使用夹具。`test_qa_secret_mount.py` 验证 QA 网关只允许该 Relay 对应的只读代次目录。`../checks/check-secret-store.py` 运行三协议、授权、轮换、撤销、并发及控制恢复；`../checks/check-secret-backup.py` 在全新 QA 根目录恢复服务身份、环境、凭据和 Cookie/localStorage/IndexedDB。工具与详细证据使用隔离 `runtime` 目录，公开结果只保留状态、版本和摘要。
+`test_secure_backup.py`、`test_secure_backup_coherence.py`、`test_secure_backup_legacy.py` 和 `test_secure_backup_runtime_nodes.py` 使用真实 age，覆盖冻结环境、固定运行证据、旧 journal、运行快照、命令行往返、模式降级拒绝和 Wayland 运行时节点；当前固定 checks 镜像共 118 项通过。Docker/API 清单除注明的生产只读快照外均使用夹具。`test_qa_secret_mount.py` 验证 QA 网关只允许该 Relay 对应的只读代次目录。`../checks/check-secret-store.py` 运行三协议、授权、轮换、撤销、并发及控制恢复；`../checks/check-secret-backup.py` 在全新 QA 根目录恢复服务身份、环境、凭据和 Cookie/localStorage/IndexedDB。工具与详细证据使用隔离 `runtime` 目录，公开结果只保留状态、版本和摘要。
 
 回退控制版本前，使用支持 Secret Store 的版本正常停止全部引用型 generation，确认 Relay、网络、占用和临时材料都已清理，再切换匹配的应用/策略。旧控制器不提供新租约和后台授权检查，不能接管仍在运行的 Secret Store generation。保留加密 Store、最新撤销和 journal；主机重启/断电、目标 Mac 与实际入口切换不因本项 QA 自动视为通过。
+
+## R7G 动态端点组合
+
+endpoint lease 与 credential lease 独立：前者改变新连接的上游数值地址，后者决定整个代次是否获准出站。动态刷新不能复活已撤销的 credential lease。撤销先持久化并关闭 Relay，正常清理再取得 Home 锁；与 monitor 竞争时顺序保持。三组独立实机组合见[验收](../r7g-secret-combination-acceptance-2026-09-30.md)，未部署生产，不替代真实 Home/Store 迁移。
+
+## 新版管理依赖与恢复范围（R6K）
+
+`secure-backup.py` 对配置中存在的 `profile_directory`、`environment_catalog`、`template_catalog`、`network_profile_catalog`、`legacy_network_migrations` 收集私有常规 JSON 到 `adapter/dependencies/<字段>.json`，独立 `sealskin_admin.client_private_key_file` 收集到 `adapter/admin-client-private.pem`。缺失、不安全权限或符号链接拒绝；旧配置没有对应字段时仍兼容。
+
+恢复到新目录必须显式重绑依赖，不能回退到旧源路径。旧归档保持可读，但不会自动包含这些新增成员。作业目录、目录引用的所有产物、镜像层和系统工具不递归打包，须另列恢复输入；选定 Home 归档不代表整机依赖闭包。见 [本机恢复工具](../checks/disaster-recovery.md) 和 [验收](../r6k-disaster-recovery-acceptance-2026-10-01.md)。
+
+## R6W 新建浏览器复用原凭据版本
+
+已部署的 `proxy-create-authorization.patch` 增加加密管理员接口 `POST /api/admin/environment-management/proxy-secret-authorizations`。请求只含配对原版本引用、完整 owner/profile/home/app 和创建请求摘要。授权先验证原版本密文及原 owner grant，拒绝跨 owner、撤销/恢复锁和无效引用；不返回明文。
+
+追加文件保存在 `authorizations/<SHA256([owner, profile])>.json`，使用私有文件与 Store 锁、原子排他创建/fsync。payload 绑定 Store ID、凭据版本及原密文摘要、完整 grant 和请求摘要，采用主密钥的独立 HMAC 域认证。重复原请求返回成功，改变 Home/App/版本/请求摘要拒绝，路径/权限/链接/篡改按原严格边界拒绝。原 AES-GCM 版本文件和初始 grants 不变；解析时只接受原 grants 或经过认证的精确追加授权。
+
+同版本撤销覆盖全部追加授权，沿用“失效租约 → 阻断 Relay → 正常停止受影响代次并清理资源”的原行为，保留 Home；不是仅隐藏下拉选项。普通代理目录撤销仍要求浏览器引用数为零。
+
+加密备份包含整个 Store，恢复保留 authorizations；恢复锁继续生效，激活合并备份之后的撤销。R6W 已验证实际 age 往返、授权解析、跨身份拒绝及新增撤销合并。旧控制器不认识追加授权，存在追加授权后不可仅回退控制器镜像；必须保留支持该格式的版本，或先按正常流程停止/处置相关绑定，禁止删除授权文件或墓碑强行回退。
+
+见 [R6W 验收](../r6w-existing-proxy-acceptance-2026-10-01.md)。全量 `prepare.py` 仍包含其他尚未发布能力；本项生产使用 [prepare-proxy-reuse.py](prepare-proxy-reuse.py)，从精确 R6J1 镜像只替换两个控制器文件。

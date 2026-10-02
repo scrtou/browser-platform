@@ -32,6 +32,9 @@ INSPECT_COMMAND = ["python3", "-B", "/usr/local/lib/browser-platform/network-gua
                    "--network-config", "/run/config/network.json", "--inspect", "--inspect-output"]
 OBSERVATION_TARGET = "/run/browser-platform-observation"
 DISPLAY_TARGET = "/run/browser-platform-session-input"
+DYNAMIC_TARGET = "/run/browser-platform-network"
+DYNAMIC_COMMAND = ["python3", "-B", "/usr/local/lib/browser-platform/network-guard.py",
+                   "--network-config", DYNAMIC_TARGET + "/relay-network.json", "--apply-only"]
 
 
 def display_bind_allowed(allowed, labels, source, destination, readonly):
@@ -376,6 +379,108 @@ class Handler(base.Handler):
                 not any(value.get(key) for key in ("OpenStdin", "OpenStdout", "OpenStderr")) and
                 self.coherence_command(value.get("ContainerID", ""), [process.get("entrypoint"), *process.get("arguments", [])], process.get("user")))
 
+    def dynamic_command(self, instance, command, user):
+        if command != DYNAMIC_COMMAND or user != "0:0" or not self.owned(instance):
+            return False
+        value = self.inspect("containers", instance)
+        labels = value.get("Config", {}).get("Labels") or {}
+        allowed = json.loads(self.server.allow.read_text())
+        if labels.get(PREFIX + "role") != "relay" or value.get("Image") not in allowed.get("dynamic_images", []):
+            return False
+        try:
+            identity = {key: labels[PREFIX + key] for key in ("scope", "owner", "home", "home_hash", "app", "profile", "operation")}
+            root = self.server.root / "config/.config/sealskin/profile-network-runtime"
+            path = root / (identity["home_hash"] + ".json")
+            if path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o077:
+                return False
+            record = json.loads(path.read_text())
+            directory = root / (identity["home_hash"] + "-" + identity["operation"])
+            mounts = [m for m in value.get("Mounts", []) if m.get("Destination") == DYNAMIC_TARGET]
+            return (all(record["identity"].get(k) == v for k, v in identity.items())
+                    and record["identity"].get("home_source") == str(self.server.root / "storage/network-qa" / identity["home"])
+                    and record["allocation"]["relay_id"] == instance
+                    and record["allocation"].get("dynamic_upstream_version") == 1
+                    and len(mounts) == 1 and mounts[0].get("Type") == "bind"
+                    and mounts[0].get("Source") == str(directory) and mounts[0].get("RW") is False)
+        except (KeyError, OSError, ValueError, TypeError):
+            return False
+
+    def dynamic_exec(self, identifier):
+        status, _, raw = base.upstream("GET", "/exec/" + identifier + "/json")
+        if status != 200:
+            return False
+        value = json.loads(raw)
+        process = value.get("ProcessConfig") or {}
+        return (not process.get("privileged") and not process.get("tty") and not value.get("OpenStdin")
+                and value.get("OpenStdout") is True and value.get("OpenStderr") is True
+                and self.dynamic_command(value.get("ContainerID", ""),
+                    [process.get("entrypoint"), *process.get("arguments", [])], process.get("user")))
+
+    def hold_dynamic(self, instance, stage):
+        """Bounded QA crash point; never execute a released stale request."""
+        policy = json.loads(self.server.policy.read_text())
+        if (policy.get("mode") != "dynamic-hold" or policy.get("instance") != instance
+                or policy.get("stage") != stage or not self.dynamic_command(instance, DYNAMIC_COMMAND, "0:0")):
+            return False
+        container = self.inspect("containers", instance)
+        mount = next(m for m in container["Mounts"] if m.get("Destination") == DYNAMIC_TARGET)
+        config = json.loads((Path(mount["Source"]) / "relay-network.json").read_text())
+        if config.get("upstream_ipv4") != policy.get("addresses"):
+            return False
+        marker = self.server.root / "dynamic-held.json"
+        temporary = marker.with_suffix(".tmp")
+        with temporary.open("w") as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            json.dump({"instance": instance, "stage": stage, "at": time.time()}, stream)
+        os.replace(temporary, marker)
+        self.event("dynamic-hold", stage, instance)
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if json.loads(self.server.policy.read_text()) != policy:
+                break
+            time.sleep(.05)
+        return True
+
+    def start_dynamic_exec(self, identifier, body, instance=""):
+        # Docker's attached exec uses an HTTP upgrade, including for output
+        # only commands. The ordinary buffered HTTP helper discards that raw
+        # stream. Forward bounded output only, with no bidirectional tunnel.
+        connection = base.UnixConnection("docker", timeout=35)
+        try:
+            connection.connect()
+            request = ("POST /exec/" + identifier + "/start HTTP/1.1\r\nHost: docker\r\n"
+                       "Connection: Upgrade\r\nUpgrade: tcp\r\nContent-Type: application/json\r\n"
+                       "Content-Length: " + str(len(body)) + "\r\n\r\n").encode() + body
+            connection.sock.sendall(request)
+            header = b""
+            while not header.endswith(b"\r\n\r\n") and len(header) <= 4096:
+                chunk = connection.sock.recv(1)
+                if not chunk:
+                    break
+                header += chunk
+            if not header.startswith(b"HTTP/1.1 101 ") or not header.endswith(b"\r\n\r\n"):
+                raise ValueError("fixed exec upgrade failed")
+            self.event("forwarded", "dynamic-start")
+            self.close_connection = True
+            # Flush the upgrade before waiting for command output. Docker SDK
+            # switches from HTTP parsing to the raw socket at this boundary.
+            self.wfile.write(header)
+            self.wfile.flush()
+            count = 0
+            while True:
+                chunk = connection.sock.recv(4097 - count)
+                if not chunk:
+                    break
+                count += len(chunk)
+                if count > 4096:
+                    raise ValueError("fixed exec output limit")
+                if instance and self.hold_dynamic(instance, "result"):
+                    return
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        finally:
+            connection.close()
+
     def handle_request(self):
         try:
             if self.headers.get("Transfer-Encoding"):
@@ -447,16 +552,28 @@ class Handler(base.Handler):
                     instance = path.split("/")[2]
                     shutdown = self.shutdown_worker(instance) and data.get("Cmd") == SHUTDOWN_COMMAND and data.get("User") == "abc"
                     coherence = self.coherence_command(instance, data.get("Cmd"), data.get("User"))
-                    if (self.command != "POST" or not (shutdown or coherence)
-                            or any(data.get(key) for key in ("Privileged", "Tty", "AttachStdin", "AttachStdout", "AttachStderr", "Env", "WorkingDir"))
+                    dynamic = self.dynamic_command(instance, data.get("Cmd"), data.get("User"))
+                    output_allowed = (data.get("AttachStdout") is True and data.get("AttachStderr") is True) if dynamic else not (data.get("AttachStdout") or data.get("AttachStderr"))
+                    if (self.command != "POST" or not (shutdown or coherence or dynamic) or not output_allowed
+                            or any(data.get(key) for key in ("Privileged", "Tty", "AttachStdin", "Env", "WorkingDir"))
                             or set(data) - {"Cmd", "User", "Privileged", "Tty", "AttachStdin", "AttachStdout", "AttachStderr", "Env", "WorkingDir", "Container"}):
                         return self.error(403, "QA only permits the fixed detached browser shutdown command")
-                    action = "coherence-create" if coherence else "browser-shutdown-create"
+                    if dynamic and policy.get("mode") == "dynamic-apply-error" and policy.get("instance") == instance:
+                        self.event("dynamic-apply-error", "dynamic-create", instance)
+                        return self.error(500, "Injected QA dynamic rule update failure")
+                    if dynamic and self.hold_dynamic(instance, "create"):
+                        return self.error(503, "Interrupted QA dynamic update")
+                    action = "dynamic-create" if dynamic else "coherence-create" if coherence else "browser-shutdown-create"
                 elif re.fullmatch(r"/exec/[a-f0-9]{64}/start", path):
                     identifier = path.split("/")[2]
-                    if self.command != "POST" or data != {"Tty": False, "Detach": True} or not (self.shutdown_exec(identifier) or self.coherence_exec(identifier)):
+                    dynamic = self.dynamic_exec(identifier)
+                    permitted = (data == {"Tty": False, "Detach": False}) if dynamic else (data == {"Tty": False, "Detach": True} and (self.shutdown_exec(identifier) or self.coherence_exec(identifier)))
+                    if self.command != "POST" or not permitted:
                         return self.error(403, "QA shutdown exec is outside approved scope")
-                    action = "fixed-exec-start"
+                    if dynamic:
+                        _, _, raw = base.upstream("GET", "/exec/" + identifier + "/json")
+                        return self.start_dynamic_exec(identifier, body, json.loads(raw)["ContainerID"])
+                    action = "dynamic-start" if dynamic else "fixed-exec-start"
                 else:
                     match = re.fullmatch(
                         r"/containers/([a-f0-9]{64})(?:/(start|stop|pause|unpause|wait|kill))?",

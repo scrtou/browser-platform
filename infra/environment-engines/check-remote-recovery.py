@@ -21,7 +21,9 @@ import uuid
 HERE = Path(__file__).resolve().parent
 PROJECT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
-import acceptance as native
+native_spec = importlib.util.spec_from_file_location("remote_native_acceptance", HERE / "acceptance.py")
+native = importlib.util.module_from_spec(native_spec)
+native_spec.loader.exec_module(native)
 
 
 def extract(archive, root):

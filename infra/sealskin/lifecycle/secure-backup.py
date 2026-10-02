@@ -304,6 +304,58 @@ def validate_source_coherence(entries, paths):
         private_file(paths[name])
 
 
+def validate_fixed_runtime_evidence(artifact, acceptance, context, profile, *, archived=False):
+    """Bind an exact-image application to existing build and live evidence."""
+    image_id = context.get("image_id", "")
+    if (not re.fullmatch(r"sha256:[a-f0-9]{64}", image_id)
+            or context.get("image") != image_id
+            or context.get("environment_id")):
+        fail("BACKUP_FIXED_RUNTIME_UNSUPPORTED")
+    try:
+        if hasattr(artifact, "lstat"):
+            private_file(artifact)
+            private_file(acceptance)
+        artifact_raw = artifact.read_bytes() if hasattr(artifact, "read_bytes") else artifact.read()
+        acceptance_raw = acceptance.read_bytes() if hasattr(acceptance, "read_bytes") else acceptance.read()
+        if len(artifact_raw) > 1 << 20 or len(acceptance_raw) > 1 << 20:
+            fail("BACKUP_FIXED_RUNTIME_EVIDENCE_INVALID")
+        artifact_sha256 = hashlib.sha256(artifact_raw).hexdigest()
+        acceptance_sha256 = hashlib.sha256(acceptance_raw).hexdigest()
+        if archived:
+            if (context.get("environment_evidence") != "fixed-runtime-image/v1"
+                    or context.get("artifact_sha256") != artifact_sha256
+                    or context.get("acceptance_sha256") != acceptance_sha256):
+                fail("BACKUP_FIXED_RUNTIME_EVIDENCE_INVALID")
+        elif (context.get("environment_evidence") is not None
+              or context.get("artifact_sha256") or context.get("acceptance_sha256")):
+            fail("BACKUP_FIXED_RUNTIME_UNSUPPORTED")
+        build = json.loads(artifact_raw)
+        report = json.loads(acceptance_raw)
+        files = build.get("files")
+        runtime = report["containers"][profile]
+        state = report["profiles"][profile]
+        if (build.get("imageId") != image_id
+                or not re.fullmatch(r"[a-f0-9]{64}", build.get("inputSHA256", ""))
+                or not isinstance(files, dict) or not 1 <= len(files) <= 128
+                or any(not isinstance(name, str) or not 1 <= len(name) <= 256
+                       or PurePosixPath(name).is_absolute() or ".." in PurePosixPath(name).parts
+                       or not re.fullmatch(r"[a-f0-9]{64}", digest or "")
+                       for name, digest in files.items())
+                or ("baseImageId" in build
+                    and not re.fullmatch(r"sha256:[a-f0-9]{64}", build["baseImageId"]))
+                or report.get("status") != "PASS"
+                or runtime.get("worker_image") != image_id or runtime.get("all_running") is not True
+                or state.get("status") != "running" or state.get("records") != 1
+                or state.get("workers") != 1 or state.get("orphans") != 0):
+            fail("BACKUP_FIXED_RUNTIME_EVIDENCE_INVALID")
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        fail("BACKUP_FIXED_RUNTIME_EVIDENCE_INVALID")
+    result = dict(context)
+    result.update({"environment_evidence": "fixed-runtime-image/v1",
+                   "artifact_sha256": artifact_sha256, "acceptance_sha256": acceptance_sha256})
+    return result
+
+
 def collect_sources(args):
     if args.sealskin_config.name != "sealskin" or args.sealskin_config.parent.name != ".config":
         fail("BACKUP_CONTROL_LAYOUT_UNSUPPORTED")
@@ -319,13 +371,17 @@ def collect_sources(args):
     if home.is_symlink() or not home.is_dir() or home.resolve() != home:
         fail("BACKUP_HOME_UNSAFE")
     context = home_backup.app_context(args.sealskin_config, definition["application_id"])
-    if (sha(args.artifact) != context["artifact_sha256"] or sha(args.acceptance) != context["acceptance_sha256"]):
-        fail("BACKUP_ENVIRONMENT_MISMATCH")
-    report = json.loads(args.acceptance.read_bytes())
-    if (report.get("status") != "pass" or report.get("phase") != "all"
-            or report.get("artifactSHA256") != context["artifact_sha256"]
-            or report.get("runtimeImageDigest") != context["image_id"]):
-        fail("BACKUP_ACCEPTANCE_MISMATCH")
+    if getattr(args, "fixed_runtime_evidence", False):
+        context = validate_fixed_runtime_evidence(args.artifact, args.acceptance, context, args.profile)
+    else:
+        if (sha(args.artifact) != context["artifact_sha256"]
+                or sha(args.acceptance) != context["acceptance_sha256"]):
+            fail("BACKUP_ENVIRONMENT_MISMATCH")
+        report = json.loads(args.acceptance.read_bytes())
+        if (report.get("status") != "pass" or report.get("phase") != "all"
+                or report.get("artifactSHA256") != context["artifact_sha256"]
+                or report.get("runtimeImageDigest") != context["image_id"]):
+            fail("BACKUP_ACCEPTANCE_MISMATCH")
     private_file(args.master_key_file)
     store = args.sealskin_config / "proxy-secret-store"
     private_directory(store)
@@ -341,6 +397,39 @@ def collect_sources(args):
         "environment/acceptance.json": args.acceptance, "key-material/secret-store.key": args.master_key_file,
         "control/proxy-secret-store": store}
     return config, before, context, collect_control_sources(args, config, sources)
+
+
+def collect_adapter_dependencies(config, base):
+    """Archive configured management state; restoration must explicitly rebind paths.
+
+    This is not a recursive deployment-asset closure: catalog-mounted artifacts,
+    images and external tools remain separately verified deployment inputs.
+    """
+    result = {}
+    for field in ("profile_directory", "environment_catalog", "template_catalog",
+                  "network_profile_catalog", "legacy_network_migrations"):
+        value = config.get(field)
+        if not value:
+            continue
+        if not isinstance(value, str):
+            fail("BACKUP_ADAPTER_DEPENDENCY_INVALID")
+        path = Path(value)
+        path = path if path.is_absolute() else base / path
+        if not path.is_file() or path.is_symlink():
+            fail("BACKUP_ADAPTER_DEPENDENCY_MISSING")
+        private_file(path)
+        result["adapter/dependencies/" + field + ".json"] = path
+    admin = config.get("sealskin_admin")
+    if admin is not None:
+        if not isinstance(admin, dict) or not isinstance(admin.get("client_private_key_file"), str):
+            fail("BACKUP_ADAPTER_DEPENDENCY_INVALID")
+        path = Path(admin["client_private_key_file"])
+        path = path if path.is_absolute() else base / path
+        if not path.is_file() or path.is_symlink():
+            fail("BACKUP_ADAPTER_DEPENDENCY_MISSING")
+        private_file(path)
+        result["adapter/admin-client-private.pem"] = path
+    return result
 
 
 def collect_control_sources(args, config, sources, *, require_store=True):
@@ -361,6 +450,7 @@ def collect_control_sources(args, config, sources, *, require_store=True):
             elif not path.is_file() or path.is_symlink():
                 fail("BACKUP_ACCESS_CA_MISSING")
             sources["adapter/" + leaf] = path
+    sources.update(collect_adapter_dependencies(config, args.config.parent))
     required = ["installed_apps.yml", "profile-network-policies.json", "keys"]
     if require_store:
         required.append("profile-secret-store.json")
@@ -819,6 +909,13 @@ def decrypted(args):
                 if (manifest["entries"]["environment/artifact.json"]["sha256"] != context.get("artifact_sha256")
                         or manifest["entries"]["environment/acceptance.json"]["sha256"] != context.get("acceptance_sha256")):
                     fail("BACKUP_ENVIRONMENT_MISMATCH")
+                if context.get("environment_evidence") not in (None, "fixed-runtime-image/v1"):
+                    fail("BACKUP_ENVIRONMENT_MISMATCH")
+                if context.get("environment_evidence") == "fixed-runtime-image/v1":
+                    validate_fixed_runtime_evidence(
+                        archive.extractfile(members["environment/artifact.json"]),
+                        archive.extractfile(members["environment/acceptance.json"]),
+                        context, manifest["profile"], archived=True)
                 store_metadata = json.load(archive.extractfile(members["control/proxy-secret-store/store.json"]))
                 key = manifest["entries"]["key-material/secret-store.key"]
                 if key["size"] != 32 or key["sha256"] != store_metadata.get("key_sha256"):
@@ -1002,6 +1099,8 @@ def main():
     create_parser.add_argument("--admin-recovery-file", type=Path,
                                help="Private admin recovery JSON if removed from the controller after provisioning")
     create_parser.add_argument("--recipient", required=True, help="age X25519 public recipient, never a private identity")
+    create_parser.add_argument("--fixed-runtime-evidence", action="store_true",
+                               help="bind an exact-image application to existing build and live PASS evidence")
     create_parser.add_argument("--age", type=Path, default=Path("age"))
     create_parser.set_defaults(run=create)
     snapshot_parser = commands.add_parser("snapshot-legacy", help="Read-only inventory before stopping an old Worker")

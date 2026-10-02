@@ -105,21 +105,11 @@ print(json.dumps({'wayland':bool(env.get(b'WAYLAND_DISPLAY')),
 
 
 def raw_bypass(network, worker: str) -> dict[str, bool]:
-    source = r'''import json,socket
-targets=[('public_tls','1.1.1.1',443,socket.SOCK_STREAM),('docker_dns','127.0.0.11',53,socket.SOCK_DGRAM),
-         ('public_dns','1.1.1.1',53,socket.SOCK_DGRAM),('metadata','169.254.169.254',80,socket.SOCK_STREAM)]
-out={}
-for name,host,port,kind in targets:
- s=socket.socket(socket.AF_INET,kind);s.settimeout(.6)
- try:
-  s.connect((host,port));s.send(b'\0' if kind==socket.SOCK_DGRAM else b'GET / HTTP/1.0\r\n\r\n')
-  if kind==socket.SOCK_DGRAM:s.recv(16)
-  out[name]=True
- except OSError:out[name]=False
- finally:s.close()
-print(json.dumps(out))
-'''
-    return json.loads(network.docker("exec", worker, "python3", "-c", source).stdout)
+    source = Path(__file__).with_name("worker-bypass.py").read_text()
+    outcomes = json.loads(network.docker("exec", worker, "python3", "-c", source).stdout)
+    if any(not value["blocked"] and value["outcome"] != "connected_or_replied" for value in outcomes.values()):
+        raise RuntimeError("Worker bypass rejection is unconfirmed")
+    return {name: not value["blocked"] for name, value in outcomes.items()}
 
 
 def main() -> None:

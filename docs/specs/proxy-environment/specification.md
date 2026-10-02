@@ -1,8 +1,12 @@
 # 代理与浏览器环境规格
 
+2026-10-02 S05 增量：[R6AP](../../../infra/sealskin/r6ap-remote-recovery-acceptance-2026-10-02.md)已补独立机器镜像冷导入、三引擎合成存储/权限/回退及完整材料核对；真实生产归档仍按各自时点，不外推为当前整机一致性恢复。
+
 [文档导航](../../README.md) · [当前架构](../../design.md) · [开发计划](../../roadmap.md) · [验收索引](../../acceptance/README.md)
 
 本页从原设计提取，保留 **45–50 节**及 **P / E / C / N / H / S** 验收编号，便于追踪既有引用。实体、API、健康系统与多协议能力均是目标契约；配套 Go / SQL / JSON 是规格示例，不是生产配置或已实现接口。部署事实统一见 [开发进度](../../progress.md)，工程实现见各组件 README。
+
+当前状态（2026-10-01）：R6S Adapter与R6J1控制器已部署，R5B/入口鉴权和受管DIRECT等已由后续组合采用；下列注明日期的“未部署/未切换”属于当时记录。逐项39个编号的当前代码、证据版本、部署范围和未完成条件见[R6T审计](../../../infra/sealskin/r6t-server-plan-audit-2026-10-01.md)，不把历史候选范围扩成全部生产验收。
 
 | 章节 | 内容 |
 | --- | --- |
@@ -200,6 +204,8 @@ Camoufox 的 GeoIP 功能可以从 IP 生成位置与语言相关配置，因此
 
 首版固定远程显示尺寸，Trilium/Web 客户端将完整画面映射到当前视区并同步映射输入层；不同比例下允许非等比缩放，但不裁切远端桌面。客户端窗口变化不应静默改变已冻结的远程 screen/DPR。动态分辨率作为后续独立能力，需重新定义可变字段及验收。
 
+R6N 契约（Chromix 已部署）：用户主动选择独立自动分辨率环境后，screen/availScreen 和窗口尺寸成为可变运行观测；DPR 固定 1，X11 虚拟屏幕上限 3840×2160，locale/timezone/持久种子仍固定。目录使用 screen=auto@1、scaling=auto，禁止与固定屏幕产物混用；当前候选仅 Chromix，Camoufox 未验收。模式由模板绑定保存到 Profile resolution_mode，切换需要停止后应用，不通过运行中的 CSS 显示偏好改变环境。自动模式使用显式种子/标量配置和 native GPU 策略，需独立验收，不沿用固定环境指纹报告。
+
 R4B 目标客户端要求默认浏览器铺满远程桌面。窗口尺寸与位置通过新的环境修订冻结，并在正常桌面核对原生窗口和页面 outer/inner；保留原生成记录与设备 seeds。修改窗口后须重新执行产物验收，不能只把窗口管理器设为最大化而沿用不匹配的旧报告，见 [DEV-041](../../deviations/DEV-2026-09-15-041-camoufox-window-size.md)。
 
 页面上的 screen、viewport、outer/inner window 和 DPR 分别观测，不能混为一个尺寸。locale、Accept-Language、Intl timezone 也分别验证。Camoufox 配置可能影响缓存、导航和界面行为，Worker 验收仍必须包含后退、前进、标签页、中文输入、剪贴板和会话恢复。
@@ -349,9 +355,9 @@ Worker 不得对外直连 UDP/TCP 53、853，也不得通过绕过代理的 DoH 
 
 特别验证 Docker 内置解析器：只修改 `/etc/resolv.conf` 或阻止容器外 UDP 53，不能据此认定阻止了 `127.0.0.11` 的转发。实现必须禁用/限制其外部递归或在正确网络命名空间阻断绕过；使用随机测试域名与受控权威 DNS 日志验证。
 
-连接上游所需的引导解析单独记录：控制器在分配时解析主机名，将地址集合和选中的 IPv4 固定在 generation 占用及 Relay 配置中；`proxy_required` Relay 自身无 DNS 权限。现用代次不热更新端点，下一代次重新解析。HTTPS 上游连接按原始主机名校验证书，禁止临时放开全部 Internet。
+连接上游所需的引导解析单独记录：控制器在分配时解析主机名，将地址集合和选中的 IPv4 固定在 generation 占用及 Relay 配置中；`proxy_required` Relay 自身无 DNS 权限。默认静态代次不热更新端点，下一代次重新解析。R7G 的显式动态域名模式是受能力标签保护的例外：控制器按批准 TTL 重新解析，把候选地址先加入 Guard 的有界过渡集合，再以 Relay 内 `PROXY_OK` 探测确认并原子写入递增 revision 的 endpoint lease，随后只保留新地址。已有 TCP 连接不迁移；DNS、预检、探测、规则或 lease 失败均保留旧地址或停止 Relay，不能直连或放宽默认拒绝。HTTPS 上游连接按原始主机名校验证书，禁止临时放开全部 Internet。
 
-R5C2 候选使用成对的 `bootstrap_resolver_id` / `bootstrap_resolver_ip` 固定批准数值 IPv4:53，不读系统 resolver/hosts，也不回退。A/CNAME、完整 IPv4 回答、UDP 截断后的同端点 TCP 共用 5 秒预算，最多八次 CNAME；代理端点可以位于私网，保持既有端点 ACL。数值上游绕过 DNS。新的回答、各记录接收时间与 TTL 绑定 Home、operation 和策略 SHA，allocation 保存观测及配置摘要；恢复/重接核对原端点、配置及只读挂载。TTL 到期不释放占用或触发新解析。空字段保持旧 SHA 和 `legacy_system` 路径，无 DNS 证据的旧代次不伪造 TTL，均不能算批准解析器验收。具体模型与构建依赖见 [引导 DNS](../../../infra/sealskin/lifecycle/bootstrap-dns.md)。公开委派、实际递归来源、缓存到期及三个实际路径轮换是独立验收条件；R5C2 已在标准 Unbound 与受控公网端点通过，生产尚未采用。公共前端可能有多个缓存期限，不能把一次回答推广为整个服务保证。
+R5C2 候选使用成对的 `bootstrap_resolver_id` / `bootstrap_resolver_ip` 固定批准数值 IPv4:53，不读系统 resolver/hosts，也不回退。A/CNAME、完整 IPv4 回答、UDP 截断后的同端点 TCP 共用 5 秒预算，最多八次 CNAME；代理端点可以位于私网，保持既有端点 ACL。数值上游绕过 DNS。新的回答、各记录接收时间与 TTL 绑定 Home、operation 和策略 SHA，allocation 保存观测及配置摘要；恢复/重接核对原端点、配置、endpoint lease 及只读挂载。静态模式的 TTL 到期不释放占用或触发新解析；动态模式只在代次 allocation、镜像标签、lease ID/revision 和 Guard 摘要均有效时刷新。空字段保持旧 SHA 和 `legacy_system` 路径，无 DNS 证据的旧代次不伪造 TTL，均不能算批准解析器验收。具体模型与构建依赖见 [引导 DNS](../../../infra/sealskin/lifecycle/bootstrap-dns.md)。公开委派、实际递归来源、缓存到期及三个实际路径轮换是独立验收条件；R5C2 已在标准 Unbound 与受控公网端点通过，生产尚未采用。公共前端可能有多个缓存期限，不能把一次回答推广为整个服务保证。
 
 DIRECT 使用 `approved_resolver`，列出 `approvedResolverIds` 并验证实际解析路径。代理 DNS 与引导 DNS 不应混合报告成一个无证据的 “DNS OK”。
 
@@ -461,7 +467,7 @@ UI 中绿色状态只代表被声明且有新鲜证据的检查通过。未运�
 
 规划中的 MVP 默认 `disconnected` 且 900 秒；原设计的 Idle Manager 和 M6 验收据此具体化。当前实现（2026-09-13）：Adapter 的 `idle_policy`（每 Profile 可选，默认关闭）以 SealSkin 代理持有的已认证显示连接数计时，重连取消，到期前强制重新观测，再经已验证的 `stop` 释放；`input_idle` 被拒绝。验收见 [生命周期保护验收](../../../infra/sealskin/lifecycle-protection-acceptance-2026-09-13.md)。若选择 `input_idle`，必须补上真实输入事件采集后再开启，不能假定连接存活就等于用户在使用。超时从最后一个显示连接断开起算，期间重新连接取消回收；测试 60 秒超时不额外叠加隐藏宽限。
 
-资源门槛独立于 idle：全局 `max_active_sessions`、并发启动上限、最低可用磁盘，以及 Profile 的 CPU/内存/PID/共享内存限制，在实例创建前检查。示例资源数值仅是初始约束，不是容量性能结论。当前实现：Adapter `limits`（活动 Profile 数、并发启动、最低可用磁盘）在写入任何占用前拒绝；容器级 CPU/内存/PID 限制由应用定义的 `docker_overrides` 设置，生产 Firefox 应用尚未设置，实测基线见验收记录。
+资源门槛独立于 idle：全局 `max_active_sessions`、并发启动上限、最低可用磁盘，以及 Profile 的 CPU/内存/PID/共享内存限制，在实例创建前检查。示例资源数值仅是初始约束，不是容量性能结论。当前实现：Adapter `limits`（活动 Profile 数、并发启动、最低可用磁盘）在写入任何占用前拒绝；2026-10-01 候选将跨 Profile 的容量检查、占用登记及启动计数纳入同一短临界区，远程启动不持锁，避免并发超限（未部署）；容器级 CPU/内存/PID 限制由应用定义的 `docker_overrides` 设置，生产 Firefox 应用尚未设置，实测基线见验收记录。
 
 ---
 
@@ -513,7 +519,7 @@ R5D 候选采用本地账号、明确 Profile 列表和短期 host-only Cookie�
 
 R5B 当前实现：Relay 只读挂载专属主机 tmpfs 代次目录，每 100 ms 校验代次租约，失效关闭监听和已有隧道；控制器先持久化撤销并确认出站阻断，再执行正常关闭和清理，失败保留占用，启动及每两秒重新授权。恢复重新授权并重建材料，主密钥丢失不降级。100 ms 是检查间隔，不是主机故障下的实时保证。
 
-加密备份固定使用 age v1.2.1，创建直接加密，恢复先在 tmpfs 完成认证及全部成员校验，只写不存在的新目录。恢复 Store 先锁定，源/目标无容器挂载后合并当前撤销，持久化启用记录再解除锁；不覆盖现有 journal、不自动启动 Worker。实际 QA 已验证服务/Adapter 身份、固定产物、凭据及 Cookie/localStorage/IndexedDB；真实 Home/整机演练仍归 R2。旧 SSL 备份路径差异见 [DEV-009](../../deviations/DEV-2026-09-14-009-backup-key-paths.md)。
+加密备份固定使用 age v1.2.1，创建直接加密，恢复先在 tmpfs 完成认证及全部成员校验，只写不存在的新目录。恢复 Store 先锁定，源/目标无容器挂载后合并当前撤销，持久化启用记录再解除锁；不覆盖现有 journal、不自动启动 Worker。正常冻结环境绑定 artifact 与完整 acceptance；没有环境字段的兼容应用只可显式绑定完整镜像 ID、同镜像逐文件构建记录及同 Profile/镜像的实际 PASS 运行报告，不自动降级或补造报告，见 [DEV-057](../../deviations/DEV-2026-09-20-057-fixed-runtime-backup-evidence.md)。实际 QA 已验证服务/Adapter 身份、固定产物、凭据及 Cookie/localStorage/IndexedDB；R6F 后续又完成当前 Personal/Work 真实 Home 的创建、verify 与隔离 restore，整机恢复仍归 R2。旧 SSL 备份路径差异见 [DEV-009](../../deviations/DEV-2026-09-14-009-backup-key-paths.md)。
 
 旧部署没有 Store、入口登录和密封 Session 时，R2A 使用明确的 `encrypted-legacy-backup/v1` 格式，先只读记录实际运行镜像/绑定，再对同一 operation 的已停止 Home 加密；原 `create` 不自动降级。配置、绑定、实际镜像事实与未冻结环境的范围须保留，不能用当前应用定义代替旧 Worker，也不能补造环境验收。旧恢复只写新私有目录，不提供自动启用；其提示标记不由旧控制器强制执行。工具往返及生产只读快照见 [R2A](../../../infra/sealskin/legacy-backup-acceptance-2026-09-15.md)，不替代 S05 的真实 Home/浏览器新环境恢复，S05 条件保持。
 
@@ -545,3 +551,33 @@ R5D 的 [候选 3 验收](../../../infra/sealskin/entry-authentication-acceptanc
 ---
 
 R5E 的 [固定 r7 组合验收](../../../infra/sealskin/release-combination-acceptance-2026-09-15.md) 补充 C01–C05 适用变体、实际 Store 撤销与 S05 单 QA Home 新环境恢复。加密归档须包含全部策略引用的 `coherence-assets/`，创建与解密时校验直接路径、摘要、私有权限、成员和大小；恢复不得关闭一致性来绕过缺失资产。备份后撤销、当前禁用账号及三类浏览器存储在新根保持；原场景与生产/目标客户端未测边界不变。
+
+
+R7G 失败恢复约束（2026-09-30）：动态 pending 恢复只能停止已证实属于当前 Home/operation 的 Relay；归属未证实不执行停止，恢复失败保留 pending 和错误证据，不能宣称回滚成功。真实 SDK 停止调用及双失败隔离证据见 [集成验收](../../../infra/sealskin/r7g-controller-integration-acceptance-2026-09-30.md)；该增量未部署生产，公网供应方和目标客户端范围仍待验证。
+
+R7G 恢复重试补充：成功恢复旧 lease/规则后必须清除当前 `last_error`，才能重接控制器；失败继续保留 pending/错误，历史失败证据独立保存。三个真实事务中断点及首次失败后的重试已通过[隔离恢复验收](../../../infra/sealskin/r7g-controller-recovery-acceptance-2026-09-30.md)，不代表生产维护或客户端验收。
+
+R7G 生命周期兼容：monitor 与启动/停止共用 Home 锁，并在取得锁后重读当前 reservation。候选重接存量数值静态代次不得自动生成动态 lease；启用动态能力需明确新策略/镜像与受控换代。旧控制器回退前必须先清理动态代次，不能把未理解的 pending/lease 交给旧版本。限定并发及静态升级/回退的实机证据见[兼容验收](../../../infra/sealskin/r7g-static-upgrade-acceptance-2026-09-30.md)，不代表生产发布。
+
+2026-10-01 运维观测增量：独立监控只消费缓存健康并保存白名单状态，私有事件支持连续故障/恢复与 14 天/2,000 条/2 MiB 限制。它不代替应用日志的 S06 和生产日志保留配置，后者仍由 R6J 承接。见[监控说明](../../../infra/monitoring/README.md)。
+
+R6J 日志默认（2026-10-01，经 R6J1 日志专用候选部署）：控制器创建的新 Worker、Relay、Guard、启动探测使用平台固定的 json-file / 10 MiB × 3 / compress，应用覆盖不能取消。大小轮换不是按天保留，也不替代 S06 内容清洗；已有容器和主机 journald 不随候选自动迁移。[真实验证及维护边界](../../../infra/sealskin/r6j-log-policy-acceptance-2026-10-01.md)。
+
+R6J1 已经用户授权完成现有三 Home 的正常停止、加密备份、独立恢复比对及原 Home 重建，11 个生产容器限额立即生效；共享 journald 保持独立待审计。见[生产验收](../../../infra/sealskin/r6j1-log-deployment-acceptance-2026-10-01.md)。
+
+## R6K 恢复边界（2026-10-01）
+
+选定 Home 的加密恢复必须带上已配置的管理目录/目录文件和独立管理员身份，并在新根显式重绑；当前账号与撤销合并、恢复锁及原 Store 无挂载要求保持。镜像层、系统工具、作业目录和全部产物需另行清点，不能据单 Home 成功宣称整机恢复。合成 Work 本机运行恢复与回退已通过，异机冷恢复待独立资源，见[操作与边界](../../../infra/sealskin/checks/disaster-recovery.md)。
+
+## R6L 固定 Chromix 实现范围
+
+Chromix 154 的首个 accepted 组合为 Linux/en-US/UTC/1280×720/DPR1；使用独立持久化种子和 Home、固定受限参数、Guard/Relay 与 Session 认证。默认简化 UA 与二进制完整版本分别核验；accepted 目录由服务端管理，启动器只宣称实际执行的文件/环境校验。当前网络、三类存储、管理创建、关闭拒绝和选定 Home 加密恢复证据见 [R6L 验收](../../../infra/sealskin/r6l-chromix-acceptance-2026-10-01.md)。完整 GPU/Canvas/音频/字体跨接口、跨 OS、其他环境组合与全部上游协议仍未测，原目标要求保留。
+
+R6P 对自定义作业的配置入口补充：指纹源与显示策略分别保存并以 ID/摘要组合，最终完整环境仍满足本文原有要求，显示变化须重新完整验收。字段与旧 v1 兼容边界见[管理规格](management.md#r6p独立指纹模板与显示模板)。
+
+R6Q 通用指纹来源与生成目标分离：配置不绑定引擎，生成作业及最终产物仍精确绑定引擎版本；旧来源和队列兼容见[管理规格](management.md#r6q-通用指纹配置与生成目标)。
+
+
+R6R 扩展通用来源到三个固定引擎，能力与原生设备特征边界以[管理规格](management.md#r6r-三引擎自定义生成)为准；跨引擎不承诺相同伪装身份，旧Home不转换。
+
+R6S将两类显示策略共同开放给三个引擎：自定义fixed/DPR1、内置auto/system。E01/E02按显示策略比较：固定模式精确屏幕/窗口，自动模式允许screen/window/DPR变化并保持其他字段；实际UI Scaling、输入、重连与上限必须独立验收。同一DPR下画布稳定性仍须匹配。具体格式和历史兼容见[管理规格](management.md#r6s-三引擎共用显示模板)。

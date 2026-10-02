@@ -1,0 +1,2 @@
+# Local machine access material; never commit credentials.
+/sshkey

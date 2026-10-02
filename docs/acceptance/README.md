@@ -1,5 +1,7 @@
 # 验收索引
 
+[R6AP 异机恢复验收](../../infra/sealskin/r6ap-remote-recovery-acceptance-2026-10-02.md)：16 镜像、1610 项材料、473 项当前信任依赖及三引擎真实恢复/回退通过。
+
 [R6AO 补丁版本封存](../../infra/sealskin/r6ao-patch-release-acceptance-2026-10-02.md)：`.2` 标签、源码/服务器归档与生产保护核对通过。
 
 [R6AN 磁盘长期治理](../../infra/sealskin/r6an-disk-retention-acceptance-2026-10-02.md)：PASS；8 处缓存、8 项工具测试、保护快照与容量余量通过，当前客户端验证获用户确认。

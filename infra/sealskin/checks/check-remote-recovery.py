@@ -45,6 +45,36 @@ class RemoteDrill(dr.Drill):
         self.target = self.root / "restored"
         self.bundle = self.root / "bundle"
 
+    def launch(self, qa, name):
+        try:
+            return super().launch(qa, name)
+        except AssertionError:
+            binding = dr.read(qa / "adapter-state.json")["bindings"][dr.PROFILE]
+            if (binding["status"] != "unknown" or
+                    binding.get("last_error") != "SealSkin request result is ambiguous"):
+                raise
+            # Cold image unpack/start can outlast the HTTP request. Preserve
+            # its operation; reconcile only after a unique runtime appears.
+            observed = {}
+
+            def ready():
+                value = self.inventory(qa)
+                if len(value["workers"]) == len(value["records"]) == 1 and len(value["resources"]) == 5:
+                    observed.update(value)
+                    return True
+                return False
+
+            dr.network.wait(ready, "unique cold-start runtime", seconds=90)
+            worker = observed["workers"][0]["instance_id"]
+            self.command([qa / "bin/profile-adapter", "-config", qa / "adapter-config.json",
+                          "-reconcile-profile", dr.PROFILE], name + "-cold-reconcile")
+            value = super().launch(qa, name)
+            assert value[2] == worker, "cold-start recovery replaced its Worker"
+            dr.write(self.root / (name + "-cold-start.json"), {
+                "result": "PASS", "ambiguous_operation_preserved": True,
+                "unique_runtime_reconciled": True, "same_worker_reused": True})
+            return value
+
     def restore_bundle(self, bundle, label):
         assert not bundle.exists()
         with tempfile.TemporaryDirectory(prefix="r6ap-auth-", dir="/dev/shm") as scratch:

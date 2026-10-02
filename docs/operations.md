@@ -1,5 +1,7 @@
 # 运维、开机与恢复
 
+[R6AP 独立机器恢复](../infra/sealskin/r6ap-remote-recovery-acceptance-2026-10-02.md)已通过：镜像冷导入、完整材料和三引擎合成检查点运行/回退；[步骤](../infra/sealskin/checks/remote-recovery.md)明确真实历史 Home 与当前信任补充不是同一业务时点。
+
 当前静态回退版本已封存为 [server-2026.10.02.2](releases/server-2026.10.02.2.md)，包含 R6AM Adapter；完整异机恢复另属 R6AP。
 
 R6AN 已完成历史编译缓存清理并建立 [磁盘保留规则](disk-retention.md)。可用空间约 5.2 GiB，生产保持；后续构建使用任务缓存并在进程全部退出后回收，旧源码/备份不按时间自动删除。

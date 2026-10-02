@@ -2,7 +2,7 @@
 
 [R6AP 工作项](../../../docs/work-items/R6AP-2026-10-02-remote-recovery.md) · [原本机恢复边界](disaster-recovery.md)
 
-当前处于实施与验收中，不能据此声明异机运行已通过。使用独立 Debian 12 / amd64、UID 1000 的 `qa` 用户与 Docker 组；预先检查已有容器、包管理任务和端口，不清理他人资源。依赖为 Docker、Python 3.11+、PyYAML、PyJWT、cryptography、websocket-client、Caddy 和精确 age v1.2.1。控制器/Worker/Relay/探测镜像必须从记录的 image ID 导入并逐一读回，不能用浮动标签代替。
+R6AP 已通过[异机验收](../r6ap-remote-recovery-acceptance-2026-10-02.md)，下述命令使用私有输入重现注明范围。使用独立 Debian 12 / amd64、UID 1000 的 `qa` 用户与 Docker 组；预先检查已有容器、包管理任务和端口，不清理他人资源。依赖为 Docker、Python 3.11+、PyYAML、PyJWT、cryptography、websocket-client、Caddy 和精确 age v1.2.1。控制器/Worker/Relay/探测镜像必须从记录的 image ID 导入并逐一读回，不能用浮动标签代替。
 
 ## 输入及边界
 
@@ -37,3 +37,5 @@ python3 infra/environment-engines/check-remote-recovery.py \
 逐引擎核对密文、artifact/report 摘要与原观察，使用已验收入口创建独立显示凭据和 Home；恢复、重开、检查点回退均检查三类存储、指纹、显示认证、实际输入、HTTPS 和直接出站拒绝。自动分辨率允许按原契约变化的显示字段，其他原有指纹比较保持。失败保留日志/截图与无法正常关闭的实例，不强制删除浏览器来绕过关闭失败。
 
 最终必须核对本项的容器、网络、进程、socket 与 tmpfs 清零，保留私有验收证据和加密归档。生产侧镜像导出和源文件读取不应修改真实 Home/会话；前后保护快照另行核对。未通过项和尚待执行项保持明确状态。
+
+冷启动可能超过入口请求时限；运行器仅在已知 ambiguous 状态下等待唯一 runtime、通过控制 socket 对账并核对同一 Worker 被复用，不删除占用或创建第二个实例。QA sentinel Cookie 使用一年有效期；历史 24 小时样本的到期失败保留。

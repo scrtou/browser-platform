@@ -7,7 +7,7 @@ async ({operation, value}) => {
   });
   try {
     if (operation === "write") {
-      document.cookie = `bp_home=${value}; Max-Age=86400; Path=/; Secure; SameSite=Strict`;
+      document.cookie = `bp_home=${value}; Max-Age=31536000; Path=/; Secure; SameSite=Strict`;
       localStorage.setItem("bp_home", value);
       await new Promise((resolve, reject) => {
         const tx = db.transaction("proof", "readwrite");
