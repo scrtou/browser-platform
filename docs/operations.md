@@ -143,6 +143,8 @@ R4B 当前 Work 与 Personal Worker 均采用上述正常退出能力；维护�
 
 ## 备份、升级与回滚
 
+R6AU 当前整体备份按[操作说明](../infra/sealskin/checks/consistent-business-backup.md)进行；停止前同时核对代理与实时容量，保留原活动/停止范围。Personal本轮已正常重开并恢复健康，一致性归档与异机恢复仍待执行。
+
 备份范围包括 Home、Adapter 配置/状态、SealSkin 必需状态、固定镜像、环境产物、成功验收报告以及恢复所需密钥。含浏览器数据或密钥的材料单独加密保存；公开仓库只记录脱敏清单。备份 Home 前停止对应浏览器，不能只复制运行中 SQLite 的主文件。
 
 含 Home 或密钥的备份使用 [Secret Store 与 age 加密恢复](../infra/sealskin/lifecycle/secret-store.md#加密备份与恢复)：先经 Adapter 确认停止和已落盘 journal，直接加密 Home、固定产物、配置和必要身份/解密材料；恢复只写新目录，先在 tmpfs 完整认证，再以恢复锁阻止旧凭据生效，离线合并当前撤销后才允许重绑。R5B 的 [新 QA 环境恢复](../infra/sealskin/secret-store-acceptance-2026-09-14.md) 已通过，真实 Home/整机演练仍待 R2。旧 `backup-home.py` 保留历史 QA 工具范围，不能把明文归档作为正式备份。

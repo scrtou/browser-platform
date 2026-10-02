@@ -1,5 +1,7 @@
 # 设计偏差记录
 
+- [DEV-133 维护容量前置遗漏](DEV-2026-10-02-133-maintenance-capacity-preflight.md)：R6AU 处理中，先恢复容量与Personal，再继续备份。
+
 - [DEV-132 原生启动请求超时](DEV-2026-10-02-132-native-launch-request-budget.md)：R6AS 已解决并完成范围内验收。
 
 - [DEV-131 原生 QA 控制器重建依赖](DEV-2026-10-02-131-native-qa-controller-recreation.md)：R6AS 已解决并完成范围内验收。

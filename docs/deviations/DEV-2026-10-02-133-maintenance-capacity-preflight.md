@@ -1,0 +1,11 @@
+# DEV-133 · 维护重开遗漏容量准入预检
+
+状态：处理中。关联：[R6AU](../work-items/R6AU-2026-10-02-consistent-business-backup.md)。
+
+预期：正常停止真实浏览器前，必须同时核对代理、磁盘、内存、活动数量及启动并发的恢复条件。
+
+事实：Personal原系统DNS与现有凭据HTTPS探测恢复后，维护操作器正常停止Personal，但重开被CapacityError拒绝。只读容量检查显示空闲3566MiB，低于4096MiB启动线；尚未创建新代次或占用。Adapter与监控已恢复，其他浏览器保持。此前准备记录虽然查看了磁盘，却未将实时容量准入作为停止硬门槛。
+
+处理：修复维护编排前置，不降低容量阈值；核对可重建缓存/无引用临时构建材料后回收，重新验证容量与代理再按正常生命周期重开。保留首次失败日志，不重置journal。整体备份必须额外预留归档空间，或将密文流传至独立机，确保备份后仍可恢复原活动范围。
+
+证据：被忽略的R6AU私有目录中的personal-normal-stop.log、personal-normal-start.log、personal-recovery-stage.json。修复及生产恢复未验证前，不标为解决。
