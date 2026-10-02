@@ -266,3 +266,9 @@ R6AA UI限定发布：只替换Adapter并重启profile-adapter.service，R6Z1执
 2026-10-02：[R7G1 动态代理已部署](../infra/sealskin/r7g1-deployment-acceptance-2026-10-02.md)。新建域名策略采用动态 Relay；既有策略/静态代次及 DIRECT 默认保持。旧控制器回退前须正常清理全部动态代次并核对无 pending/lease，不能回放旧用户数据。商业供应方自然漂移与新 GUI 热切换观察未测，用户已允许部署。
 
 2026-10-02：R6AQ [共享 journald 预算](../infra/monitoring/journald-budget.md)已部署：持久/运行 512/64 MiB、最多 30 天、最长 1 天文件轮换。服务/日志读回及保护核对通过；不保证保留满 30 天，长期自然到期仍需持续观察。Docker 日志与业务 journal 独立管理。
+
+## 2026-10-02 · R6AR 共享缩放已部署
+
+按远程浏览器保存界面缩放百分比：管理页或远程 UI Scaling 修改，刷新/新客户端共用。支持 auto@system 和旧 Wayland Work；0 跟随客户端默认，100–300、步长 25。固定 DPR1/auto@1 不接受非零。不同已打开页面需要刷新；并发修改遇到冲突提示时刷新重试。保持比例/铺满继续仅用于固定画面。
+
+新 Adapter `8fb90eb2…` 已通过旧 Work 和三引擎 30 个真实显示场景；生产 Home、会话、Worker 与配置保持。回退旧 Adapter 前须通过新版本正常重置非零百分比并核对新增字段已消失，不能覆盖旧目录。新 Mac/Trilium 精确硬件组合未据此补造验证。详见 [验收](../infra/sealskin/r6ar-display-persistence-acceptance-2026-10-02.md)。

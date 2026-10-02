@@ -46,3 +46,9 @@ nginx 访问日志仅保留固定事件和 HTTP 状态；原始 error 文本不�
 验收分别记录正常 `/init`、正确/错误显示认证、HTTP/WebSocket、缺失/错误材料拒绝、控制器恢复、Worker resume 和最终 inspect/进程/Home/日志扫描。R5D 的最终证据在本机忽略目录 `infra/sealskin/runtime/r5d-entry-auth-2026-09-14/` 的 `client-qa-13/`、`worker-auth-negative-2/`、`runtime-security-3/`；QA 已清理。实际协作房间未测，可选协作 token 的文件/进程契约仅有控制测试，不能扩展为多人显示验收。
 
 R4B 另将同一认证层装到保留原 Firefox/Wayland 的 Work 候选。三个真实 Linux 客户端共取得 44 个显示帧并通过错误登录、无 Cookie Session 拒绝和输入附着；缺少输入、错误 Session、权限过宽、符号链接、可写挂载五类实际 `/init` 均拒绝且未监听显示端口。控制器 stop、s6 停止、同 Session resume 和三类存储恢复通过，342 个 Docker/进程/Home/日志面未发现材料泄漏。私有组合 QA 已按身份清理，生产 Work 与 Mac r9 QA 保持；见 [R4B 阶段验收](../sealskin/target-client-migration-acceptance-2026-09-15.md)。
+
+## 2026-10-02 · R6AR 共享缩放已部署
+
+按远程浏览器保存界面缩放百分比：管理页或远程 UI Scaling 修改，刷新/新客户端共用。支持 auto@system 和旧 Wayland Work；0 跟随客户端默认，100–300、步长 25。固定 DPR1/auto@1 不接受非零。不同已打开页面需要刷新；并发修改遇到冲突提示时刷新重试。保持比例/铺满继续仅用于固定画面。
+
+新 Adapter `8fb90eb2…` 已通过旧 Work 和三引擎 30 个真实显示场景；生产 Home、会话、Worker 与配置保持。回退旧 Adapter 前须通过新版本正常重置非零百分比并核对新增字段已消失，不能覆盖旧目录。新 Mac/Trilium 精确硬件组合未据此补造验证。详见 [验收](../sealskin/r6ar-display-persistence-acceptance-2026-10-02.md)。

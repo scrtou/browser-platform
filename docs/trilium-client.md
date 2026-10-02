@@ -194,3 +194,9 @@ QA 客户端是 Chromium 151 / Linux，使用原生浏览器粘贴命令在该�
 结果见本机验证报告（`infra/sealskin/runtime/clipboard-acceptance-2026-09-13/clipboard.json`），界面截图保存在同目录。此目录被 Git 忽略，部署备份需单独保留。测试没有修改原 Worker、应用定义或 Trilium 权限；原容器和 Adapter 绑定保持一致，临时 Worker 与带授权参数的 Session 文件均已清理。
 
 隔离测试证明了权限被拒绝时 Selkies 手动面板的文本路径可行。用户随后按上述操作在 **Trilium 0.105.0 / macOS Sequoia 15.1** 上复测并确认通过，手动面板文本路径已完成目标客户端验收；自动同步仍受客户端权限策略限制。
+
+## 2026-10-02 · R6AR 共享缩放已部署
+
+按远程浏览器保存界面缩放百分比：管理页或远程 UI Scaling 修改，刷新/新客户端共用。支持 auto@system 和旧 Wayland Work；0 跟随客户端默认，100–300、步长 25。固定 DPR1/auto@1 不接受非零。不同已打开页面需要刷新；并发修改遇到冲突提示时刷新重试。保持比例/铺满继续仅用于固定画面。
+
+新 Adapter `8fb90eb2…` 已通过旧 Work 和三引擎 30 个真实显示场景；生产 Home、会话、Worker 与配置保持。回退旧 Adapter 前须通过新版本正常重置非零百分比并核对新增字段已消失，不能覆盖旧目录。新 Mac/Trilium 精确硬件组合未据此补造验证。详见 [验收](../infra/sealskin/r6ar-display-persistence-acceptance-2026-10-02.md)。

@@ -343,3 +343,9 @@ R6W 发布：控制器使用 `proxy-create-authorization.patch` 的加密管理�
 R6AA参考截图UI已限定部署：登录/认证、首页与管理页面统一侧栏/圆角面板，管理新增表单使用带键盘/渐进回退的原生dialog，搜索仅过滤当前列表。原认证和业务处理器不变，统计保留未知/过期语义；见[设计](../docs/reference-ui-design.md)和[验收](../infra/sealskin/r6aa-reference-ui-acceptance-2026-10-02.md)。
 
 [R6AJ服务器完整自动回归](../infra/sealskin/r6aj-full-regression-acceptance-2026-10-02.md)：本机适用自动套件通过，外部实机/供应方/异机条件单列。
+
+## 2026-10-02 · R6AR 共享缩放已部署
+
+按远程浏览器保存界面缩放百分比：管理页或远程 UI Scaling 修改，刷新/新客户端共用。支持 auto@system 和旧 Wayland Work；0 跟随客户端默认，100–300、步长 25。固定 DPR1/auto@1 不接受非零。不同已打开页面需要刷新；并发修改遇到冲突提示时刷新重试。保持比例/铺满继续仅用于固定画面。
+
+新 Adapter `8fb90eb2…` 已通过旧 Work 和三引擎 30 个真实显示场景；生产 Home、会话、Worker 与配置保持。回退旧 Adapter 前须通过新版本正常重置非零百分比并核对新增字段已消失，不能覆盖旧目录。新 Mac/Trilium 精确硬件组合未据此补造验证。详见 [验收](../infra/sealskin/r6ar-display-persistence-acceptance-2026-10-02.md)。

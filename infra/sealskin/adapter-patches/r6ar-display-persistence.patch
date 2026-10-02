@@ -1,0 +1,965 @@
+--- a/cmd/profile-adapter/main.go
++++ b/cmd/profile-adapter/main.go
+@@ -59,7 +59,9 @@
+ 		action = "capacity"
+ 	}
+ 	if err := run(*configPath, action, target, logger); err != nil {
+-        if path := os.Getenv("R6J1_PRIVATE_ERROR_FILE"); path != "" { _ = os.WriteFile(path, []byte(err.Error()), 0600) }
++		if path := os.Getenv("R6J1_PRIVATE_ERROR_FILE"); path != "" {
++			_ = os.WriteFile(path, []byte(err.Error()), 0600)
++		}
+ 		if action != "" {
+ 			logger.Error("profile command failed", "action", action, "profile", target,
+ 				"error_code", control.ErrorCode(err), "error", err)
+@@ -211,28 +213,36 @@
+ 		return err
+ 	}
+ 	if action == "maintenance-start" || action == "maintenance-stop" {
+-        if target != "personal" && target != "work" && target != "browser-29cbe71eb72b" && target != "network-qa-a" {
+-            return errors.New("maintenance Profile outside approved scope")
+-        }
+-        ctx, cancel := context.WithTimeout(context.Background(), sealskin.LongOperationTimeout+15*time.Second)
+-        defer cancel()
+-        if action == "maintenance-stop" {
+-            result, err := profiles.Stop(ctx, target)
+-            if err != nil { return err }
+-            if result.Status != state.StatusStopped || result.Resources != 0 { return errors.New("maintenance normal stop incomplete") }
+-            logger.Info("maintenance Profile stopped", "profile", target)
+-            return nil
+-        }
+-        current, err := profiles.Inspect(ctx, target)
+-        if err != nil { return err }
+-        if current.Status != state.StatusStopped || current.Records != 0 || current.Workers != 0 || current.Resources != 0 {
+-            return errors.New("maintenance requires verified stopped and empty Profile")
+-        }
+-        if _, err := profiles.Ensure(ctx, target); err != nil { return err }
+-        // Never print the authenticated Session URL.
+-        logger.Info("maintenance generation created", "profile", target)
+-        return nil
+-    }
++		if target != "personal" && target != "work" && target != "browser-29cbe71eb72b" && target != "network-qa-a" {
++			return errors.New("maintenance Profile outside approved scope")
++		}
++		ctx, cancel := context.WithTimeout(context.Background(), sealskin.LongOperationTimeout+15*time.Second)
++		defer cancel()
++		if action == "maintenance-stop" {
++			result, err := profiles.Stop(ctx, target)
++			if err != nil {
++				return err
++			}
++			if result.Status != state.StatusStopped || result.Resources != 0 {
++				return errors.New("maintenance normal stop incomplete")
++			}
++			logger.Info("maintenance Profile stopped", "profile", target)
++			return nil
++		}
++		current, err := profiles.Inspect(ctx, target)
++		if err != nil {
++			return err
++		}
++		if current.Status != state.StatusStopped || current.Records != 0 || current.Workers != 0 || current.Resources != 0 {
++			return errors.New("maintenance requires verified stopped and empty Profile")
++		}
++		if _, err := profiles.Ensure(ctx, target); err != nil {
++			return err
++		}
++		// Never print the authenticated Session URL.
++		logger.Info("maintenance generation created", "profile", target)
++		return nil
++	}
+ 	if action == "reset" {
+ 		if err := profiles.ResetUnknown(target); err != nil {
+ 			return err
+@@ -274,7 +284,13 @@
+ 			}
+ 			return cards
+ 		})
+-		gateway, err := access.New(ctx, *cfg.Access, cfg.PublicBaseURL, cfg.SealSkin.PublicSessionBaseURL, profiles, profiles.CheckDisplaySession, logger, access.WithHomeProvider(homeProvider), access.WithDisplayPreference(profiles.DisplayPreference))
++		gateway, err := access.New(ctx, *cfg.Access, cfg.PublicBaseURL, cfg.SealSkin.PublicSessionBaseURL, profiles, profiles.CheckDisplaySession, logger, access.WithHomeProvider(homeProvider), access.WithDisplayPreference(profiles.DisplayPreference), access.WithUIScaling(profiles.UIScalingPreference, func(id string, revision, percent int, actor string) (int, error) {
++			record, err := profiles.UpdateBrowser(id, revision, actor, profile.BrowserPatch{UIScalingPercent: &percent})
++			if errors.Is(err, profile.ErrRevisionMismatch) {
++				return 0, access.ErrDisplayRevisionConflict
++			}
++			return record.Revision, err
++		}))
+ 		if err != nil {
+ 			return err
+ 		}
+--- a/internal/access/display_preference.go
++++ b/internal/access/display_preference.go
+@@ -14,7 +14,8 @@
+ 	"strings"
+ )
+ 
+-// These are the two reviewed Selkies clients currently installed by the platform.
++// Reviewed legacy Selkies clients. Automatic runtimes additionally carry the
++// bounded-layout/input patch pinned below; fixed display behavior is unchanged.
+ var displayAssets = map[string]string{
+ 	"index-BTp9L9Xk.js":                      "12d75adb19371bece1fb077efb9bf198a79f03e3e09255b7a310c08fde3bb088",
+ 	"index-native-paste-628d1314a06310e5.js": "628d1314a06310e5d06299381e4e1bc1141d3e5f3046f52d763ffdb403cd801a",
+@@ -75,8 +76,9 @@
+ 
+ func (g *Gateway) transformDisplayResponse(response *http.Response) error {
+ 	mode := g.displayMode(response.Request)
++	scaling := g.scalingFor(response.Request)
+ 	expected, ok := displayAsset(response.Request.URL.Path)
+-	if mode == "" || !ok || response.StatusCode != http.StatusOK || response.Request.Method != http.MethodGet {
++	if (mode == "" && !scaling.Supported) || !ok || response.StatusCode != http.StatusOK || response.Request.Method != http.MethodGet {
+ 		return nil
+ 	}
+ 	// Unrecognized encodings/assets keep their original behavior, never apply an
+@@ -96,12 +98,25 @@
+ 	response.Body.Close()
+ 	response.Body = io.NopCloser(bytes.NewReader(raw))
+ 	digest := sha256.Sum256(raw)
+-	if hex.EncodeToString(digest[:]) != expected {
++	actual := hex.EncodeToString(digest[:])
++	// install-resolution-limit.py adds only the reviewed dynamic layout/input
++	// fixes. Permit that exact asset for scaling, without widening fixed modes.
++	runtimeScaling := scaling.Supported && path.Base(response.Request.URL.Path) == "index-BTp9L9Xk.js" && actual == "c7a3af93c8d368c0be1605a45f892b016ace21e891de365829b50d0159e0ce1e"
++	if actual != expected && !runtimeScaling {
+ 		return nil
+ 	}
+-	transformed, err := applyDisplayMode(raw, mode)
+-	if err != nil {
+-		return err
++	transformed := raw
++	if mode != "" {
++		transformed, err = applyDisplayMode(transformed, mode)
++		if err != nil {
++			return err
++		}
++	}
++	if scaling.Supported {
++		transformed, err = applyUIScaling(transformed, scaling)
++		if err != nil {
++			return err
++		}
+ 	}
+ 	response.Body = io.NopCloser(bytes.NewReader(transformed))
+ 	response.ContentLength = int64(len(transformed))
+--- a/internal/access/gateway.go
++++ b/internal/access/gateway.go
+@@ -176,6 +176,8 @@
+ 
+ type Gateway struct {
+ 	displayPreference func(string) string
++	uiScaling         func(string) (int, int, bool)
++	updateUIScaling   func(string, int, int, string) (int, error)
+ 	cfg               Config
+ 	entry, session    *url.URL
+ 	profiles          ProfileSet
+@@ -953,7 +955,7 @@
+ 	}
+ 	g.sessions[hash(value)] = login{Actor: current.Actor, Audience: "display", Parent: pending.Parent,
+ 		Profile: pending.Profile, Session: pending.Session, BackendToken: pending.BackendToken, Expires: current.Expires,
+-		AccountHash: current.AccountHash}
++		AccountHash: current.AccountHash, CSRF: current.CSRF}
+ 	g.mu.Unlock()
+ 	setCookie(w, displayCookie+pending.Session, value, current.Expires)
+ 	http.Redirect(w, r, pending.Target, http.StatusSeeOther)
+--- a/internal/access/proxy.go
++++ b/internal/access/proxy.go
+@@ -87,7 +87,7 @@
+ 			proxy.Out.Header.Del("Cookie")
+ 			identity := proxy.In.Context().Value(contextKey{}).(requestLogin)
+ 			proxy.Out.Header.Set(backendAuthHeader, identity.Data.BackendToken)
+-			if _, ok := displayAsset(proxy.In.URL.Path); ok && proxy.In.Method == http.MethodGet && g.displayMode(proxy.In) != "" {
++			if _, ok := displayAsset(proxy.In.URL.Path); ok && proxy.In.Method == http.MethodGet && g.displayTransformRequested(proxy.In) {
+ 				proxy.Out.Header.Set("Accept-Encoding", "identity")
+ 				for _, key := range []string{"Range", "If-Range", "If-None-Match", "If-Modified-Since"} {
+ 					proxy.Out.Header.Del(key)
+@@ -196,5 +196,9 @@
+ 		delete(g.active, key)
+ 		g.mu.Unlock()
+ 	}()
++	if r.URL.Path == "/"+id+"/_browser-platform/display" {
++		g.serveDisplayScaling(w, r.WithContext(ctx))
++		return
++	}
+ 	g.proxy.ServeHTTP(w, r.WithContext(ctx))
+ }
+--- a/internal/access/ui_scaling.go
++++ b/internal/access/ui_scaling.go
+@@ -0,0 +1,109 @@
++package access
++
++import (
++	"bytes"
++	"crypto/subtle"
++	_ "embed"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io"
++	"mime"
++	"net/http"
++)
++
++var ErrDisplayRevisionConflict = errors.New("display setting revision changed")
++
++// The callbacks operate only on the Profile from the authenticated live Session.
++func WithUIScaling(read func(string) (int, int, bool), update func(string, int, int, string) (int, error)) GatewayOption {
++	return func(g *Gateway) { g.uiScaling, g.updateUIScaling = read, update }
++}
++
++type displayScaling struct {
++	Percent   int    `json:"percent"`
++	Revision  int    `json:"revision"`
++	Supported bool   `json:"supported"`
++	Endpoint  string `json:"endpoint,omitempty"`
++	CSRF      string `json:"csrf,omitempty"`
++}
++
++func (g *Gateway) scalingFor(r *http.Request) displayScaling {
++	identity, ok := r.Context().Value(contextKey{}).(requestLogin)
++	if !ok || g.uiScaling == nil {
++		return displayScaling{}
++	}
++	percent, revision, supported := g.uiScaling(identity.Data.Profile)
++	return displayScaling{Percent: percent, Revision: revision, Supported: supported,
++		Endpoint: "/" + identity.Data.Session + "/_browser-platform/display", CSRF: identity.Data.CSRF}
++}
++
++func (g *Gateway) displayTransformRequested(r *http.Request) bool {
++	return g.displayMode(r) != "" || g.scalingFor(r).Supported
++}
++
++func (g *Gateway) serveDisplayScaling(w http.ResponseWriter, r *http.Request) {
++	setting := g.scalingFor(r)
++	w.Header().Set("Cache-Control", "no-store")
++	if !setting.Supported {
++		http.NotFound(w, r)
++		return
++	}
++	if r.Method != http.MethodGet && r.Method != http.MethodPost {
++		w.Header().Set("Allow", "GET, POST")
++		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
++		return
++	}
++	if r.Method == http.MethodPost {
++		media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
++		if err != nil || media != "application/json" || g.updateUIScaling == nil ||
++			(!SameOrigin(r, g.session) && !SameOrigin(r, g.entry)) ||
++			len(r.Header.Values("X-Browser-Platform-CSRF")) != 1 || setting.CSRF == "" ||
++			subtle.ConstantTimeCompare([]byte(setting.CSRF), []byte(r.Header.Get("X-Browser-Platform-CSRF"))) != 1 {
++			http.Error(w, "Forbidden", http.StatusForbidden)
++			return
++		}
++		var input struct {
++			Percent  *int `json:"percent"`
++			Revision int  `json:"revision"`
++		}
++		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 512))
++		decoder.DisallowUnknownFields()
++		var extra any
++		if decoder.Decode(&input) != nil || decoder.Decode(&extra) != io.EOF || input.Percent == nil || input.Revision < 1 ||
++			(*input.Percent != 0 && (*input.Percent < 100 || *input.Percent > 300 || *input.Percent%25 != 0)) {
++			http.Error(w, "Invalid display setting", http.StatusBadRequest)
++			return
++		}
++		identity := r.Context().Value(contextKey{}).(requestLogin)
++		if _, err := g.updateUIScaling(identity.Data.Profile, input.Revision, *input.Percent, identity.Data.Actor); err != nil {
++			if errors.Is(err, ErrDisplayRevisionConflict) {
++				http.Error(w, "Display setting changed; refresh before retrying", http.StatusConflict)
++			} else {
++				http.Error(w, "Display setting unavailable", http.StatusUnprocessableEntity)
++			}
++			return
++		}
++		setting = g.scalingFor(r)
++	}
++	w.Header().Set("Content-Type", "application/json")
++	_ = json.NewEncoder(w).Encode(setting)
++}
++
++//go:embed ui_scaling.js
++var scalingClient string
++
++const scalingHandler = `et=g=>{const O=parseInt(g.target.value,10);Ue(O),_e({scaling_dpi:O})}`
++const persistedScalingHandler = `et=async g=>{const O=parseInt(g.target.value,10);if(await window.__bpDisplayScaling.save(O)){Ue(O),_e({scaling_dpi:O})}else{g.target.value=String(De)}}`
++
++func applyUIScaling(source []byte, setting displayScaling) ([]byte, error) {
++	if !setting.Supported || bytes.Count(source, []byte(scalingHandler)) != 1 {
++		return nil, fmt.Errorf("unrecognized UI scaling handler")
++	}
++	config, err := json.Marshal(setting)
++	if err != nil {
++		return nil, err
++	}
++	prefix := bytes.Replace([]byte(scalingClient), []byte("/*PROFILE_SETTINGS*/null"), config, 1)
++	result := bytes.Replace(source, []byte(scalingHandler), []byte(persistedScalingHandler), 1)
++	return append(append(prefix, '\n'), result...), nil
++}
+--- a/internal/access/ui_scaling.js
++++ b/internal/access/ui_scaling.js
+@@ -0,0 +1,58 @@
++// Installed only after exact Selkies asset and authenticated Profile checks.
++(() => {
++  const setting = /*PROFILE_SETTINGS*/null;
++  const key = window.location.href.split('#')[0].replace(/[^a-zA-Z0-9.-_]/g, '_') + '_scaling_dpi';
++  const seed = percent => {
++    for (const suffix of ['', '_display2']) {
++      if (percent) localStorage.setItem(key + suffix, String(percent * 96 / 100));
++      else localStorage.removeItem(key + suffix);
++    }
++  };
++  seed(setting.percent);
++  let busy = false;
++  const notice = message => {
++    const select = document.getElementById('uiScalingSelect');
++    if (!select) return;
++    let status = document.getElementById('bp-scaling-status');
++    if (!status) {
++      status = document.createElement('span');
++      status.id = 'bp-scaling-status';
++      status.setAttribute('role', 'status');
++      select.insertAdjacentElement('afterend', status);
++    }
++    status.textContent = message;
++  };
++  window.__bpDisplayScaling = {
++    async save(dpi) {
++      if (busy) { notice('正在保存，请稍候'); return false; }
++      busy = true;
++      notice('正在保存…');
++      try {
++        const response = await fetch(setting.endpoint, {
++          method: 'POST', credentials: 'same-origin', cache: 'no-store',
++          headers: {'Content-Type': 'application/json', 'X-Browser-Platform-CSRF': setting.csrf},
++          body: JSON.stringify({percent: Math.round(dpi * 100 / 96), revision: setting.revision})
++        });
++        if (!response.ok) {
++          notice(response.status === 409 ? '设置已被修改，请刷新后重试' : '缩放未保存，请刷新后重试');
++          return false;
++        }
++        const saved = await response.json();
++        if (!saved.supported || saved.percent !== Math.round(dpi * 100 / 96)) {
++          notice('设置已被修改，请刷新后重试');
++          return false;
++        }
++        setting.revision = saved.revision;
++        setting.percent = saved.percent;
++        seed(saved.percent);
++        notice('已保存，重新连接时所有客户端共用');
++        return true;
++      } catch (_) {
++        notice('连接失败，缩放未保存');
++        return false;
++      } finally {
++        busy = false;
++      }
++    }
++  };
++})();
+--- a/internal/access/ui_scaling_live_test.go
++++ b/internal/access/ui_scaling_live_test.go
+@@ -0,0 +1,145 @@
++package access
++
++import (
++	"browser-platform/adapter/internal/profile"
++	"browser-platform/adapter/internal/sealskin"
++	"browser-platform/adapter/internal/state"
++	"context"
++	"encoding/json"
++	"encoding/pem"
++	"errors"
++	"net"
++	"net/http"
++	"net/http/httptest"
++	"net/http/httputil"
++	"net/url"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++)
++
++type scalingQAOrchestrator struct{}
++
++func (scalingQAOrchestrator) ListSessions(context.Context) ([]sealskin.Session, error) {
++	return nil, errors.New("QA has no lifecycle access")
++}
++func (scalingQAOrchestrator) LaunchURL(context.Context, sealskin.LaunchURLRequest, string) (sealskin.LaunchResponse, error) {
++	return sealskin.LaunchResponse{}, errors.New("QA has no lifecycle access")
++}
++func (scalingQAOrchestrator) ListHomeDirectories(context.Context) ([]string, error) {
++	return nil, errors.New("QA has no Home access")
++}
++func (scalingQAOrchestrator) CreateHomeDirectory(context.Context, string, string) error {
++	return errors.New("QA has no Home access")
++}
++
++// Opt-in real Worker fixture. The runner supplies an isolated internal network
++// and private synthetic credentials; this test never opens production state.
++func TestUIScalingBrowserFixture(t *testing.T) {
++	root := os.Getenv("BP_DISPLAY_FIXTURE")
++	if root == "" {
++		t.Skip("isolated real Worker fixture")
++	}
++	root, err := filepath.Abs(root)
++	if err != nil || !strings.Contains(root, "/runtime/r6ar-display-persistence-") {
++		t.Fatal("task-private fixture path required")
++	}
++	var cfg struct{ Worker, Listen, User, Password, Mode string }
++	raw, err := os.ReadFile(filepath.Join(root, "fixture.json"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if json.Unmarshal(raw, &cfg) != nil {
++		t.Fatal("invalid fixture config")
++	}
++	worker, err := url.Parse(cfg.Worker)
++	if err != nil || worker.Scheme != "http" || net.ParseIP(worker.Hostname()) == nil {
++		t.Fatal("QA Worker IP required")
++	}
++	host, _, err := net.SplitHostPort(cfg.Listen)
++	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsPrivate() {
++		t.Fatal("private QA listener required")
++	}
++	f := newFixture(t)
++	st, err := state.NewStore(filepath.Join(root, "state.json"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	def := profile.Definition{ID: "personal", ApplicationID: "qa", HomeName: "qa", StartURL: "https://example.com", WaylandMode: true}
++	if cfg.Mode != "legacy" {
++		def.BrowserTemplateID = "qa-native"
++		def.BrowserTemplateRevision = 1
++		def.EnvironmentArtifactID = "qa-env"
++		def.EnvironmentArtifactSHA256 = strings.Repeat("a", 64)
++		def.EnvironmentSource = "frozen"
++		def.EnvironmentTemplateRevision = 1
++		def.DisplayTemplateID = "qa-auto"
++		def.DisplayTemplateRevision = 1
++		def.ResolutionMode = "auto"
++	}
++	catalog := profile.TemplateCatalogData{Version: 1, DisplayTemplates: []profile.DisplayTemplate{{ID: "qa-auto", Revision: 1, Status: "accepted", Label: "QA Auto", DisplayServer: "x11", Transport: "selkies", Screen: "auto@system", Scaling: "auto"}}}
++	svc, err := profile.NewService(scalingQAOrchestrator{}, st, "https://entry.test", []profile.Definition{def}, profile.WithDirectory(filepath.Join(root, "profiles.json")), profile.WithTemplateCatalog(profile.StaticTemplateCatalog(catalog)))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, _, ok := svc.UIScalingPreference("personal"); !ok {
++		t.Fatal("QA Profile does not support system DPI")
++	}
++	f.g.uiScaling = svc.UIScalingPreference
++	f.g.updateUIScaling = func(id string, revision, percent int, actor string) (int, error) {
++		rec, e := svc.UpdateBrowser(id, revision, actor, profile.BrowserPatch{UIScalingPercent: &percent})
++		if errors.Is(e, profile.ErrRevisionMismatch) {
++			e = ErrDisplayRevisionConflict
++		}
++		return rec.Revision, e
++	}
++	_, csrf, cookie := f.display(t, "alice", "personal")
++	proxy := httputil.NewSingleHostReverseProxy(worker)
++	original := proxy.Director
++	proxy.Director = func(r *http.Request) {
++		original(r)
++		r.Header.Del(backendAuthHeader)
++		r.SetBasicAuth(cfg.User, cfg.Password)
++	}
++	backend := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if r.Header.Get(backendAuthHeader) != "synthetic-backend-access-token" {
++			http.Error(w, "unauthorized", 401)
++			return
++		}
++		proxy.ServeHTTP(w, r)
++	}))
++	defer backend.Close()
++	ca := filepath.Join(root, "upstream-ca.pem")
++	if os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: backend.Certificate().Raw}), 0600) != nil {
++		t.Fatal("write CA")
++	}
++	f.g.cfg.SessionUpstreamURL = backend.URL
++	f.g.cfg.SessionCAFile = ca
++	front := httptest.NewUnstartedServer(f.handler)
++	listener, err := net.Listen("tcp", cfg.Listen)
++	if err != nil {
++		t.Fatal(err)
++	}
++	front.Listener.Close()
++	front.Listener = listener
++	f.g.session, _ = url.Parse("https://" + cfg.Listen)
++	if err := f.g.prepareProxy(); err != nil {
++		t.Fatal(err)
++	}
++	front.StartTLS()
++	defer front.Close()
++	ready, _ := json.Marshal(map[string]any{"url": front.URL + "/" + personalSession + "/", "cookie": cookie, "csrf": csrf})
++	if os.WriteFile(filepath.Join(root, "ready.json"), ready, 0600) != nil {
++		t.Fatal("write readiness")
++	}
++	deadline := time.Now().Add(12 * time.Minute)
++	for time.Now().Before(deadline) {
++		if _, e := os.Stat(filepath.Join(root, "stop")); e == nil {
++			return
++		}
++		time.Sleep(100 * time.Millisecond)
++	}
++	t.Fatal("fixture deadline")
++}
+--- a/internal/access/ui_scaling_test.go
++++ b/internal/access/ui_scaling_test.go
+@@ -0,0 +1,140 @@
++package access
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++)
++
++func TestUIScalingUsesOnlyAuthorizedSessionAndCSRF(t *testing.T) {
++	f := newFixture(t)
++	percent, revision, writes := 100, 1, 0
++	f.g.uiScaling = func(id string) (int, int, bool) { return percent, revision, id == "personal" }
++	f.g.updateUIScaling = func(id string, expected, value int, actor string) (int, error) {
++		if id != "personal" || actor != "alice" {
++			t.Fatal("wrong Profile or actor")
++		}
++		if expected != revision {
++			return 0, ErrDisplayRevisionConflict
++		}
++		percent = value
++		revision++
++		writes++
++		return revision, nil
++	}
++	_, csrf, cookie := f.display(t, "alice", "personal")
++	target := "https://session.test/" + personalSession + "/_browser-platform/display"
++	post := func(target, origin, token, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
++		req := httptest.NewRequest("POST", target, strings.NewReader(body))
++		req.Header.Set("Origin", origin)
++		req.Header.Set("Content-Type", "application/json")
++		req.Header.Set("X-Browser-Platform-CSRF", token)
++		if cookie != nil {
++			req.AddCookie(cookie)
++		}
++		out := httptest.NewRecorder()
++		f.handler.ServeHTTP(out, req)
++		return out
++	}
++	before := f.upstream.Load()
++	cases := []struct {
++		url, origin, token, body string
++		cookie                   *http.Cookie
++		code                     int
++	}{
++		{target, "https://session.test", csrf, `{"percent":150,"revision":1}`, nil, 401},
++		{target, "https://other.test", csrf, `{"percent":150,"revision":1}`, cookie, 403},
++		{target, "https://session.test", "wrong", `{"percent":150,"revision":1}`, cookie, 403},
++		{strings.Replace(target, personalSession, workSession, 1), "https://session.test", csrf, `{"percent":150,"revision":1}`, cookie, 401},
++		{target, "https://session.test", csrf, `{"percent":150,"revision":1,"profile":"work"}`, cookie, 400},
++		{target, "https://session.test", csrf, `{"percent":151,"revision":1}`, cookie, 400},
++		{target, "https://session.test", csrf, `{"revision":1}`, cookie, 400},
++	}
++	for _, tc := range cases {
++		if out := post(tc.url, tc.origin, tc.token, tc.body, tc.cookie); out.Code != tc.code {
++			t.Fatalf("got %d want %d", out.Code, tc.code)
++		}
++	}
++	if writes != 0 {
++		t.Fatal("rejected request persisted")
++	}
++	out := post(target, "https://session.test", csrf, `{"percent":150,"revision":1}`, cookie)
++	if out.Code != 200 || writes != 1 || percent != 150 || out.Header().Get("Cache-Control") != "no-store" {
++		t.Fatal("valid setting not saved")
++	}
++	if out := post(target, "https://session.test", csrf, `{"percent":200,"revision":1}`, cookie); out.Code != 409 || writes != 1 {
++		t.Fatal("stale page overwrote newer setting")
++	}
++	read := request(f.handler, "GET", target, nil, cookie)
++	var setting displayScaling
++	if json.Unmarshal(read.Body.Bytes(), &setting) != nil || setting.Percent != 150 || setting.Revision != 2 || setting.CSRF != csrf {
++		t.Fatal("saved setting not returned")
++	}
++	f.invalidBinding.Store(true)
++	if out := post(target, "https://session.test", csrf, `{"percent":200,"revision":2}`, cookie); out.Code != 409 || writes != 1 {
++		t.Fatal("stale Session changed setting")
++	}
++	if f.upstream.Load() != before {
++		t.Fatal("preference endpoint forwarded to Worker")
++	}
++}
++
++func TestUIScalingTransformsOnlyPinnedAssets(t *testing.T) {
++	directory := os.Getenv("BP_DISPLAY_ASSETS")
++	if directory == "" {
++		t.Skip("requires retained exact Selkies assets")
++	}
++	cases := map[string]string{}
++	for name := range displayAssets {
++		cases[name] = name
++	}
++	if runtime := os.Getenv("BP_DISPLAY_RUNTIME_ASSETS"); runtime != "" {
++		cases["runtime-auto"] = filepath.Join(runtime, "chromix.js")
++	}
++	for key, file := range cases {
++		name := key
++		if key == "runtime-auto" {
++			name = "index-BTp9L9Xk.js"
++		} else {
++			file = filepath.Join(directory, file)
++		}
++		raw, err := os.ReadFile(file)
++		if err != nil {
++			t.Fatal(err)
++		}
++		g := &Gateway{uiScaling: func(id string) (int, int, bool) { return 150, 3, id == "work" }}
++		req := httptest.NewRequest("GET", "https://session.test/"+workSession+"/assets/"+name, nil)
++		req = req.WithContext(context.WithValue(req.Context(), contextKey{}, requestLogin{Data: login{Profile: "work", Session: workSession, CSRF: "qa-csrf"}}))
++		response := &http.Response{Request: req, StatusCode: 200, Header: http.Header{"ETag": []string{"original"}}, Body: io.NopCloser(bytes.NewReader(raw)), ContentLength: int64(len(raw))}
++		if err := g.transformDisplayResponse(response); err != nil {
++			t.Fatal(err)
++		}
++		transformed, _ := io.ReadAll(response.Body)
++		if bytes.Equal(raw, transformed) || !bytes.Contains(transformed, []byte(`"percent":150`)) || !bytes.Contains(transformed, []byte(persistedScalingHandler)) || response.ContentLength != int64(len(transformed)) || response.Header.Get("ETag") != "" {
++			t.Fatal("pinned UI asset not transformed")
++		}
++		if output := os.Getenv("BP_DISPLAY_OUTPUT"); output != "" {
++			if err := os.WriteFile(filepath.Join(output, name), transformed, 0600); err != nil {
++				t.Fatal(err)
++			}
++		}
++		req = req.WithContext(context.WithValue(req.Context(), contextKey{}, requestLogin{Data: login{Profile: "fixed", Session: personalSession}}))
++		response.Request = req
++		response.Body = io.NopCloser(bytes.NewReader(raw))
++		response.ContentLength = int64(len(raw))
++		if err := g.transformDisplayResponse(response); err != nil {
++			t.Fatal(err)
++		}
++		unchanged, _ := io.ReadAll(response.Body)
++		if !bytes.Equal(raw, unchanged) {
++			t.Fatal("fixed Profile acquired mutable DPI")
++		}
++	}
++}
+--- a/internal/httpapi/manage.go
++++ b/internal/httpapi/manage.go
+@@ -731,6 +731,10 @@
+ 				continue
+ 			}
+ 			rows[index].DisplayPreference = record.DisplayPreference
++			rows[index].UIScalingPercent = record.UIScalingPercent
++			if scaling, ok := s.profiles.(interface{ UIScalingPreference(string) (int, int, bool) }); ok {
++				_, _, rows[index].UIScalingSupported = scaling.UIScalingPreference(record.ID)
++			}
+ 			rows[index].NetworkSelection = browserNetworkSelection(record.NetworkMode, record.NetworkProfileID, record.NetworkProfileRevision)
+ 			rows[index].ResolutionMode = record.ResolutionMode
+ 			rows[index].BrowserTemplateID = record.BrowserTemplateID
+@@ -898,6 +902,8 @@
+ 	NetworkSelectionAvailable                 bool
+ 	LegacyMigration                           *profile.LegacyMigrationSummary
+ 	DisplayPreference                         string
++	UIScalingPercent                          int
++	UIScalingSupported                        bool
+ 	ResolutionMode                            string
+ 	BrowserTemplateID                         string
+ 	EnvironmentArtifactID                     string
+@@ -1438,6 +1444,18 @@
+ 		notice := "updated"
+ 		switch request.PostForm.Get("action") {
+ 		case "update":
++			if values := request.PostForm["ui_scaling_percent"]; len(values) > 0 {
++				if len(values) != 1 {
++					s.redirectManage(writer, request, "invalid")
++					return
++				}
++				percent, err := strconv.Atoi(values[0])
++				if err != nil || (percent != 0 && (percent < 100 || percent > 300 || percent%25 != 0)) {
++					s.redirectManage(writer, request, "invalid")
++					return
++				}
++				patch.UIScalingPercent = &percent
++			}
+ 			if len(request.PostForm["display_preference"]) > 1 {
+ 				s.redirectManage(writer, request, "invalid")
+ 				return
+@@ -3191,7 +3209,8 @@
+                     {{if eq .ResolutionMode "auto"}}<span class="meta">自动分辨率：远程桌面与网页可见屏幕尺寸随客户端窗口变化，DPR 按所选指纹模板生效（固定 1 或跟随 UI Scaling）。模式跟随此远程浏览器保存；切换固定分辨率需停止后应用相应环境模板。</span>
+                     {{else if .BrowserTemplateID}}<select id="display-preference-{{.ProfileID}}" name="display_preference"><option value=""{{if eq .DisplayPreference ""}} selected{{end}}>沿用当前显示方式</option><option value="contain"{{if eq .DisplayPreference "contain"}} selected{{end}}>保持比例（完整画面，可能留边）</option><option value="fill"{{if eq .DisplayPreference "fill"}} selected{{end}}>铺满窗口（可能拉伸）</option></select>
+                     <span class="meta">跟随此远程浏览器保存，所有客户端共用。保存后刷新远程显示页生效；不改变指纹屏幕尺寸或 DPR。</span>
+-                    {{else}}<span class="meta">当前旧版自动分辨率显示暂不支持独立缩放偏好。</span>{{end}}
++                    {{else if .UIScalingSupported}}<span class="meta">旧版 Work 自动分辨率随窗口变化，可保存下方界面缩放比例。</span>{{else}}<span class="meta">当前显示未登记可调整的缩放设置。</span>{{end}}
++                    {{if .UIScalingSupported}}<label for="ui-scaling-{{.ProfileID}}">界面缩放</label><select id="ui-scaling-{{.ProfileID}}" name="ui_scaling_percent"><option value="0"{{if eq .UIScalingPercent 0}} selected{{end}}>跟随客户端默认</option><option value="100"{{if eq .UIScalingPercent 100}} selected{{end}}>100%</option><option value="125"{{if eq .UIScalingPercent 125}} selected{{end}}>125%</option><option value="150"{{if eq .UIScalingPercent 150}} selected{{end}}>150%</option><option value="175"{{if eq .UIScalingPercent 175}} selected{{end}}>175%</option><option value="200"{{if eq .UIScalingPercent 200}} selected{{end}}>200%</option><option value="225"{{if eq .UIScalingPercent 225}} selected{{end}}>225%</option><option value="250"{{if eq .UIScalingPercent 250}} selected{{end}}>250%</option><option value="275"{{if eq .UIScalingPercent 275}} selected{{end}}>275%</option><option value="300"{{if eq .UIScalingPercent 300}} selected{{end}}>300%</option></select><span class="meta">保存到此浏览器，刷新远程画面后生效。远程画面的 UI Scaling 也会自动保存。</span>{{end}}
+                   </div>
+                   <div class="form-field-action">
+                     <button type="submit" class="btn btn-secondary">保存设置</button>
+--- a/internal/httpapi/ui_scaling_test.go
++++ b/internal/httpapi/ui_scaling_test.go
+@@ -0,0 +1,58 @@
++package httpapi
++
++import (
++	"browser-platform/adapter/internal/access"
++	"browser-platform/adapter/internal/profile"
++	"browser-platform/adapter/internal/sealskin"
++	"context"
++	"io"
++	"log/slog"
++	"net/http/httptest"
++	"net/url"
++	"strconv"
++	"strings"
++	"testing"
++)
++
++type scalingManager struct {
++	*fakeBrowserManager
++	supported bool
++}
++
++func (m *scalingManager) UIScalingPreference(string) (int, int, bool) { return 150, 3, m.supported }
++func TestUIScalingManagementForm(t *testing.T) {
++	base := &fakeProfiles{environments: map[string]profile.EnvironmentSummary{"personal": sampleSummary("personal")}}
++	manager := &scalingManager{fakeBrowserManager: &fakeBrowserManager{fakeProfiles: base, records: []profile.Record{{Definition: profile.Definition{ID: "personal", WaylandMode: true, UIScalingPercent: 150}, Revision: 3}}}, supported: true}
++	server := New(manager, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})
++	grants := []access.Grant{{Profile: "personal", Capabilities: []string{"view", "manage"}}}
++	render := func() string {
++		w := httptest.NewRecorder()
++		server.ServeHTTP(w, withGrants(httptest.NewRequest("GET", "https://adapter.example/manage/", nil), "root", grants))
++		return w.Body.String()
++	}
++	body := render()
++	if !strings.Contains(body, `value="150" selected`) || !strings.Contains(body, "旧版 Work 自动分辨率") || strings.Contains(body, `name="display_preference"`) {
++		t.Fatal("legacy display form incorrect")
++	}
++	for i, value := range []string{"150", "0", "300"} {
++		w := httptest.NewRecorder()
++		server.ServeHTTP(w, manageForm(url.Values{"action": {"update"}, "revision": {strconv.Itoa(3 + i)}, "ui_scaling_percent": {value}}, "root", grants, "https://adapter.example/manage/browsers/personal"))
++		if w.Code != 303 {
++			t.Fatal(w.Code)
++		}
++	}
++	if len(base.updates) != 3 || base.updates[0].UIScalingPercent == nil || *base.updates[0].UIScalingPercent != 150 || *base.updates[1].UIScalingPercent != 0 {
++		t.Fatal("percentage not submitted")
++	}
++	for _, values := range [][]string{{"99"}, {"151"}, {"301"}, {"bad"}, {"150", "200"}} {
++		w := httptest.NewRecorder()
++		server.ServeHTTP(w, manageForm(url.Values{"action": {"update"}, "revision": {"3"}, "ui_scaling_percent": values}, "root", grants, "https://adapter.example/manage/browsers/personal"))
++	}
++	if len(base.updates) != 3 {
++		t.Fatal("invalid or ambiguous value accepted")
++	}
++	manager.supported = false
++	if strings.Contains(render(), `name="ui_scaling_percent"`) {
++		t.Fatal("fixed contract exposes mutable DPI")
++	}
++}
+--- a/internal/profile/directory.go
++++ b/internal/profile/directory.go
+@@ -95,6 +95,7 @@
+ // "leave unchanged".
+ type BrowserPatch struct {
+ 	DisplayPreference *string
++	UIScalingPercent  *int
+ 	Label             *string
+ 	StartURL          *string
+ 	Disabled          *bool
+@@ -374,13 +375,16 @@
+ 		}
+ 		next.DisplayPreference = *patch.DisplayPreference
+ 	}
++	if patch.UIScalingPercent != nil {
++		next.UIScalingPercent = *patch.UIScalingPercent
++	}
+ 	if patch.Disabled != nil {
+ 		next.Disabled = *patch.Disabled
+ 	}
+ 	if err := validateDefinition(next.Definition); err != nil {
+ 		return Record{}, err
+ 	}
+-	if next.Label == current.Label && next.StartURL == current.StartURL && next.Disabled == current.Disabled && next.DisplayPreference == current.DisplayPreference {
++	if next.Label == current.Label && next.StartURL == current.StartURL && next.Disabled == current.Disabled && next.DisplayPreference == current.DisplayPreference && next.UIScalingPercent == current.UIScalingPercent {
+ 		return current, nil
+ 	}
+ 	next.Revision = current.Revision + 1
+--- a/internal/profile/service.go
++++ b/internal/profile/service.go
+@@ -36,6 +36,7 @@
+ 	// replaces the ID used by entry paths, journals or authorization.
+ 	Label               string  `json:"label,omitempty"`
+ 	DisplayPreference   string  `json:"display_preference,omitempty"`
++	UIScalingPercent    int     `json:"ui_scaling_percent,omitempty"`
+ 	ResolutionMode      string  `json:"resolution_mode,omitempty"`
+ 	ApplicationID       string  `json:"application_id"`
+ 	HomeName            string  `json:"home_name"`
+@@ -385,6 +386,15 @@
+ // locking. It never touches a running generation: the next launch reads the
+ // new start URL, and a disabled browser only refuses new launches and reuse.
+ func (s *Service) UpdateBrowser(id string, expectedRevision int, actor string, patch BrowserPatch) (Record, error) {
++	if patch.UIScalingPercent != nil && *patch.UIScalingPercent != 0 {
++		record, ok := s.directory.record(id)
++		if !ok {
++			return Record{}, ErrProfileNotFound
++		}
++		if !s.supportsUIScaling(record.Definition) {
++			return Record{}, errors.New("UI scaling requires an automatic system-DPI display")
++		}
++	}
+ 	return s.directory.update(id, expectedRevision, actor, patch)
+ }
+ 
+@@ -769,6 +779,12 @@
+ }
+ 
+ func validateDefinition(definition Definition) error {
++	if !validUIScaling(definition.UIScalingPercent) {
++		return errors.New("invalid ui_scaling_percent")
++	}
++	if definition.UIScalingPercent != 0 && definition.ResolutionMode != "auto" && !(definition.BrowserTemplateID == "" && definition.WaylandMode) {
++		return errors.New("UI scaling cannot change fixed display DPI")
++	}
+ 	if definition.ResolutionMode != "" && definition.ResolutionMode != "auto" {
+ 		return errors.New("resolution_mode must be auto or empty")
+ 	}
+--- a/internal/profile/template_catalog.go
++++ b/internal/profile/template_catalog.go
+@@ -406,6 +406,7 @@
+ func definitionWithTemplateBinding(base Definition, binding TemplateBinding) Definition {
+ 	next := base
+ 	next.ResolutionMode = binding.ResolutionMode
++	next.UIScalingPercent = 0
+ 	if next.ResolutionMode == "auto" {
+ 		next.DisplayPreference = ""
+ 	}
+--- a/internal/profile/ui_scaling.go
++++ b/internal/profile/ui_scaling.go
+@@ -0,0 +1,36 @@
++package profile
++
++import "context"
++
++// UIScalingPreference reads the Profile's shared presentation setting. Fixed
++// screen/DPR contracts never acquire mutable DPI from this preference.
++func (s *Service) UIScalingPreference(id string) (percent, revision int, supported bool) {
++	record, ok := s.directory.record(id)
++	if !ok || record.Status != RecordReady {
++		return 0, 0, false
++	}
++	return record.UIScalingPercent, record.Revision, s.supportsUIScaling(record.Definition)
++}
++
++func (s *Service) supportsUIScaling(def Definition) bool {
++	if def.BrowserTemplateID == "" {
++		return def.WaylandMode // Legacy Work's native automatic display.
++	}
++	if def.ResolutionMode != "auto" || s.templateCatalog == nil {
++		return false
++	}
++	data, err := s.templateCatalog.Read(context.Background())
++	if err != nil {
++		return false
++	}
++	for _, display := range data.DisplayTemplates {
++		if display.ID == def.DisplayTemplateID && display.Revision == def.DisplayTemplateRevision && display.Status == "accepted" {
++			return display.Screen == "auto@system" && display.Scaling == "auto"
++		}
++	}
++	return false
++}
++
++func validUIScaling(percent int) bool {
++	return percent == 0 || (percent >= 100 && percent <= 300 && percent%25 == 0)
++}
+--- a/internal/profile/ui_scaling_test.go
++++ b/internal/profile/ui_scaling_test.go
+@@ -0,0 +1,89 @@
++package profile
++
++import (
++	"path/filepath"
++	"sync"
++	"testing"
++)
++
++func TestUIScalingLegacyPersistsAndRejectsConcurrentOverwrite(t *testing.T) {
++	path := filepath.Join(t.TempDir(), "profiles.json")
++	seed := []Definition{{ID: "work", ApplicationID: "app", HomeName: "home", StartURL: "https://example.com", WaylandMode: true}, {ID: "fixed", ApplicationID: "fixed", HomeName: "fixed", StartURL: "https://example.com"}}
++	service, fake := directoryService(t, path, seed)
++	p := 150
++	if _, err := service.UpdateBrowser("fixed", 1, "owner", BrowserPatch{UIScalingPercent: &p}); err == nil {
++		t.Fatal("fixed DPI modified")
++	}
++	var wg sync.WaitGroup
++	results := make(chan error, 2)
++	for _, value := range []int{150, 200} {
++		wg.Add(1)
++		go func(value int) {
++			defer wg.Done()
++			_, err := service.UpdateBrowser("work", 1, "owner", BrowserPatch{UIScalingPercent: &value})
++			results <- err
++		}(value)
++	}
++	wg.Wait()
++	close(results)
++	success, conflict := 0, 0
++	for err := range results {
++		if err == nil {
++			success++
++		} else if err == ErrRevisionMismatch {
++			conflict++
++		} else {
++			t.Fatal(err)
++		}
++	}
++	if success != 1 || conflict != 1 {
++		t.Fatal("concurrent setting overwrote accepted update")
++	}
++	reloaded, _ := directoryService(t, path, seed)
++	percent, revision, supported := reloaded.UIScalingPreference("work")
++	if !supported || revision != 2 || (percent != 150 && percent != 200) || fake.stopCalls != 0 {
++		t.Fatal("setting or runtime ownership lost")
++	}
++	for _, bad := range []int{-1, 99, 101, 301} {
++		if _, err := reloaded.UpdateBrowser("work", 2, "owner", BrowserPatch{UIScalingPercent: &bad}); err == nil {
++			t.Fatalf("accepted %d", bad)
++		}
++	}
++	p = 0
++	if _, err := reloaded.UpdateBrowser("work", 2, "owner", BrowserPatch{UIScalingPercent: &p}); err != nil {
++		t.Fatal(err)
++	}
++	again, _ := directoryService(t, path, seed)
++	percent, revision, supported = again.UIScalingPreference("work")
++	if percent != 0 || revision != 3 || !supported {
++		t.Fatal("reset not persisted")
++	}
++}
++
++func TestUIScalingRespectsBoundDisplayContract(t *testing.T) {
++	def := Definition{ID: "personal", ApplicationID: "app", HomeName: "home", StartURL: "https://example.com", BrowserTemplateID: "camoufox", BrowserTemplateRevision: 1, EnvironmentArtifactID: "env", EnvironmentArtifactSHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", EnvironmentSource: "frozen", EnvironmentTemplateRevision: 1, DisplayTemplateID: "auto", DisplayTemplateRevision: 1, ResolutionMode: "auto"}
++	service, _ := directoryService(t, filepath.Join(t.TempDir(), "profiles.json"), []Definition{def})
++	catalog := TemplateCatalogData(r7dCatalog())
++	catalog.DisplayTemplates[0].ID = "auto"
++	catalog.DisplayTemplates[0].Screen = "auto@system"
++	catalog.DisplayTemplates[0].Scaling = "auto"
++	catalog.Compatibility[0].DisplayTemplateID = "auto"
++	service.templateCatalog = StaticTemplateCatalog(catalog)
++	p := 200
++	if _, err := service.UpdateBrowser("personal", 1, "owner", BrowserPatch{UIScalingPercent: &p}); err != nil {
++		t.Fatal(err)
++	}
++	catalog.DisplayTemplates[0].Screen = "auto@1"
++	service.templateCatalog = StaticTemplateCatalog(catalog)
++	if _, _, supported := service.UIScalingPreference("personal"); supported {
++		t.Fatal("fixed DPR auto template supported")
++	}
++	p = 150
++	if _, err := service.UpdateBrowser("personal", 2, "owner", BrowserPatch{UIScalingPercent: &p}); err == nil {
++		t.Fatal("auto@1 DPI changed")
++	}
++	def.UIScalingPercent = 200
++	if changed := definitionWithTemplateBinding(def, templateBindingFromDefinition(def)); changed.UIScalingPercent != 0 {
++		t.Fatal("template transition retained mutable DPI")
++	}
++}

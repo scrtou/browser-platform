@@ -1,5 +1,7 @@
 # 设计偏差记录
 
+
+- [DEV-130：缩放保存当前资产覆盖](DEV-2026-10-02-130-scaling-asset-coverage.md) · R6AR 已修复并部署。
 [DEV-129 Relay APK 版本留存](DEV-2026-10-02-129-relay-apk-version-retention.md)：已解决并部署，明确补丁锁、全部集成与异机镜像核对通过。
 
 [DEV-128 灾备 QA Cookie 有效期](DEV-2026-10-02-128-recovery-cookie-lifetime.md)：已解决；一年期合成 sentinel 新检查点跨机读回/回退通过，历史过期证据保留。

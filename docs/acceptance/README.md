@@ -1,5 +1,7 @@
 # 验收索引
 
+
+- [R6AR 缩放保存与旧 Work](../../infra/sealskin/r6ar-display-persistence-acceptance-2026-10-02.md)：已部署，30 真实显示场景与源码/权限/并发/恢复增量通过。
 [R6AQ 共享 journald 预算](../../infra/sealskin/r6aq-journald-acceptance-2026-10-02.md)：已部署，有效配置/日志收发/生产保护通过。
 
 [R7G1 动态代理部署](../../infra/sealskin/r7g1-deployment-acceptance-2026-10-02.md)：571 控制器、52 Guard QA、22 组实机及保护部署/异机增量通过。
