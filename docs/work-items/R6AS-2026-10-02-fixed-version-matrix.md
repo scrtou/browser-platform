@@ -19,6 +19,8 @@
 - Camoufox 六协议组合共70项网络/失败检查、HTTP/HTTPS/WS/WSS及恢复读回已通过。前五组位于 `camoufox/protocols-1790947206/`；HTTPS basic 最终完整通过位于 `camoufox/protocols-1790948379/`。此前恢复调试端口尚未就绪的失败保留，修正只增加只读就绪等待，不重发已可能执行的操作。
 - 原生 Firefox 异机加密检查点恢复、再打开、第二检查点回退、源指纹及三类存储、认证显示/输入、HTTPS/旁路拒绝通过；真实身份未启用。
 - R6Z1 的同版本修订证据已复核：3项发布恢复/失败保留、同种子新镜像的22份观察与离线恢复通过；这些证据不代表跨浏览器大版本或任意旧 Home 迁移。
-- Camoufox服务器补丁在线升级、新Relay代次和程序回退均通过；原Worker（在线升级）、固定环境及三类存储核对通过。其DIRECT及另外两引擎完整矩阵继续进行。Chromix 既定策略保留 WebRTC API 并禁止未代理 UDP；QA按此契约实际尝试ICE并核对包观测，Firefox系列仍断言API禁用。没有降低旁路拒绝要求。
+- Camoufox服务器补丁在线升级、新Relay代次和程序回退均通过；原Worker（在线升级）、固定环境及三类存储核对通过。其DIRECT九阶段也已通过（恢复使用修正夹具重测），22项DIRECT核心检查和最终独立资源清理核对通过；另外两引擎矩阵继续进行。Chromix 既定策略保留 WebRTC API 并禁止未代理 UDP；QA按此契约实际尝试ICE并核对包观测，Firefox系列仍断言API禁用。没有降低旁路拒绝要求。
 
 工具：`run-fixed-version-matrix.py` 串行准备、六协议、程序升级、DIRECT和清理；`native-network-client.py`仅在QA挂载目录使用CDP/BiDi；`check-fixed-program-upgrade.py`通过真实Adapter入口、正常停止及独立状态验证旧/新程序。全部详细证据位于被忽略的 `infra/sealskin/runtime/r6as-fixed-matrix-20261002/`。本项仍未收尾，完整结果和清理须继续核验。
+
+DIRECT恢复发现旧QA控制器重建遗漏当前显示tmpfs依赖，已登记[DEV-131](../deviations/DEV-2026-10-02-131-native-qa-controller-recreation.md)，保留原失败并修正夹具后重测。

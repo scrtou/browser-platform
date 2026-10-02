@@ -21,6 +21,8 @@ def main():
     spec.loader.exec_module(mod)
     checks = mod.Checks(qa)
     release = json.loads((build / "release.json").read_text())
+    images = json.loads((qa / "images.json").read_text())
+    assert release.get("release"), "Missing fixed QA release identifier"
     old = json.loads(mod.docker("inspect", mod.SERVER).stdout)[0]
     assert old["Config"]["Labels"][mod.PREFIX + "qa"] == "network-20260913"
     assert old["HostConfig"]["NetworkMode"] == "browser-platform-network-qa"
@@ -37,7 +39,8 @@ def main():
     firefox = None
     worker_path = qa / "browser-worker.json"
     if worker_path.exists():
-        worker = json.loads(worker_path.read_text())["instance_id"]
+        worker_info = json.loads(worker_path.read_text())
+        worker = worker_info["instance_id"]
         script = """import json
 from pathlib import Path
 out=[]
@@ -51,6 +54,9 @@ for p in Path('/proc').glob('[0-9]*'):
 assert len(out)==1
 print(json.dumps(out))
 """
+        if worker_info.get("native_engine"):
+            assert worker_info["native_engine"] in ("camoufox", "chromix", "firefox")
+            script = script.replace("(b'--remote-debugging-port' in args and b'9228' in args)", "b'--remote-debugging-port=9222' in args")
         firefox = mod.docker("exec", worker, "python3", "-c", script).stdout
     direct = any(value.get("policy", {}).get("mode") == "direct" for value in live)
     direct_mounts = []
@@ -59,6 +65,16 @@ print(json.dumps(out))
         assert any(m.get("Source") == source and m.get("Destination") == destination and m.get("RW") is False
                    for m in old["Mounts"]), "DIRECT recovery requires the fixed read-only host evidence mount"
         direct_mounts = ["--mount", "type=bind,src=" + source + ",dst=" + destination + ",readonly"]
+    display_mounts = []
+    allowed = json.loads((qa / "allow.json").read_text())
+    if allowed.get("display_runtime_root"):
+        display_root = Path(allowed["display_runtime_root"])
+        assert display_root.parent == Path("/dev/shm") and display_root.resolve() == display_root
+        assert display_root.is_dir() and display_root.stat().st_uid == 1000
+        target = "/run/browser-platform-session-secrets"
+        existing = [m for m in old["Mounts"] if m["Destination"] == target]
+        assert not existing or len(existing) == 1 and existing[0]["Source"] == str(display_root) and existing[0]["RW"]
+        display_mounts = ["-v", str(display_root) + ":" + target]
     mod.docker("stop", "-t", "10", mod.SERVER)
     mod.docker("rm", mod.SERVER)
     mod.docker(
@@ -67,7 +83,7 @@ print(json.dumps(out))
         "-e", "PUID=1000", "-e", "PGID=1000", "-e", "TZ=Etc/UTC", "-e", "HOST_URL=network.invalid",
         "-v", str(qa / "config") + ":/config", "-v", str(qa / "storage") + ":/storage",
         "-v", "/tmp/browser-platform-network-qa-docker.sock:/var/run/docker.sock",
-        "-p", "127.0.0.1:28110:8000", *direct_mounts, release["image"],
+        "-p", "127.0.0.1:28110:8000", *direct_mounts, *display_mounts, release["image"],
     )
     mod.wait(lambda: mod.request("POST", "/api/handshake/initiate")[0] == 200, "recreated QA controller")
     current = json.loads(mod.docker("inspect", mod.SERVER).stdout)[0]
@@ -91,7 +107,7 @@ print(json.dumps(out))
     report = {"result": "PASS", "controller_recreated": True, "live_generations": len(live),
               "workers_and_network_containers_preserved": True, "firefox_process_preserved": bool(firefox),
               "display_reconnected_at_original_address": True, "direct_host_evidence_preserved": bool(direct_mounts),
-              "release": release["release"]}
+              "display_runtime_preserved": bool(display_mounts), "release": release["release"]}
     mod.write_json(qa.parent / "controller-recreation-results.json", report)
     print(json.dumps(report))
 

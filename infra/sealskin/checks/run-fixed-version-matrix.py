@@ -14,7 +14,7 @@ def main():
  if a.phase=='prepare':
   work.mkdir(mode=0o700);(qa/'bin').mkdir(parents=True,mode=0o700)
   for file in (root/'inputs/bin').iterdir():shutil.copy2(file,qa/'bin'/file.name)
-  build=work/'build';build.mkdir();(build/'release.json').write_text(json.dumps({'image':CONTROLLER}))
+  build=work/'build';build.mkdir();(build/'release.json').write_text(json.dumps({'image':CONTROLLER,'release':'r7g1-fixed-native-qa'}))
   display.mkdir(mode=0o700)
   source=work/'native-source';source.mkdir()
   for name in ['qa-browser.py','browser_client.py']:shutil.copy2(PROJECT/'infra/environment-engines'/name,source/name)
@@ -38,8 +38,10 @@ def main():
  else:
   spec=importlib.util.spec_from_file_location('matrix',Path(__file__).with_name('check-proxy-protocols.py'));m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
   matrix=m.Matrix(qa,work/('retire-'+str(int(time.time()))));matrix.stop()
-  for suffix in ['a','b']:
-   assert all(not matrix.checks.snapshot(suffix)[key] for key in ['records','workers','resources'])
+  for profile in ['network-qa-browser','network-qa-b']:
+   home=matrix.checks.definitions[profile]['home_name']
+   status,snapshot=matrix.checks.client.call('GET','/api/profile-runtime/'+home)
+   assert status==200 and all(not snapshot[key] for key in ['records','workers','resources'])
   assert not (qa/'adapter-pid.json').exists(), 'Retire the owned Adapter first'
   names=['network-qa-observer','network-qa-upstream','sealskin-network-qa']
   if subprocess.run(['docker','inspect','network-qa-direct-dns'],capture_output=True).returncode==0:names.insert(0,'network-qa-direct-dns')
