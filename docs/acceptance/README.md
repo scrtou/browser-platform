@@ -1,6 +1,6 @@
 # 验收索引
 
-[R6AS 固定版本矩阵](../../infra/sealskin/r6as-fixed-version-matrix-acceptance-2026-10-02.md)：进行中；Camoufox全部阶段及清理通过，其余原生引擎继续验证。
+[R6AS 固定版本矩阵](../../infra/sealskin/r6as-fixed-version-matrix-acceptance-2026-10-02.md)：进行中；Camoufox/Chromix全部阶段及清理通过，Firefox继续验证。
 
 
 - [R6AR 缩放保存与旧 Work](../../infra/sealskin/r6ar-display-persistence-acceptance-2026-10-02.md)：已部署，30 真实显示场景与源码/权限/并发/恢复增量通过。

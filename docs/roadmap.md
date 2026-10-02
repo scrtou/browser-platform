@@ -1,6 +1,6 @@
 # 开发计划
 
-当前工作：[R6AS 固定版本完整矩阵](work-items/R6AS-2026-10-02-fixed-version-matrix.md)进行中；R6AR 已部署收尾，当前补齐实际 Guard/Relay 网络与升级恢复证据。
+当前工作：[R6AS 固定版本完整矩阵](work-items/R6AS-2026-10-02-fixed-version-matrix.md)进行中；R6AR 已部署收尾；Camoufox/Chromix 完整固定矩阵与清理已通过，Firefox 矩阵进行中，随后统一封存发布版本。
 
 当前工作：[R6AR 缩放保存与旧 Work](work-items/R6AR-2026-10-02-display-persistence.md)已收尾并部署；旧 Work 与三引擎 30 个真实显示场景、完整 Go test/vet、针对性 race、保护发布和 128 文件异机增量通过。下一项为固定版本网络/升级恢复矩阵。
 

@@ -24,3 +24,7 @@
 工具：`run-fixed-version-matrix.py` 串行准备、六协议、程序升级、DIRECT和清理；`native-network-client.py`仅在QA挂载目录使用CDP/BiDi；`check-fixed-program-upgrade.py`通过真实Adapter入口、正常停止及独立状态验证旧/新程序。全部详细证据位于被忽略的 `infra/sealskin/runtime/r6as-fixed-matrix-20261002/`。本项仍未收尾，完整结果和清理须继续核验。
 
 DIRECT恢复发现旧QA控制器重建遗漏当前显示tmpfs依赖，已登记[DEV-131](../deviations/DEV-2026-10-02-131-native-qa-controller-recreation.md)，保留原失败并修正夹具后重测。
+
+Chromix六协议70项网络检查、四传输和恢复已通过，继续同引擎程序升级/回退与DIRECT。原生进程观察修正已提交`1a79038`；不把阶段结果写作整个R6AS完成。
+
+Chromix程序升级/回退与DIRECT九阶段22项检查均已通过，隔离资源独立核对清零；182份证据已回传校验。Firefox已准备并进入最后一份六协议矩阵，仍不提前收尾。

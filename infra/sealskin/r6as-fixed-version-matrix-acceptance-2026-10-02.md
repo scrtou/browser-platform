@@ -7,7 +7,7 @@
 | 固定目标 | SOCKS5 none / password | HTTP none / basic | HTTPS none / basic | DIRECT双Home | 程序升级/回退 |
 | --- | --- | --- | --- | --- | --- |
 | Camoufox152.0 | PASS / PASS | PASS / PASS | PASS / PASS | PASS，9阶段 | PASS，3阶段 |
-| Chromix154.0.8037.57 | 待验收 | 待验收 | 待验收 | 待验收 | 待验收 |
+| Chromix154.0.8037.57 | PASS / PASS | PASS / PASS | PASS / PASS | PASS，9阶段 | PASS，3阶段 |
 | Firefox155.0.1 | 待验收 | 待验收 | 待验收 | 待验收 | 待验收 |
 
 固定镜像：
@@ -27,3 +27,5 @@
 详细证据在被忽略的 `infra/sealskin/runtime/r6as-fixed-matrix-20261002/`。Camoufox前五组完整成功位于 `protocols-1790947206/`，HTTPS basic最终成功位于 `protocols-1790948379/`；原恢复就绪时序失败保留。只增加调试端口的只读等待，未重发可能已经执行的操作。商业供应方自然DNS漂移仍NOT_TESTED，不用私有夹具冒充真实供应方。
 
 Camoufox DIRECT原恢复轮次因QA重建工具遗漏显示tmpfs挂载失败，见[DEV-131](../../docs/deviations/DEV-2026-10-02-131-native-qa-controller-recreation.md)。保留原失败，修正后重测恢复/清理：控制器重建保持浏览器进程与显示连接、同代次恢复读取三类存储、两个失败预检不启动Worker、清理中断保留占用且重试成功。
+
+Chromix六协议完整通过位于`chromix/protocols-1790951978/`，共70项网络检查及四传输/恢复读回；之前的原生命令行身份观察失败保留，最终使用共享主进程观察器排除renderer。
