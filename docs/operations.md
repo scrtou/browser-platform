@@ -264,3 +264,5 @@ R6AA UI限定发布：只替换Adapter并重启profile-adapter.service，R6Z1执
 [机器容量策略](capacity-policy.md)：自动计算、逐项覆盖、实时内存保护和只读诊断。
 
 2026-10-02：[R7G1 动态代理已部署](../infra/sealskin/r7g1-deployment-acceptance-2026-10-02.md)。新建域名策略采用动态 Relay；既有策略/静态代次及 DIRECT 默认保持。旧控制器回退前须正常清理全部动态代次并核对无 pending/lease，不能回放旧用户数据。商业供应方自然漂移与新 GUI 热切换观察未测，用户已允许部署。
+
+2026-10-02：R6AQ [共享 journald 预算](../infra/monitoring/journald-budget.md)已部署：持久/运行 512/64 MiB、最多 30 天、最长 1 天文件轮换。服务/日志读回及保护核对通过；不保证保留满 30 天，长期自然到期仍需持续观察。Docker 日志与业务 journal 独立管理。

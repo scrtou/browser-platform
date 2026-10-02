@@ -583,3 +583,5 @@ R6R 扩展通用来源到三个固定引擎，能力与原生设备特征边界�
 R6S将两类显示策略共同开放给三个引擎：自定义fixed/DPR1、内置auto/system。E01/E02按显示策略比较：固定模式精确屏幕/窗口，自动模式允许screen/window/DPR变化并保持其他字段；实际UI Scaling、输入、重连与上限必须独立验收。同一DPR下画布稳定性仍须匹配。具体格式和历史兼容见[管理规格](management.md#r6s-三引擎共用显示模板)。
 
 2026-10-02：[R7G1 动态代理已部署](../../../infra/sealskin/r7g1-deployment-acceptance-2026-10-02.md)。新建域名策略采用动态 Relay；既有策略/静态代次及 DIRECT 默认保持。旧控制器回退前须正常清理全部动态代次并核对无 pending/lease，不能回放旧用户数据。商业供应方自然漂移与新 GUI 热切换观察未测，用户已允许部署。
+
+2026-10-02：R6AQ [共享 journald 预算](../../../infra/monitoring/journald-budget.md)已部署：持久/运行 512/64 MiB、最多 30 天、最长 1 天文件轮换。服务/日志读回及保护核对通过；不保证保留满 30 天，长期自然到期仍需持续观察。Docker 日志与业务 journal 独立管理。
