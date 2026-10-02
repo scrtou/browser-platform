@@ -1,5 +1,9 @@
 # 设计偏差记录
 
+[DEV-145 客户端DPR与尺寸截断](DEV-2026-10-02-145-client-dpr-resolution-clamp.md)：修复中；R6AW确认实际JS初连逐轴截断/resize重复DPR，按原尺寸契约修复三引擎镜像。
+
+[DEV-144 BiDi初始文档就绪](DEV-2026-10-02-144-bidi-initial-document-readiness.md)：处理中；R6AW端口先于初始文档就绪，补有界轮询/记录且保留完整观察门槛。
+
 [DEV-143 重连输入验收](DEV-2026-10-02-143-remote-reconnect-input.md)：诊断中；R6AW非root自动显示重连文本未精确匹配，保留失败并补诊断。
 
 [DEV-142 独立机QA运行身份](DEV-2026-10-02-142-remote-qa-runtime-user.md)：处理中；R6AW首任务误用UID0被正确拒绝，改为独立非root合成QA后重验。

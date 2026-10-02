@@ -1,8 +1,31 @@
 """QA-only CDP/BiDi observation; never installed in a Worker image."""
 import json
+import time
 import urllib.request
 from urllib.parse import urlsplit
 from check_bidi import WebSocket,BiDi
+
+def wait_initial_page(client, timeout=30, *, clock=time.monotonic, sleep=time.sleep):
+    """Observe the initial HTTPS document before any storage or input mutation."""
+    deadline=clock()+timeout
+    transient=[]
+    while clock()<deadline:
+        try:
+            if client.engine!='chromix':
+                contexts=client.bidi.command('browsingContext.getTree',{})['contexts']
+                candidates=[c for c in contexts if c.get('url','').startswith('https://example.com/')]
+                if not candidates:
+                    sleep(.5)
+                    continue
+                client.context=candidates[0]['context']
+            if client.evaluate('document.title')=='Example Domain':
+                return transient
+        except RuntimeError as error:
+            if str(error) not in ('script.evaluate failed: no such frame','script.evaluate failed: unknown error'):
+                raise
+            transient.append(str(error))
+        sleep(.5)
+    raise AssertionError('NATIVE_QA_HTTPS_FAILED: initial document unavailable; '+repr(transient))
 
 class Browser:
     def __init__(self,engine):

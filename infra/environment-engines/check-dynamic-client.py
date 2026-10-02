@@ -12,6 +12,11 @@ from browser_client import Browser
 config=json.load(sys.stdin)
 output=Path('/qa-output')
 remote_browser=Browser(config['engine']);remote=remote_browser.evaluate
+def require_input(expected, code):
+    observed=remote("({value:document.querySelector('#qa').value,active:document.activeElement.id,focus:document.hasFocus(),dpr:devicePixelRatio,screen:[screen.width,screen.height]})")
+    if observed['value']!=expected:
+        (output/'input-failure.json').write_text(json.dumps({'expected':expected,'observed':observed,'code':code},indent=2))
+        raise AssertionError(code)
 def settled(page):
     previous=None;count=0;deadline=time.monotonic()+10
     while time.monotonic()<deadline:
@@ -70,7 +75,7 @@ with sync_playwright() as p:
             page.wait_for_timeout(50)
         page.keyboard.type('resize-check',delay=30)
         page.wait_for_timeout(500)
-        assert remote("document.querySelector('#qa').value")=='resize-check', 'RESIZED_INPUT_COORDINATES_FAILED'
+        require_input('resize-check', 'RESIZED_INPUT_COORDINATES_FAILED')
         rows[-1]['click_and_type']=True;rows[-1]['fingerprint']=fingerprint()
     context.close()
     for width,height,dpr in [(1024,768,1),(1024,768,2),(2560,1440,2)]:
@@ -104,7 +109,7 @@ with sync_playwright() as p:
             page.wait_for_timeout(50)
         page.keyboard.type('reconnect-check',delay=30)
         page.wait_for_timeout(500)
-        assert remote("document.querySelector('#qa').value")=='reconnect-check', 'RECONNECT_INPUT_FAILED'
+        require_input('reconnect-check', 'RECONNECT_INPUT_FAILED')
         rows[-1]['click_and_type']=True;rows[-1]['fingerprint']=fingerprint()
         (output/'client-resize.json').write_text(json.dumps({'samples':rows,'page_errors':errors},indent=2))
         context.close()
@@ -142,7 +147,7 @@ with sync_playwright() as p:
                 page.wait_for_timeout(50)
             page.keyboard.type('scaling-check',delay=30)
             page.wait_for_timeout(300)
-            assert remote("document.querySelector('#qa').value")=='scaling-check'
+            require_input('scaling-check', 'SCALING_INPUT_FAILED')
             page.screenshot(path=str(output/f'scaling-{dpi}-{width}.png'))
             scaling.append({'dpi':dpi,'client':[width,height],'remote':value,'click_and_type':True,'fingerprint':fingerprint()})
             (output/'client-scaling.json').write_text(json.dumps({'samples':scaling},indent=2))

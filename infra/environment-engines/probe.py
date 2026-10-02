@@ -14,18 +14,9 @@ spec=json.loads(Path('/run/browser-platform/environment.json').read_bytes());eng
 if engine=='camoufox':
     source=spec;spec=dict(source['spec']);screen=spec['screen'];spec['screen']={**screen,'dpr':'system' if screen.get('mode')=='auto' else 1}
 chromix=engine=='chromix'
-from browser_client import Browser
+from browser_client import Browser,wait_initial_page
 client=Browser(engine);evaluate=client.evaluate
-for _ in range(60):
-    try:
-        if not chromix:
-            contexts=client.bidi.command('browsingContext.getTree',{})['contexts']
-            if contexts:client.context=next((c['context'] for c in contexts if c.get('url','').startswith('https://example.com')),contexts[0]['context'])
-        if evaluate('document.title')=='Example Domain':break
-    except RuntimeError as error:
-        if str(error)!='script.evaluate failed: no such frame':raise
-    time.sleep(.5)
-else:raise AssertionError('NATIVE_QA_HTTPS_FAILED')
+startup_errors=wait_initial_page(client)
 assert evaluate('location.href').startswith('https://example.com/')
 root=Path(__file__).parent
 storage=(root/'storage.js').read_text();marker='native-home-'+a.role
@@ -61,4 +52,4 @@ document.querySelector('#input').oninput=e=>document.title='typed:'+e.target.val
 const points=[[20,20],[innerWidth-70,20],[innerWidth-70,innerHeight-60]];
 points.forEach(([x,y],i)=>{let b=document.createElement('button');b.style=`position:absolute;left:${x}px;top:${y}px;width:50px;height:40px`;b.innerText='hit'+i;b.onclick=()=>document.title='hit'+i;document.body.appendChild(b)});
 return {points:points.map(([x,y])=>[x+25,y+20]),inner:[innerWidth,innerHeight]};})()""")
-print(json.dumps({'role':a.role,'iteration':a.iteration,'observed':observed,'network':network,'stores':expected,'geometry':geometry}));client.close()
+print(json.dumps({'role':a.role,'iteration':a.iteration,'startup_errors':startup_errors,'observed':observed,'network':network,'stores':expected,'geometry':geometry}));client.close()

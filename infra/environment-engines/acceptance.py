@@ -52,9 +52,6 @@ def run_one(spec,artifact,home,root,network,role,iteration,auth,material,client_
     if engine=='chromix':cmd+=['--security-opt','seccomp='+str(PROJECT/'infra/chromix/seccomp.json')]
     for source,target,readonly in [(home,'/config',False),(artifact,'/run/browser-platform/environment.json',True),(material,'/run/browser-platform-session-input',True),(root/'autostart','/defaults/autostart',True),(root/'qa-source','/qa',True)]:
         cmd+=['--mount',f'type=bind,src={source},dst={target}'+(',readonly' if readonly else '')]
-    if spec['screen'].get('mode')=='auto' and role=='A' and iteration==0:
-        (root/'dynamic-client').mkdir(mode=0o700,exist_ok=True)
-        cmd+=['--mount',f"type=bind,src={client_browsers or PROJECT/'infra/camoufox/.build/playwright-client-browsers'},dst=/client-browsers,readonly",'--mount',f'type=bind,src={root}/dynamic-client,dst=/qa-output']
     env=environment(spec,hashlib.sha256(artifact.read_bytes()).hexdigest());env['SUBFOLDER']='/'+sid+'/'
     if accepted_entrypoint:
         report=artifact.with_name('acceptance.json')
@@ -106,7 +103,20 @@ c.request('GET',PATH,headers={'Authorization':'Basic '+base64.b64encode(AUTH.enc
             shot=subprocess.run(['docker','exec','--user',str(os.getuid()),'-e','DISPLAY=:1',name,'xwd','-root','-silent'],capture_output=True,check=True)
             (root/(role+'-desktop.png')).write_bytes(png(shot.stdout))
         if spec['screen'].get('mode')=='auto' and role=='A' and iteration==0:
-            client=docker('exec','--user',str(os.getuid()),'-e','PLAYWRIGHT_BROWSERS_PATH=/client-browsers','-i',name,'/opt/camoufox-python/bin/python','/qa/check-dynamic-client.py',input=json.dumps({'user':user,'password':password,'sid':sid,'engine':engine,'system_dpi':True}),check=False,timeout=240)
+            # Keep synthetic client decoding/input outside the worker's CPU and
+            # memory budget. Shared loopback is only for QA display/BiDi access;
+            # the worker keeps its original limits and isolated proxy network.
+            client_output=root/'dynamic-client';client_output.mkdir(mode=0o700,exist_ok=True)
+            client=docker('run','--rm','-i','--name',name+'-client','--label','io.browser-platform.qa=native-client',
+                '--network','container:'+name,'--user',str(os.getuid())+':'+str(os.getgid()),
+                '--memory','1536m','--cpus','1.5','--pids-limit','256','--shm-size','256m',
+                '--read-only','--tmpfs','/tmp:rw,nosuid,nodev,size=256m','--cap-drop','ALL',
+                '--security-opt','no-new-privileges:true','-e','PLAYWRIGHT_BROWSERS_PATH=/client-browsers',
+                '--mount',f'type=bind,src={root}/qa-source,dst=/qa,readonly',
+                '--mount',f'type=bind,src={client_output},dst=/qa-output',
+                '--mount',f"type=bind,src={client_browsers or PROJECT/'infra/camoufox/.build/playwright-client-browsers'},dst=/client-browsers,readonly",
+                '--entrypoint','/opt/camoufox-python/bin/python',spec['runtimeImageDigest'],'/qa/check-dynamic-client.py',
+                input=json.dumps({'user':user,'password':password,'sid':sid,'engine':engine,'system_dpi':True}),check=False,timeout=240)
             (root/'dynamic-client.log').write_text(client.stdout+client.stderr)
             assert client.returncode==0,'DYNAMIC_CLIENT_FAILED'
         stop=docker('exec','--user',str(os.getuid()),name,'python3','/usr/local/lib/browser-platform/browser-shutdown.py','--timeout','12',check=False)
@@ -115,6 +125,12 @@ c.request('GET',PATH,headers={'Authorization':'Basic '+base64.b64encode(AUTH.enc
         success=True
         return observed
     finally:
+        client_name=name+'-client'
+        if docker('inspect','--type','container',client_name,check=False).returncode==0:
+            # A timed-out client CLI can leave its container running. Close that
+            # synthetic client before releasing the worker's network namespace.
+            docker('stop','-t','10',client_name)
+            docker('rm','-v',client_name,check=False)
         logs=docker('logs',name,check=False);(root/(role+'-'+str(iteration)+'-worker.log')).write_text(logs.stdout+logs.stderr)
         if not success:
             # Preserve evidence, but release QA resources whenever a normal
