@@ -16,7 +16,7 @@ results=[];created=[]
 try:
  for index,original in enumerate(originals):
   profile=original['Config']['Labels']['io.browser-platform.profile'];name='bp-r6au-offline-'+profile;sid=str(uuid.uuid4());sd=secretroot/sid;sd.mkdir(mode=0o700);uid=1000;os.chown(sd,uid,uid)
-  salt=secrets.token_bytes(16);password=secrets.token_bytes(32);basic=str(uuid.uuid4())+':{SSHA}'+base64.b64encode(hashlib.sha1(password+salt).digest()+salt).decode()+'\n'
+  salt=secrets.token_bytes(16);password=secrets.token_urlsafe(32).encode();basic=str(uuid.uuid4())+':{SSHA}'+base64.b64encode(hashlib.sha1(password+salt).digest()+salt).decode()+'\n'
   for key,value in {'binding.json':json.dumps({'version':1,'session_id':sid,'uid':uid}).encode(),'basic.htpasswd':basic.encode(),'master-token':secrets.token_urlsafe(32).encode()}.items():
    f=sd/key;f.write_bytes(value);f.chmod(0o600);os.chown(f,uid,uid)
   env=dict(x.split('=',1) for x in original['Config']['Env']);env['SUBFOLDER']='/'+sid+'/';env['SELKIES_ALLOWED_ORIGINS']='http://127.0.0.1';env['SEALSKIN_URL']='http://127.0.0.1:1'
@@ -42,6 +42,19 @@ try:
    time.sleep(2)
   cmd(['docker','logs','--tail','120',name],name+'-logs.txt',False);assert observed is not None,'offline browser startup missing: '+profile
   route=cmd(['docker','exec',name,'cat','/proc/net/route'],name+'-routes.txt').stdout.decode().splitlines();assert len(route)==1
+  display_code="""import sys,json,urllib.request,urllib.error,base64
+v=json.load(sys.stdin);url='http://127.0.0.1:3000/'+v['sid']+'/'
+try:
+ urllib.request.urlopen(url,timeout=5);denied=False
+except urllib.error.HTTPError as e:denied=e.code in (401,403)
+auth=base64.b64encode((v['user']+':'+v['password']).encode()).decode()
+with urllib.request.urlopen(urllib.request.Request(url,headers={'Authorization':'Basic '+auth}),timeout=5) as response:assert response.status==200
+assert denied
+print(json.dumps({'display_authenticated':True,'unauthenticated_blocked':True}))
+"""
+  display=subprocess.run(['docker','exec','-i',name,'python3','-c',display_code],input=json.dumps({'sid':sid,'user':basic.split(':',1)[0],'password':password.decode()}).encode(),capture_output=True,timeout=20)
+  (qa/(name+'-display.json')).write_bytes(display.stdout+display.stderr);assert display.returncode==0,'display readiness/authentication failed'
+  observed.update(json.loads(display.stdout))
   results.append(observed);print('PASS offline browser',profile,flush=True)
  # These exact copied Homes are exclusively owned by this smoke run.
  for name in created:

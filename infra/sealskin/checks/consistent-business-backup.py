@@ -158,8 +158,15 @@ def authenticated_archive(args, target=None):
             expected = manifest['entries']
             require(set(names) == set(expected) | {'MANIFEST.json'}, 'archive file-set mismatch')
             by_name = {m.name: m for m in members}
-            for name, row in expected.items():
-                path = safe_name(name); member = by_name[name]
+            # JSON canonicalization sorts manifest names, which can differ
+            # from tar traversal order. Read payloads in archive order to avoid
+            # repeatedly rewinding and decompressing the entire gzip stream.
+            for member in members:
+                name = member.name
+                if name == 'MANIFEST.json':
+                    continue
+                row = expected[name]
+                path = safe_name(name)
                 for parent in path.parents:
                     if str(parent) in expected:
                         require(expected[str(parent)]['kind'] == 'directory', 'archive symlink ancestor')
@@ -177,7 +184,11 @@ def authenticated_archive(args, target=None):
                     require(row['kind'] == 'symlink' and member.issym() and member.linkname == row['target'], 'link mismatch')
             if target is not None:
                 target.mkdir(mode=0o700)
-                for name, row in expected.items():
+                for member in members:
+                    name = member.name
+                    if name == 'MANIFEST.json':
+                        continue
+                    row = expected[name]
                     dest = target / name
                     if row['kind'] == 'directory':
                         dest.mkdir(parents=True, exist_ok=True, mode=0o700)

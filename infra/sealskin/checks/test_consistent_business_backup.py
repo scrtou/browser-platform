@@ -1,5 +1,6 @@
 """Real age round-trip and refusal tests on independent synthetic data."""
 import hashlib
+import argparse
 import importlib.util
 import json
 import os
@@ -9,6 +10,7 @@ import socket
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 SCRIPT = Path(__file__).with_name('consistent-business-backup.py')
 spec = importlib.util.spec_from_file_location('business_backup', SCRIPT)
@@ -83,6 +85,32 @@ class BusinessBackupTest(unittest.TestCase):
     def test_config_symlinks_still_rejected(self):
         with self.assertRaises(ValueError):
             m.inventory({'controller-config': str(self.storage)})
+
+    def test_nested_archive_verification_has_bounded_decompression(self):
+        # tar traversal writes each parent's files before its descendants,
+        # while a canonical manifest sorts descendants before a parent's z.
+        for index in range(20):
+            parent = self.storage / f'd{index:02d}'
+            child = parent / 'nested'; child.mkdir(parents=True)
+            (parent / 'z').write_bytes(b'z' * 32768)
+            (child / 'a').write_bytes(b'a' * 32768)
+        self.create()
+        expanded = 0
+        original_read = m.gzip._GzipReader.read
+
+        def measured(reader, size=-1):
+            nonlocal expanded
+            data = original_read(reader, size)
+            expanded += len(data)
+            return data
+
+        args = argparse.Namespace(archive=self.archive, receipt=self.receipt,
+                                  identity=self.key, scratch_root=self.root, age=self.age)
+        with mock.patch.object(m.gzip._GzipReader, 'read', measured):
+            m.authenticated_archive(args, self.target)
+        payload_bytes = json.loads(self.receipt.read_text())['file_bytes']
+        self.assertLess(expanded, (payload_bytes + 256 * 1024) * 4)
+        self.assertEqual((self.target / 'storage/d19/nested/a').read_bytes(), b'a' * 32768)
 
     def test_ciphertext_corruption_before_target_creation(self):
         self.create(); raw = bytearray(self.archive.read_bytes()); raw[-20] ^= 1; self.archive.write_bytes(raw)

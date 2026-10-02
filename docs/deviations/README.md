@@ -1,5 +1,7 @@
 # 设计偏差记录
 
+- [DEV-136 大归档解压读取顺序](DEV-2026-10-02-136-backup-gzip-verification-order.md)：R6AU处理中，保持完整验证并修复重复解压开销。
+
 - [DEV-134 整体备份作业链接](DEV-2026-10-02-134-business-backup-job-links.md)、[DEV-135 维护恢复就绪门槛](DEV-2026-10-02-135-maintenance-controller-readiness.md)：R6AU处理中，首次真实备份未生成归档，先恢复原活动浏览器。
 
 - [DEV-133 维护容量前置遗漏](DEV-2026-10-02-133-maintenance-capacity-preflight.md)：R6AU 处理中，先恢复容量与Personal，再继续备份。

@@ -49,3 +49,5 @@ python3 infra/sealskin/checks/consistent-business-backup.py verify \
 恢复后可使用[逐文件与数据库读回](consistent-business-readback.py)、[离线Secret Store授权读回](consistent-business-secret-readback.py)及[无网络Worker副本检查](consistent-business-offline-workers.py)。三个工具限定R6AU私有恢复根，不能对生产路径执行；原恢复文件与可写QA副本分开。Worker检查使用新的合成显示令牌、不发布端口且使用Docker的none网络，不代表真实第三方登录验证。
 
 维护异常恢复必须等待Controller认证API返回正常应用列表；建立客户端时也可能因TLS服务初始化抛错，该阶段同样纳入有界重试。只有各原活动Profile新鲜healthy、原停用Profile保持停止，才声明生产恢复。
+
+大包验证按tar成员顺序读取内容，而不是按规范化JSON清单排序读取，避免gzip反复回退解压。清单集合、所有摘要、metadata及链接安全检查保持；嵌套目录回归对解压总工作量设上界，旧实现可复现超限。
