@@ -109,13 +109,13 @@ c.request('GET',PATH,headers={'Authorization':'Basic '+base64.b64encode(AUTH.enc
             client_output=root/'dynamic-client';client_output.mkdir(mode=0o700,exist_ok=True)
             client=docker('run','--rm','-i','--name',name+'-client','--label','io.browser-platform.qa=native-client',
                 '--network','container:'+name,'--user',str(os.getuid())+':'+str(os.getgid()),
-                '--memory','1536m','--cpus','1.5','--pids-limit','256','--shm-size','256m',
-                '--read-only','--tmpfs','/tmp:rw,nosuid,nodev,size=256m','--cap-drop','ALL',
+                '--memory','3g','--cpus','2','--pids-limit','512','--shm-size','512m',
+                '--read-only','--tmpfs','/tmp:rw,nosuid,nodev,size=1g','--cap-drop','ALL',
                 '--security-opt','no-new-privileges:true','-e','PLAYWRIGHT_BROWSERS_PATH=/client-browsers',
                 '--mount',f'type=bind,src={root}/qa-source,dst=/qa,readonly',
                 '--mount',f'type=bind,src={client_output},dst=/qa-output',
                 '--mount',f"type=bind,src={client_browsers or PROJECT/'infra/camoufox/.build/playwright-client-browsers'},dst=/client-browsers,readonly",
-                '--entrypoint','/opt/camoufox-python/bin/python',spec['runtimeImageDigest'],'/qa/check-dynamic-client.py',
+                '--entrypoint','/opt/camoufox-python/bin/python',spec['runtimeImageDigest'],'/qa/client-probe.py',
                 input=json.dumps({'user':user,'password':password,'sid':sid,'engine':engine,'system_dpi':True}),check=False,timeout=240)
             (root/'dynamic-client.log').write_text(client.stdout+client.stderr)
             assert client.returncode==0,'DYNAMIC_CLIENT_FAILED'
@@ -151,7 +151,7 @@ def main():
     (material/'basic.htpasswd').write_text(user+':{SSHA}'+base64.b64encode(hashlib.sha1(password.encode()+salt).digest()+salt).decode()+'\n');(material/'master-token').write_text('')
     (root/'autostart').write_text('#!/bin/sh\nexec /opt/camoufox-python/bin/python /qa/qa-browser.py\n');(root/'autostart').chmod(0o755)
     source=root/'qa-source';source.mkdir()
-    for f in ['probe.py','qa-browser.py','qa-entrypoint.py','browser_client.py','check-dynamic-client.py']:shutil.copy2(HERE/f,source/f)
+    for f in ['probe.py','qa-browser.py','qa-entrypoint.py','browser_client.py','check-dynamic-client.py','client-probe.py']:shutil.copy2(HERE/f,source/f)
     shutil.copy2(PROJECT/'infra/firefox-proxy/check-bidi.py',source/'check_bidi.py')
     for f in ['storage.js','observe.js']:shutil.copy2(PROJECT/'infra/camoufox/tests'/f,source/f)
     report={'schemaVersion':'browser-platform/native-acceptance/v1','status':'running','phase':'all','artifactSHA256':hashlib.sha256(a.artifact.read_bytes()).hexdigest(),'runtimeImageDigest':spec['runtimeImageDigest'],'recreationsPerHome':a.recreations,'observations':[]}
