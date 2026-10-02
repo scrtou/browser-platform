@@ -1,6 +1,8 @@
 # 设计偏差记录
 
-- [DEV-131 原生 QA 控制器重建依赖](DEV-2026-10-02-131-native-qa-controller-recreation.md)：R6AS 修复验证中。
+- [DEV-132 原生启动请求超时](DEV-2026-10-02-132-native-launch-request-budget.md)：R6AS 已解决并完成范围内验收。
+
+- [DEV-131 原生 QA 控制器重建依赖](DEV-2026-10-02-131-native-qa-controller-recreation.md)：R6AS 已解决并完成范围内验收。
 
 
 - [DEV-130：缩放保存当前资产覆盖](DEV-2026-10-02-130-scaling-asset-coverage.md) · R6AR 已修复并部署。

@@ -1,6 +1,9 @@
 # SealSkin Profile Adapter
 
-当前 R6AM Adapter 已随 [server-2026.10.02.2](../docs/releases/server-2026.10.02.2.md)封存，二进制与运行身份匹配。
+R6AS当前已部署：LaunchURL使用现有180秒长操作预算，避免正常原生启动超过45秒后提前转为unknown；幂等键、取消与真正不确定响应的保护保持。三引擎固定网络/升级矩阵、两次额外50秒真实启动及完整Go回归见[R6AS验收](../infra/sealskin/r6as-fixed-version-matrix-acceptance-2026-10-02.md)。当前源码在R6AR精确快照上增加两路径；统一版本封存随后记录。
+
+
+历史 R6AM Adapter 已随 [server-2026.10.02.2](../docs/releases/server-2026.10.02.2.md)封存，二进制与运行身份匹配。
 
 R6AM：首页网络列及详情显示实际绑定代理名称。`EnvironmentSummary.NetworkProfileLabel` 按当前目录 ID/revision 只读解析，`HomeCard.NetworkName` 传递给授权首页；缺失名称明确占位，直连保持原显示，不读取凭据或发起探测。见 [验收](../infra/sealskin/r6am-workspace-proxy-name-acceptance-2026-10-02.md)。
 

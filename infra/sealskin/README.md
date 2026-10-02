@@ -1,5 +1,8 @@
 # SealSkin 部署与配置
 
+2026-10-02 当前交付为R6AS Adapter（`63d88d1e…`）、R7G1控制器和R6Z1 runner。三引擎固定六协议/认证、DIRECT、程序升级/回退和异机恢复范围见[R6AS验收](r6as-fixed-version-matrix-acceptance-2026-10-02.md)；商业供应方自然漂移仍未测。下方早期版本段落保留历史时点，不覆盖当前部署。
+
+
 2026-10-01 当前日志专用生产镜像为 `ad21dd6d…`：保留原 overlay，仅两处创建代码和新日志模块变化；三 Home 经授权备份/独立恢复/重建，11 个容器限额生效。R7G/R6I 未部署；[最新生产验收](r6j1-log-deployment-acceptance-2026-10-01.md)及 R6J1 增量材料补充下方历史版本快照。
 
 2026-09-30 R7G 已按用户选项 1 完成本轮隔离集成和 DEV-081/082 修复，QA 清理后生产身份保持。R7F 保留待验收，R7G 未部署；见 [动态上游集成验收](r7g-controller-integration-acceptance-2026-09-30.md)。

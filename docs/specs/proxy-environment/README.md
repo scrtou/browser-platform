@@ -1,5 +1,8 @@
 # 代理与浏览器环境配套规格
 
+R6AS已补齐Camoufox152、Chromix154.0.8037.57、Firefox155.0.1的六协议认证与受管理DIRECT固定矩阵，以及注明版本的升级/恢复/回退证据，见[验收](../../../infra/sealskin/r6as-fixed-version-matrix-acceptance-2026-10-02.md)。LaunchURL按顺序创建网络与原生Worker，使用与恢复相同的180秒有界等待；取消/歧义仍保留独占与操作身份。此结果不扩展为商业供应方自然漂移或任意浏览器大版本迁移已测。
+
+
 [文档导航](../../README.md) · [当前架构](../../design.md) · [开发进度](../../progress.md) · [验收索引](../../acceptance/README.md)
 
 原设计第 45–50 节已独立为 [规格正文](specification.md)，保留原章节与验收编号。本目录定义目标契约和配套数据示例，不会自动部署 SealSkin、代理或浏览器，也不表示所有 API、协议和健康能力已经实现。当前实现与缺口以 [开发进度](../../progress.md) 为准，测试证据由 [验收索引](../../acceptance/README.md) 导航。

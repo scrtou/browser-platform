@@ -1,6 +1,6 @@
 # R6AS · 固定版本网络与升级恢复矩阵
 
-状态：进行中。前项 R6AR 已收尾并提交 `74a0e49`。
+状态：已收尾，启动预算修正已部署。前项 R6AR 已收尾并提交 `74a0e49`。
 
 范围：补齐用户授权剩余 4c。版本固定为 Camoufox 152.0、Chromix 154.0.8037.57、原生 Firefox 155.0.1。每引擎覆盖 SOCKS5 none/username_password、HTTP CONNECT none/basic、HTTPS CONNECT none/basic 与受管理 DIRECT；真实浏览器 HTTP/HTTPS/WS/WSS、远端 DNS、认证/上游/TLS 失败、旁路阻断和资源清理。沿用当前 R7G1 控制器/Relay 和已验收产物，不能以简单代理 Fixture 替代真正 Guard/Relay。
 
@@ -28,3 +28,9 @@ DIRECT恢复发现旧QA控制器重建遗漏当前显示tmpfs依赖，已登记[
 Chromix六协议70项网络检查、四传输和恢复已通过，继续同引擎程序升级/回退与DIRECT。原生进程观察修正已提交`1a79038`；不把阶段结果写作整个R6AS完成。
 
 Chromix程序升级/回退与DIRECT九阶段22项检查均已通过，隔离资源独立核对清零；182份证据已回传校验。Firefox已准备并进入最后一份六协议矩阵，仍不提前收尾。
+
+Firefox DIRECT固定入口发现普通45秒启动请求预算不足，已登记[DEV-132](../deviations/DEV-2026-10-02-132-native-launch-request-budget.md)。本项修复LaunchURL长操作预算，保留歧义/占用语义；完成候选回归、实际慢启动及剩余矩阵后部署最小Adapter增量。
+
+## 收尾核对
+
+18协议/210网络、66 DIRECT、9阶段旧到新程序升级/回退、原生Firefox异机恢复、两次额外50秒实际启动响应及全部资源清理通过。DEV-131/132已解决；最终Adapter `63d88d1e…`部署就绪、运行exe和生产保护一致。设计/规格、组件README、操作指引、验收/索引、进度/路线图与执行表已更新，源码以R6AR基线精确补丁提交，原用户改动保留。详细版本/证据范围见[最终验收](../../infra/sealskin/r6as-fixed-version-matrix-acceptance-2026-10-02.md)。供应方自然漂移与无accepted目标的大版本迁移仍未测，真实历史归档不冒称当前业务一致性备份。下一项具备条件：统一封存当前部署版本及异机程序材料。

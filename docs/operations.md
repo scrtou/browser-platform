@@ -1,5 +1,8 @@
 # 运维、开机与恢复
 
+R6AS运维更新：三引擎固定网络与升级恢复矩阵、独立QA清理及启动预算修正已完成，见[验收](../infra/sealskin/r6as-fixed-version-matrix-acceptance-2026-10-02.md)。启动请求等待有界180秒；真正超时仍保留unknown与占用，应走正常安全关闭，不重复发送或删除journal。回退到R6AR只恢复程序；降到`.2`还须先退役动态代次并按R6AR规则复位非零缩放，不能恢复旧在线目录覆盖用户新操作。
+
+
 [R6AP 独立机器恢复](../infra/sealskin/r6ap-remote-recovery-acceptance-2026-10-02.md)已通过：镜像冷导入、完整材料和三引擎合成检查点运行/回退；[步骤](../infra/sealskin/checks/remote-recovery.md)明确真实历史 Home 与当前信任补充不是同一业务时点。
 
 当前静态回退版本已封存为 [server-2026.10.02.2](releases/server-2026.10.02.2.md)，包含 R6AM Adapter；完整异机恢复另属 R6AP。

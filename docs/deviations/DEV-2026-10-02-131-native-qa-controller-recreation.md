@@ -1,6 +1,6 @@
 # DEV-131 · 原生网络 QA 控制器重建依赖
 
-关联：[R6AS](../work-items/R6AS-2026-10-02-fixed-version-matrix.md)。状态：修复验证中。
+关联：[R6AS](../work-items/R6AS-2026-10-02-fixed-version-matrix.md)。状态：已解决（R6AS）。
 
 设计要求：DIRECT控制器地址证据丢失后，按当前固定运行配置重建控制器，保留Worker身份、显示认证材料、Home及代次，并重新连接原地址。QA必须复现完整依赖。
 
@@ -13,3 +13,5 @@
 Camoufox修正后恢复/清理重测通过：两代次、浏览器进程和显示原地址保持，正常退出/恢复与三类存储通过，QA资源最终核验清零。其余原生引擎继续使用同工具验证。
 
 Chromix首组实测补充：`/proc/*/cmdline`重写成单个以空格分隔的进程标题，且renderer也携带调试端口；旧精确argv匹配无法识别主进程。QA只对Chromix规范化标题中的标志，并排除`--type=`子进程，仍断言唯一主进程PID/启动时间；Camoufox/Firefox保留原精确argv路径。身份观察提前到包捕获启动之前，避免身份断言失败留下观察进程。旧失败位于`chromix/protocols-1790951020/`。
+
+最终结果：三引擎范围内验收与资源清理通过；R6AS最终Adapter已部署，运行身份/保护核对通过，详见[R6AS验收](../../infra/sealskin/r6as-fixed-version-matrix-acceptance-2026-10-02.md)。
