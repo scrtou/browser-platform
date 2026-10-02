@@ -1,0 +1,13 @@
+diff --git a/cmd/profile-adapter/main.go b/cmd/profile-adapter/main.go
+index 669c748..b1fddea 100644
+--- a/cmd/profile-adapter/main.go
++++ b/cmd/profile-adapter/main.go
+@@ -213,7 +213,7 @@ func run(configPath, action, target string, logger *slog.Logger) error {
+ 		return err
+ 	}
+ 	if action == "maintenance-start" || action == "maintenance-stop" {
+-		if target != "personal" && target != "work" && target != "browser-29cbe71eb72b" && target != "network-qa-a" {
++		if target != "personal" && target != "work" && target != "browser-a5cdb0c0145b" && target != "network-qa-a" {
+ 			return errors.New("maintenance Profile outside approved scope")
+ 		}
+ 		ctx, cancel := context.WithTimeout(context.Background(), sealskin.LongOperationTimeout+15*time.Second)
