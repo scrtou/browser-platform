@@ -1,0 +1,169 @@
+{
+  "version": "server-2026.10.02.2",
+  "date": "2026-10-02",
+  "scope": "released server source snapshot; local release only",
+  "adapter": {
+    "sha256": "b9e9832d9c24ed9abf2a4f8fb1d236eb8ba4c2c99562869d8f806d232bfaf288",
+    "source_manifest_sha256": "cb80bb778b3d41a4c84046a8f0215dabb4f093b263aa7fba103e67899e06a4bc",
+    "source": "R6AM bound proxy names on R6AL workspace network column",
+    "build": {
+      "go": "1.27.1",
+      "goos": "linux",
+      "goarch": "amd64",
+      "cgo_enabled": false,
+      "trimpath": true,
+      "vcs_revision": "ab6b1586549ebadae591a5a149d571eba7f56032",
+      "vcs_modified": true
+    }
+  },
+  "controller": {
+    "image": "sha256:1d93d6b8a92e7d431a603d4f2778b92aa2e91e8943df25c73f49f9013ef8a40e",
+    "files": 97,
+    "source": "R6W deployed app, including R6J1 bounded logs"
+  },
+  "runner": {
+    "source_manifest_sha256": "58ed623d3c1aebe321f333049fbf3a3f8afbe55a0c665ee6ac592931c7a52d37",
+    "native_targets_sha256": "226a4b731ac91b4e5b011efe738cdf8ec68bb53451f219c9aab71de3afb017bb",
+    "source": "R6Z1 accepted window geometry"
+  },
+  "capacity": {
+    "auto": true,
+    "configuration": "same-host Linux resources; positive per-field overrides"
+  },
+  "external_images": [
+    {
+      "id": "sha256:10f6420a1e409ce98cdc18a8830f023b46a30e4697d258126d6bf591c8fcc371",
+      "tags": [
+        "browser-platform/camoufox:0.5.6-beta.30-r9-desktop"
+      ],
+      "architecture": "amd64",
+      "os": "linux"
+    },
+    {
+      "id": "sha256:19f20e6ec641f6240cdc238ae041fc16c93515c83b2da1943871026949d3a2e6",
+      "tags": [
+        "browser-platform/chromix:154-cjk-r2"
+      ],
+      "architecture": "amd64",
+      "os": "linux"
+    },
+    {
+      "id": "sha256:1d93d6b8a92e7d431a603d4f2778b92aa2e91e8943df25c73f49f9013ef8a40e",
+      "tags": [
+        "browser-platform/sealskin:r6w-proxy-reuse-20261001"
+      ],
+      "architecture": "amd64",
+      "os": "linux"
+    },
+    {
+      "id": "sha256:819a225630907a72466a2c67e23cc6261e0efcd790744948dd13183f3f4bd0ac",
+      "tags": [
+        "browser-platform/chromix:154-scaling-r1"
+      ],
+      "architecture": "amd64",
+      "os": "linux"
+    },
+    {
+      "id": "sha256:87d738952e41403184a8e261dd2e749d116b57d5b07ef3b12bb1b5af0d82ad57",
+      "tags": [
+        "browser-platform/profile-relay:relay-v1"
+      ],
+      "architecture": "amd64",
+      "os": "linux"
+    },
+    {
+      "id": "sha256:895907b7cecf793db5b5b108e9a9ac371d0d381833e729d0b5cc16f8eee8e356",
+      "tags": [
+        "browser-platform/firefox:work-wayland-managed-r1-d9c842fa9088fac1"
+      ],
+      "architecture": "amd64",
+      "os": "linux"
+    },
+    {
+      "id": "sha256:90f757b138d096d8182b89fbacd5aa36b3a23bc17be35a677460f9878971426a",
+      "tags": [
+        "browser-platform/chromix:custom-95c89fce0b07b76d"
+      ],
+      "architecture": "amd64",
+      "os": "linux"
+    },
+    {
+      "id": "sha256:9a128663eb05d1b7a64a9519b597b745ba2b9be76af7b6649755a2a50d168306",
+      "tags": [
+        "browser-platform/camoufox:r10-managed-desktop-candidate",
+        "browser-platform/chromix-base:9a128663eb05d1b7a64a9519b597b745ba2b9be76af7b6649755a2a50d168306"
+      ],
+      "architecture": "amd64",
+      "os": "linux"
+    },
+    {
+      "id": "sha256:a785d443bf7ede16e0f4728bbcc552a17f6340e6a3fea2d01bd839776716888a",
+      "tags": [
+        "browser-platform/profile-relay:guard-v1-399a552251bb0c5a"
+      ],
+      "architecture": "amd64",
+      "os": "linux"
+    },
+    {
+      "id": "sha256:ae7a4e612f1655e87b50dcd24530e159a006a82a5a606254f6a3e915f95b932e",
+      "tags": [
+        "browser-platform/firefox:custom-2cfe9b5b776bea0d"
+      ],
+      "architecture": "amd64",
+      "os": "linux"
+    },
+    {
+      "id": "sha256:b8ea10d04b00484f6376e7ecb5e80ff0fbf1d3af22c4300c18cbc3c3ad0a5f43",
+      "tags": [
+        "browser-platform/chromix:custom-21da63c58e7fa5d5"
+      ],
+      "architecture": "amd64",
+      "os": "linux"
+    },
+    {
+      "id": "sha256:cd521d91037af114833f9df994e3242c4d6078859212909c586b412da660a3ae",
+      "tags": [
+        "browser-platform/chromix:154.0.8037.57-74d5d5b623c6b919"
+      ],
+      "architecture": "amd64",
+      "os": "linux"
+    },
+    {
+      "id": "sha256:e7e71db14431fa944b0593b5160104ecf61565b756e82cbeaf86f075b6b0af29",
+      "tags": [
+        "browser-platform/chromix:154-auto-r4"
+      ],
+      "architecture": "amd64",
+      "os": "linux"
+    },
+    {
+      "id": "sha256:f37c2f809411c5dfc04183dbf9ce1c109d43864036cd4b695a2a59748d83e31d",
+      "tags": [
+        "browser-platform/camoufox:custom-ce094869b6eb872f"
+      ],
+      "architecture": "amd64",
+      "os": "linux"
+    }
+  ],
+  "validation": {
+    "regression": "R6AJ",
+    "capacity": "R6AI",
+    "controller_source_correction": "R6AK / DEV-126: PASS on exact deployed 97-file app",
+    "controller_exact_tests": 554,
+    "adapter": "R6AM frozen/workspace Go test/vet; 24 page states; 7 name resolution cases",
+    "client": "User confirmed current client validation in R6AN; historical exact dimensions not invented"
+  },
+  "exclusions": [
+    "Docker image layers",
+    "real Homes, databases and job spool",
+    "credentials, cookies, private keys and access URLs",
+    "unreleased workspace changes including R7G"
+  ],
+  "remaining_validation": [
+    "commercial provider DNS drift (deployment authorized separately 2026-10-02)",
+    "different-host complete recovery",
+    "historical unreported exact client parameters"
+  ],
+  "repository_baseline": "ab6b1586549ebadae591a5a149d571eba7f56032",
+  "parent_release": "server-2026.10.02.1"
+}
