@@ -36,13 +36,13 @@ TCP 建连、代理 TLS、认证及 CONNECT 共用 `dial_timeout_seconds` 总预
 
 稳定运行错误码为 `UPSTREAM_AUTH_FAILED`、`UPSTREAM_TLS_INVALID`、`UPSTREAM_TIMEOUT`、`UPSTREAM_PROTOCOL_INVALID`、`UPSTREAM_UNREACHABLE`；配置解析拒绝不支持的认证组合。完整端点鉴权/错误契约仍归 R5D。
 
-静态 Personal 基线通过 [Compose overlay](../infra/sealskin/compose.proxy.yml) 运行，当前保留给独立 Camoufox。受管理的新 Personal 会话使用 SealSkin 的 [动态网络生命周期](../infra/sealskin/lifecycle/README.md)：每代独立分配网络、Relay 和 Guard；Guard 先安装 nftables 规则，Worker 再共享其命名空间，主动出站仅能到自己的 Relay TCP 1080。代理模式 Relay 的长期进程也在安装规则后丢弃全部 capabilities，只连接控制器在分配时解析并冻结的上游 IPv4／端口。
+静态 Personal 基线通过 [Compose overlay](../infra/sealskin/compose.proxy.yml) 运行，当前保留给独立 Camoufox。受管理的新 Personal 会话使用 SealSkin 的 [动态网络生命周期](../infra/sealskin/lifecycle/README.md)：每代独立分配网络、Relay 和 Guard；Guard 先安装 nftables 规则，Worker 再共享其命名空间，主动出站仅能到自己的 Relay TCP 1080。代理模式 Relay 的长期进程也在安装规则后丢弃全部 capabilities。静态代次只连接控制器在分配时解析并冻结的上游 IPv4／端口；声明 `io.browser-platform.dynamic-upstream=1` 的动态域名代次则每次新连接读取受控、原子替换的 `endpoint_lease_file`，控制器先将 Guard 规则切到旧/新集合并经 Relay 探测成功后收窄到新地址。lease 损坏、缺失、ID/端口/revision 不符时 Relay 返回 `UPSTREAM_ENDPOINT_LEASE_INVALID` 并拒绝建连，不会解析域名或直连目标。
 
 浏览器 DNS／IPv6／STUN／UDP443、代理故障、控制容器重建和独立 Docker daemon 恢复已完成限定范围的 [验收](../infra/sealskin/network-isolation-acceptance-2026-09-13.md)。正式主机重启仍待验证；公开 DNS/TTL 的限定范围见 R5C2 验收。现有 Work／Personal 会话没有迁移，新策略在下一次 Personal 启动时生效。
 
 构建需要 Go 1.26 或更新版本；DNS 报文解析依赖固定的 `golang.org/x/net v0.59.0`，校验和见 [go.sum](go.sum)。
 
-代理端点的 R5C2 引导解析发生在控制器，使用独立 `bootstrap_resolver_id/ip`，见 [引导 DNS 与 TTL](../infra/sealskin/lifecycle/bootstrap-dns.md)。Relay 继续只连接本代次冻结的数值端点，不根据 TTL 重查上游域名；HTTPS 仍验证原始主机名。DIRECT 网站 DNS、控制器引导 DNS 和上游网站 DNS 的证据必须分开；公开递归/TTL 已在 R5C2 的独立标准 Unbound 与受控端点验收，不能扩充为所有公共缓存。
+代理端点的 R5C2 引导解析发生在控制器，使用独立 `bootstrap_resolver_id/ip`，见 [引导 DNS 与 TTL](../infra/sealskin/lifecycle/bootstrap-dns.md)。静态 Relay 继续只连接本代次冻结的数值端点；动态域名 Relay 不执行 DNS，而是只读取控制器按批准 TTL 写入的 endpoint lease。HTTPS 仍验证原始主机名。DIRECT 网站 DNS、控制器引导 DNS 和上游网站 DNS 的证据必须分开；公开递归/TTL 已在 R5C2 的独立标准 Unbound 与受控端点验收，不能扩充为所有公共缓存。
 
 ```bash
 cd relay
@@ -80,3 +80,10 @@ R5C1 的 DIRECT 双 Home 协议、固定解析器、ACL、故障抓包与同代�
 R5C3 的 `coherence_gate_file`、`coherence_generation`、`coherence_probe_domain`、`coherence_probe_port` 必须成组配置。控制器只读挂载整个代次目录，使原子更新可见；镜像能力为 `io.browser-platform.coherence-gate=1`。Relay 校验文件类型/权限、精确 schema、代次、单调序号及不超过 60 秒的有效期。重启不接受启动前遗留的开放序号；挂钟变化也不能延长单调时钟期限。
 
 门槛初始、关闭、丢失、损坏或到期时，拒绝普通网站的新连接并关闭已有隧道，只保留精确受控观察域名及其 32 位 nonce 子域、指定端口。该例外仍经过原有上游/目标限制，不能用于任意域名/IP。控制器每 30 秒尝试续查，慢采样保持真实到期阻断；已知出口绕过还由控制器暂停 Worker。配置、恢复和边界见 [运行时一致性](../infra/sealskin/lifecycle/runtime-coherence.md)，候选未部署生产。
+
+
+2026-09-30：动态 Relay 已在真实控制器/批准 DNS/认证 SOCKS5/双 Worker 组合中通过旧新连接、认证回滚、DNS 恢复、故障关闭与无绕过检查；详见 [R7G 集成验收](../infra/sealskin/r7g-controller-integration-acceptance-2026-09-30.md)。生产未部署；Worker 内 HTTPS 客户端不替代目标浏览器页面验收。
+
+构建留存：Alpine 软件源会移除旧 APK 补丁版本（[DEV-129](../docs/deviations/DEV-2026-10-02-129-relay-apk-version-retention.md)）；当前 Python 锁为 3.12.15-r0。发布恢复应保留精确镜像导出及摘要，不能仅依赖联网重建。
+
+2026-10-02：[R7G1 动态代理已部署](../infra/sealskin/r7g1-deployment-acceptance-2026-10-02.md)。新建域名策略采用动态 Relay；既有策略/静态代次及 DIRECT 默认保持。旧控制器回退前须正常清理全部动态代次并核对无 pending/lease，不能回放旧用户数据。商业供应方自然漂移与新 GUI 热切换观察未测，用户已允许部署。

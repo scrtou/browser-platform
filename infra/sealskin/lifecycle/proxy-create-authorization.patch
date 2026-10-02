@@ -1,0 +1,305 @@
+diff --git a/server/app/secret_store.py b/server/app/secret_store.py
+--- a/server/app/secret_store.py
++++ b/server/app/secret_store.py
+@@ -13,6 +13,7 @@
+ from datetime import datetime, timezone
+ import fcntl
+ import hashlib
++import hmac
+ import json
+ import os
+ from pathlib import Path
+@@ -265,37 +266,103 @@
+         return refs
+ 
+     def resolve(self, principal, username_ref, password_ref):
++        with self.locked():
++            return self._resolve(principal, username_ref, password_ref)
++
++    def _resolve(self, principal, username_ref, password_ref):
+         identifier, version = pair_references(username_ref, password_ref)
+         validate_grant(principal)
++        metadata = self.metadata()
++        self.require_enabled(identifier, version)
++        entry = decode(read_private(self.revision_path(identifier, version)))
++        fields = {"version", "store_id", "secret_id", "secret_version", "grants", "created_at", "nonce", "ciphertext"}
++        if (not isinstance(entry, dict) or set(entry) != fields or type(entry["version"]) is not int
++                or entry["version"] != 1 or entry["store_id"] != metadata["store_id"]
++                or entry["secret_id"] != identifier or type(entry["secret_version"]) is not int
++                or entry["secret_version"] != version or not isinstance(entry["grants"], list)
++                or not 1 <= len(entry["grants"]) <= 128
++                or not isinstance(entry["created_at"], str) or not 1 <= len(entry["created_at"]) <= 64):
++            fail("SECRET_METADATA_INVALID")
++        for grant in entry["grants"]:
++            validate_grant(grant)
++        if principal not in entry["grants"] and not self._authorized(principal, identifier, version, metadata):
++            fail("SECRET_ACCESS_DENIED")
++        header = {k: v for k, v in entry.items() if k not in {"nonce", "ciphertext"}}
++        try:
++            nonce = base64.b64decode(entry["nonce"], validate=True)
++            ciphertext = base64.b64decode(entry["ciphertext"], validate=True)
++            if len(nonce) != 12:
++                fail("SECRET_METADATA_INVALID")
++            plain = AESGCM(self.key(metadata)).decrypt(nonce, ciphertext, canonical(header))
++        except (ValueError, TypeError, InvalidTag):
++            raise SecretError("SECRET_AUTHENTICATION_FAILED") from None
++        value = decode(plain)
++        if not isinstance(value, dict) or set(value) != {"username", "password"}:
++            fail("SECRET_VALUE_INVALID")
++        return {k: credential(v).encode("utf-8") for k, v in value.items()}
++
++    def authorization_path(self, grant):
++        # One durable creation authorization per owner/profile. An altered retry
++        # cannot grant another Home, app, credential version or request body.
++        name = hashlib.sha256(canonical([grant["owner"], grant["profile"]])).hexdigest()
++        return self.directory / "authorizations" / (name + ".json")
++
++    def _authorization_mac(self, payload, metadata):
++        return hmac.new(self.key(metadata), b"proxy-create-authorization-v1\x00" + canonical(payload), hashlib.sha256).hexdigest()
++
++    def _read_authorization(self, path, metadata):
++        private_directory(path.parent)
++        value = decode(read_private(path))
++        if not isinstance(value, dict) or set(value) != {"payload", "mac"}:
++            fail("SECRET_AUTHORIZATION_INVALID")
++        payload, mac = value["payload"], value["mac"]
++        if not isinstance(mac, str) or not SHA.fullmatch(mac) or not hmac.compare_digest(mac, self._authorization_mac(payload, metadata)):
++            fail("SECRET_AUTHENTICATION_FAILED")
++        return payload
++
++    def _authorized(self, principal, identifier, version, metadata):
++        path = self.authorization_path(principal)
++        if not os.path.lexists(path):
++            return False
++        payload = self._read_authorization(path, metadata)
++        return (isinstance(payload, dict) and payload.get("version") == 1
++                and payload.get("store_id") == metadata["store_id"]
++                and payload.get("secret_id") == identifier and payload.get("secret_version") == version
++                and payload.get("grant") == principal
++                and payload.get("credential_sha256") == hashlib.sha256(read_private(self.revision_path(identifier, version))).hexdigest())
++
++    def authorize(self, principal, username_ref, password_ref, request_sha256):
++        """Administrator-only addition; original ciphertext/grants stay immutable."""
++        identifier, version = pair_references(username_ref, password_ref)
++        validate_grant(principal)
++        if not isinstance(request_sha256, str) or not SHA.fullmatch(request_sha256):
++            fail("SECRET_REQUEST_INVALID")
+         with self.locked():
+             metadata = self.metadata()
+             self.require_enabled(identifier, version)
+-            entry = decode(read_private(self.revision_path(identifier, version)))
+-            fields = {"version", "store_id", "secret_id", "secret_version", "grants", "created_at", "nonce", "ciphertext"}
+-            if (not isinstance(entry, dict) or set(entry) != fields or type(entry["version"]) is not int
+-                    or entry["version"] != 1 or entry["store_id"] != metadata["store_id"]
+-                    or entry["secret_id"] != identifier or type(entry["secret_version"]) is not int
+-                    or entry["secret_version"] != version or not isinstance(entry["grants"], list)
+-                    or not 1 <= len(entry["grants"]) <= 128
+-                    or not isinstance(entry["created_at"], str) or not 1 <= len(entry["created_at"]) <= 64):
++            raw = read_private(self.revision_path(identifier, version))
++            entry = decode(raw)
++            # Authenticate the original AAD and ciphertext, using an original
++            # owner grant only. Supplemental grants cannot delegate across owners.
++            if not isinstance(entry, dict) or not isinstance(entry.get("grants"), list):
+                 fail("SECRET_METADATA_INVALID")
+-            for grant in entry["grants"]:
+-                validate_grant(grant)
+-            if principal not in entry["grants"]:
++            original = next((g for g in entry["grants"] if isinstance(g, dict) and g.get("owner") == principal["owner"]), None)
++            if original is None:
+                 fail("SECRET_ACCESS_DENIED")
+-            header = {k: v for k, v in entry.items() if k not in {"nonce", "ciphertext"}}
+-            try:
+-                nonce = base64.b64decode(entry["nonce"], validate=True)
+-                ciphertext = base64.b64decode(entry["ciphertext"], validate=True)
+-                if len(nonce) != 12:
+-                    fail("SECRET_METADATA_INVALID")
+-                plain = AESGCM(self.key(metadata)).decrypt(nonce, ciphertext, canonical(header))
+-            except (ValueError, TypeError, InvalidTag):
+-                raise SecretError("SECRET_AUTHENTICATION_FAILED") from None
+-            value = decode(plain)
+-            if not isinstance(value, dict) or set(value) != {"username", "password"}:
+-                fail("SECRET_VALUE_INVALID")
+-            return {k: credential(v).encode("utf-8") for k, v in value.items()}
++            self._resolve(original, username_ref, password_ref)
++            payload = {"version": 1, "store_id": metadata["store_id"], "secret_id": identifier,
++                       "secret_version": version, "grant": principal, "request_sha256": request_sha256,
++                       "credential_sha256": hashlib.sha256(raw).hexdigest()}
++            path = self.authorization_path(principal)
++            if os.path.lexists(path):
++                if self._read_authorization(path, metadata) != payload:
++                    fail("SECRET_AUTHORIZATION_CONFLICT")
++                return
++            if not os.path.lexists(path.parent):
++                path.parent.mkdir(mode=0o700)
++                sync_directory(self.directory)
++            private_directory(path.parent)
++            write_private(path, canonical({"payload": payload, "mac": self._authorization_mac(payload, metadata)}))
+ 
+     def revoke(self, reference, operation_id):
+         """Persist a terminal tombstone. The caller must also block live leases."""
+diff --git a/server/app/environment_management.py b/server/app/environment_management.py
+--- a/server/app/environment_management.py
++++ b/server/app/environment_management.py
+@@ -51,6 +51,14 @@
+     grants: list[Grant] = Field(min_length=1, max_length=128)
+     username: str = Field(min_length=1, max_length=4096)
+     password: str = Field(min_length=1, max_length=4096)
++
++
++class SecretAuthorizationRequest(BaseModel):
++    model_config = ConfigDict(extra="forbid", strict=True)
++    username_secret_ref: str = Field(min_length=1, max_length=180)
++    password_secret_ref: str = Field(min_length=1, max_length=180)
++    grant: Grant
++    request_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+ 
+ 
+ class ProbeRequest(BaseModel):
+@@ -107,6 +115,25 @@
+         raise HTTPException(503, "SECRET_IMPORT_FAILED") from None
+     logger.info("PROXY_SECRET_IMPORTED secret_id=%s version=%s grants=%d", request.secret_id, request.secret_version, len(grants))
+     return {"username_secret_ref": refs["username"], "password_secret_ref": refs["password"]}
++
++
++@router.post("/proxy-secret-authorizations")
++async def authorize_proxy_secret(decrypted_body: dict[str, Any] = Depends(get_decrypted_request_body)):
++    try:
++        request = SecretAuthorizationRequest(**decrypted_body)
++    except ValidationError:
++        raise HTTPException(422, "SECRET_AUTHORIZATION_REQUEST_INVALID") from None
++    store, _ = secret_runtime.configuration()
++    try:
++        async with secret_runtime.credential_lock():
++            await asyncio.to_thread(store.authorize, request.grant.model_dump(), request.username_secret_ref,
++                                    request.password_secret_ref, request.request_sha256)
++    except SecretError as exc:
++        status = 409 if exc.code == "SECRET_AUTHORIZATION_CONFLICT" else 403 if exc.code == "SECRET_ACCESS_DENIED" else _secret_status(exc.code)
++        raise HTTPException(status, exc.code) from None
++    except Exception:
++        raise HTTPException(503, "SECRET_AUTHORIZATION_FAILED") from None
++    return {"authorized": True}
+ 
+ 
+ @router.post("/proxy-probe")
+diff --git a/server/tests/test_secret_store.py b/server/tests/test_secret_store.py
+--- a/server/tests/test_secret_store.py
++++ b/server/tests/test_secret_store.py
+@@ -162,3 +162,86 @@
+     with pytest.raises(SecretError, match="SECRET_VALUE_INVALID"):
+         store.put("proxy-a", 1, [GRANT], USER, bad)
+     assert not list((store.directory / "versions").iterdir())
++
++NEW_GRANT = {"owner": "alice", "profile": "new-browser", "home": "new-home", "app": "new-app"}
++
++
++def authorize(store, refs, grant=NEW_GRANT, digest="a" * 64):
++    store.authorize(grant, refs["username"], refs["password"], digest)
++
++
++def test_create_authorization_is_immutable_idempotent_and_survives_reopen(store):
++    refs = put(store)
++    original = store.revision_path("proxy-a", 1).read_bytes()
++    with pytest.raises(SecretError, match="SECRET_ACCESS_DENIED"):
++        resolve(store, refs, NEW_GRANT)
++    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
++        list(executor.map(lambda _: authorize(store, refs), range(8)))
++    reopened = FileSecretStore(store.directory, store.key_file)
++    assert resolve(reopened, refs, NEW_GRANT) == resolve(store, refs)
++    assert store.revision_path("proxy-a", 1).read_bytes() == original
++    before = store.authorization_path(NEW_GRANT).read_bytes()
++    authorize(reopened, refs)
++    assert store.authorization_path(NEW_GRANT).read_bytes() == before
++    for path in store.directory.rglob("*"):
++        if path.is_file():
++            assert USER.encode() not in path.read_bytes() and PASSWORD.encode() not in path.read_bytes()
++
++
++@pytest.mark.parametrize("field", list(NEW_GRANT))
++def test_added_grant_is_exact(store, field):
++    refs = put(store)
++    authorize(store, refs)
++    with pytest.raises(SecretError, match="SECRET_ACCESS_DENIED"):
++        resolve(store, refs, {**NEW_GRANT, field: "other"})
++
++
++def test_added_grant_cannot_cross_owner_or_change_retry(store):
++    refs = put(store)
++    with pytest.raises(SecretError, match="SECRET_ACCESS_DENIED"):
++        authorize(store, refs, {**NEW_GRANT, "owner": "mallory"})
++    authorize(store, refs)
++    second = put(store, 2)
++    for changed_refs, grant, digest in [(refs, {**NEW_GRANT, "home": "other"}, "a" * 64), (refs, NEW_GRANT, "b" * 64), (second, NEW_GRANT, "a" * 64)]:
++        with pytest.raises(SecretError, match="SECRET_AUTHORIZATION_CONFLICT"):
++            authorize(store, changed_refs, grant, digest)
++    with pytest.raises(SecretError, match="SECRET_ACCESS_DENIED"):
++        resolve(store, second, NEW_GRANT)
++
++
++def test_added_grant_tampering_and_unsafe_files_fail_closed(store):
++    refs = put(store)
++    authorize(store, refs)
++    path = store.authorization_path(NEW_GRANT)
++    original = path.read_bytes()
++    value = json.loads(original)
++    value["payload"]["grant"]["home"] = "attacker"
++    path.write_text(json.dumps(value))
++    with pytest.raises(SecretError, match="SECRET_AUTHENTICATION_FAILED"):
++        resolve(store, refs, {**NEW_GRANT, "home": "attacker"})
++    path.write_bytes(original)
++    path.chmod(0o644)
++    with pytest.raises(SecretError):
++        resolve(store, refs, NEW_GRANT)
++    path.chmod(0o600)
++    other = path.with_suffix(".copy")
++    path.rename(other); path.symlink_to(other)
++    with pytest.raises(SecretError):
++        resolve(store, refs, NEW_GRANT)
++
++
++def test_added_grants_follow_recovery_lock_and_version_revocation(store):
++    refs = put(store)
++    authorize(store, refs)
++    (store.directory / ".recovery-pending").touch(mode=0o600)
++    with pytest.raises(SecretError, match="SECRET_RECOVERY_LOCKED"):
++        authorize(store, refs)
++    with pytest.raises(SecretError, match="SECRET_RECOVERY_LOCKED"):
++        resolve(store, refs, NEW_GRANT)
++    (store.directory / ".recovery-pending").unlink()
++    store.revoke(refs["password"], "b" * 32)
++    for grant in [GRANT, NEW_GRANT]:
++        with pytest.raises(SecretError, match="SECRET_REVOKED"):
++            resolve(store, refs, grant)
++    with pytest.raises(SecretError, match="SECRET_REVOKED"):
++        authorize(store, refs)
+diff --git a/server/tests/test_environment_management.py b/server/tests/test_environment_management.py
+--- a/server/tests/test_environment_management.py
++++ b/server/tests/test_environment_management.py
+@@ -257,7 +257,7 @@
+     server_public = api_client.server_pub.public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode()
+     guest = Client(api_client.http, server_public, "guest", private)
+     guest.handshake()
+-    for path, body in (("proxy-secrets", IMPORT), ("proxy-probe", {"upstream_host": "proxy.test", "upstream_port": 1080, "upstream_protocol": "socks5", "upstream_auth": "none", "probe_url": "https://probe.test/"}),
++    for path, body in (("proxy-secret-authorizations", {}), ("proxy-secrets", IMPORT), ("proxy-probe", {"upstream_host": "proxy.test", "upstream_port": 1080, "upstream_protocol": "socks5", "upstream_auth": "none", "probe_url": "https://probe.test/"}),
+                        ("network-policies", {"policy_id": "x", "policy": {}})):
+         status, _ = guest.call("POST", "/api/admin/environment-management/" + path, body)
+         assert status == 403
+@@ -389,3 +389,19 @@
+     body = {"upstream_host": "10.0.0.1", "upstream_port": 1080, "upstream_protocol": "socks5", "upstream_auth": "none", "probe_url": "https://probe.test/"}
+     status, data = api_client.call("POST", "/api/admin/environment-management/proxy-probe", body)
+     assert status == 422 and data == {"detail": "NETWORK_UPSTREAM_ADDRESS_INVALID"}
++
++
++def test_existing_proxy_authorization_encrypted_api_and_real_socks(api_client, secured, proxies):
++    refs = _import(api_client)
++    original = secured.revision_path(IMPORT["secret_id"], 1).read_bytes()
++    for suffix in ("b", "c"):
++        grant = {**GRANT, "profile": "browser-" + suffix, "home": "home-" + suffix, "app": "app-" + suffix}
++        request = {**refs, "grant": grant, "request_sha256": "a" * 64}
++        for _ in range(2):
++            status, result = api_client.call("POST", "/api/admin/environment-management/proxy-secret-authorizations", request)
++            assert status == 200 and result == {"authorized": True}
++        status, result = api_client.call("POST", "/api/admin/environment-management/proxy-probe", _probe_body(proxies, proxies.socks, "socks5", "username_password", refs, grant=grant))
++        assert status == 200 and result["status"] == "passed", result
++        status, result = api_client.call("POST", "/api/admin/environment-management/proxy-secret-authorizations", {**request, "request_sha256": "b" * 64})
++        assert status == 409 and result == {"detail": "SECRET_AUTHORIZATION_CONFLICT"}
++    assert secured.revision_path(IMPORT["secret_id"], 1).read_bytes() == original

@@ -22,3 +22,21 @@ def test_direct_guard_rejects_invalid_or_mixed_evidence(change):
     assert guard.validate(policy) == policy
     with pytest.raises((ValueError, TypeError)):
         guard.rules({**policy, **change})
+
+
+def test_dynamic_relay_guard_accepts_sorted_endpoint_set():
+    policy = {"version": 1, "role": "relay-v2", "uid": 1000, "gid": 1000,
+              "internal_cidr": "172.20.0.0/24", "upstream_ipv4": ["192.0.2.10", "192.0.2.11"],
+              "upstream_port": 1080}
+    assert guard.validate(policy) == policy
+    text = guard.rules(policy)
+    assert "ip daddr { 192.0.2.10, 192.0.2.11 } tcp dport 1080" in text
+
+
+@pytest.mark.parametrize("addresses", [[], ["192.0.2.10", "192.0.2.10"],
+                                         ["192.0.2.11", "192.0.2.10"], ["127.0.0.1"], ["::1"]])
+def test_dynamic_relay_guard_rejects_bad_endpoint_set(addresses):
+    policy = {"version": 1, "role": "relay-v2", "uid": 1000, "gid": 1000,
+              "internal_cidr": "172.20.0.0/24", "upstream_ipv4": addresses, "upstream_port": 1080}
+    with pytest.raises((ValueError, TypeError)):
+        guard.rules(policy)

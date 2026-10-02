@@ -280,3 +280,5 @@ R6T将当前架构实现与39项目标规格逐项对应，见[审计](../infra/
 R6Z1 修复已部署：Chromix v4 同屏尺寸固定窗口采用最大化几何，较小窗口保留独立尺寸；验收仍精确比较 outerWidth/outerHeight。同版本镜像维护可显式追加缓存运行时修订，要求除镜像外来源/目标/种子完全一致，保留原缓存和失败记录；新组合仍须完整验收。进度与范围见 [R6Z1](work-items/R6Z1-2026-10-01-chromix-window-geometry.md)。
 
 [机器容量策略](capacity-policy.md)：自动计算、逐项覆盖、实时内存保护和只读诊断。
+
+2026-10-02：[R7G1 动态代理已部署](../infra/sealskin/r7g1-deployment-acceptance-2026-10-02.md)。新建域名策略采用动态 Relay；既有策略/静态代次及 DIRECT 默认保持。旧控制器回退前须正常清理全部动态代次并核对无 pending/lease，不能回放旧用户数据。商业供应方自然漂移与新 GUI 热切换观察未测，用户已允许部署。

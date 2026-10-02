@@ -262,3 +262,5 @@ R6T只读审计：当前Adapter R6S/控制器R6J1字节匹配，11个容器日�
 R6AA UI限定发布：只替换Adapter并重启profile-adapter.service，R6Z1执行器、控制器及生产浏览器不变；回退使用本项私有profile-adapter-before，保留所有后续目录/作业/会话。上线版本、前后保护快照和登录页核对见[R6AA验收](../infra/sealskin/r6aa-reference-ui-acceptance-2026-10-02.md)。
 
 [机器容量策略](capacity-policy.md)：自动计算、逐项覆盖、实时内存保护和只读诊断。
+
+2026-10-02：[R7G1 动态代理已部署](../infra/sealskin/r7g1-deployment-acceptance-2026-10-02.md)。新建域名策略采用动态 Relay；既有策略/静态代次及 DIRECT 默认保持。旧控制器回退前须正常清理全部动态代次并核对无 pending/lease，不能回放旧用户数据。商业供应方自然漂移与新 GUI 热切换观察未测，用户已允许部署。

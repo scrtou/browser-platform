@@ -47,6 +47,7 @@ def validate(value):
     fields = {
         "worker": {"relay_ip", "controller_ip", "display_port"},
         "relay": {"upstream_ip", "upstream_port"},
+        "relay-v2": {"upstream_ipv4", "upstream_port"},
         "direct": {"approved_resolver_ip", "host_ipv4"},
     }
     if value.get("version") != 1 or value.get("role") not in fields:
@@ -67,6 +68,15 @@ def validate(value):
         number(value["display_port"])
     elif value["role"] == "relay":
         ipv4(value["upstream_ip"])
+        number(value["upstream_port"])
+    elif value["role"] == "relay-v2":
+        addresses = value["upstream_ipv4"]
+        if (not isinstance(addresses, list) or not 1 <= len(addresses) <= 64 or
+                any(not isinstance(item, str) for item in addresses)):
+            raise ValueError("Invalid relay endpoint set")
+        normalized = [ipv4(item) for item in addresses]
+        if sorted(set(normalized)) != normalized:
+            raise ValueError("Relay endpoint set must be sorted and unique")
         number(value["upstream_port"])
     else:
         resolver = ipaddress.IPv4Address(ipv4(value["approved_resolver_ip"]))
@@ -91,6 +101,10 @@ def rules(value):
     elif value["role"] == "relay":
         incoming = f"ip saddr {value['internal_cidr']} tcp dport 1080 counter accept"
         outgoing = f"ip daddr {value['upstream_ip']} tcp dport {value['upstream_port']} counter accept"
+    elif value["role"] == "relay-v2":
+        incoming = f"ip saddr {value['internal_cidr']} tcp dport 1080 counter accept"
+        endpoints = ", ".join(value["upstream_ipv4"])
+        outgoing = f"ip daddr {{ {endpoints} }} tcp dport {value['upstream_port']} counter accept"
     else:
         incoming = f"ip saddr {value['internal_cidr']} tcp dport 1080 counter accept"
         denied = ", ".join(DIRECT_DENIED)
@@ -211,6 +225,7 @@ def main():
     parser.add_argument("--hold")
     parser.add_argument("--inspect", action="store_true")
     parser.add_argument("--inspect-output")
+    parser.add_argument("--apply-only", action="store_true")
     args = parser.parse_args()
     if args.hold:
         hold(args.hold)
@@ -218,6 +233,8 @@ def main():
     if not args.network_config:
         raise ValueError("A network policy is required")
     value = load(args.network_config)
+    if args.inspect and args.apply_only:
+        raise ValueError("Inspect and apply-only are mutually exclusive")
     if args.inspect:
         observed = inspect_rules(value)
         if args.inspect_output:
@@ -237,7 +254,17 @@ def main():
         else:
             print(json.dumps(observed, sort_keys=True), flush=True)
         return
-    if bool(args.relay_config) != (value["role"] in {"relay", "direct"}):
+    if args.apply_only:
+        if args.relay_config or value["role"] != "relay-v2":
+            raise ValueError("Apply-only is restricted to dynamic Relay policy")
+        namespace_is_private(value["role"])
+        policy = rules(value)
+        for command in (["nft", "--check", "-f", "-"], ["nft", "-f", "-"]):
+            subprocess.run(command, input=policy, text=True, check=True, capture_output=True)
+        revision = hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        print(json.dumps({"network_guard_applied": revision}), flush=True)
+        return
+    if bool(args.relay_config) != (value["role"] in {"relay", "relay-v2", "direct"}):
         raise ValueError("Role and process do not match")
     namespace_is_private(value["role"])
     policy = rules(value)

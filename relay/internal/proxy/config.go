@@ -38,6 +38,8 @@ type Config struct {
 	PasswordFile          string   `json:"password_file"`
 	CredentialLeaseFile   string   `json:"credential_lease_file,omitempty"`
 	CredentialLeaseID     string   `json:"credential_lease_id,omitempty"`
+	EndpointLeaseFile     string   `json:"endpoint_lease_file,omitempty"`
+	EndpointLeaseID       string   `json:"endpoint_lease_id,omitempty"`
 	ClientCIDRs           []string `json:"client_cidrs,omitempty"`
 	DialTimeoutSeconds    int      `json:"dial_timeout_seconds,omitempty"`
 	IdleTimeoutSeconds    int      `json:"idle_timeout_seconds,omitempty"`
@@ -62,6 +64,8 @@ type RuntimeConfig struct {
 	Password             string
 	CredentialLeaseFile  string
 	CredentialLeaseID    string
+	EndpointLeaseFile    string
+	EndpointLeaseID      string
 	AllowedClients       []*net.IPNet
 	DialTimeout          time.Duration
 	IdleTimeout          time.Duration
@@ -206,6 +210,14 @@ func (c Config) Resolve(baseDir string) (RuntimeConfig, error) {
 		(leasePath != "" && (auth == authNone || !validLease(leasePath, c.CredentialLeaseID))) {
 		return RuntimeConfig{}, errCredentialLease
 	}
+	endpointLeasePath := strings.TrimSpace(c.EndpointLeaseFile)
+	if endpointLeasePath != "" && !filepath.IsAbs(endpointLeasePath) {
+		endpointLeasePath = filepath.Join(baseDir, endpointLeasePath)
+	}
+	if (endpointLeasePath == "") != (c.EndpointLeaseID == "") ||
+		(endpointLeasePath != "" && !validEndpointLease(endpointLeasePath, c.EndpointLeaseID, c.UpstreamPort)) {
+		return RuntimeConfig{}, errEndpointLease
+	}
 	var tlsConfig *tls.Config
 	if protocol == protocolHTTPS {
 		name := c.UpstreamTLSServerName
@@ -237,6 +249,7 @@ func (c Config) Resolve(baseDir string) (RuntimeConfig, error) {
 		UpstreamProtocol: protocol, UpstreamAuth: auth, UpstreamTLS: tlsConfig,
 		Username: username, Password: password, AllowedClients: allowed,
 		CredentialLeaseFile: leasePath, CredentialLeaseID: c.CredentialLeaseID,
+		EndpointLeaseFile: endpointLeasePath, EndpointLeaseID: c.EndpointLeaseID,
 		DialTimeout: time.Duration(c.DialTimeoutSeconds) * time.Second,
 		IdleTimeout: time.Duration(c.IdleTimeoutSeconds) * time.Second,
 	}), nil

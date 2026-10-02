@@ -1,5 +1,30 @@
 # SealSkin 部署与配置
 
+2026-10-01 当前日志专用生产镜像为 `ad21dd6d…`：保留原 overlay，仅两处创建代码和新日志模块变化；三 Home 经授权备份/独立恢复/重建，11 个容器限额生效。R7G/R6I 未部署；[最新生产验收](r6j1-log-deployment-acceptance-2026-10-01.md)及 R6J1 增量材料补充下方历史版本快照。
+
+2026-09-30 R7G 已按用户选项 1 完成本轮隔离集成和 DEV-081/082 修复，QA 清理后生产身份保持。R7F 保留待验收，R7G 未部署；见 [动态上游集成验收](r7g-controller-integration-acceptance-2026-09-30.md)。
+
+2026-09-30 最新服务器版本材料为 352 文件：实际控制器与精确镜像/来源链一致，所有启用客户端和三个 accepted 环境目录依赖齐全，最新 Work 备份/重建证据已纳入，包内外校验通过。该包依赖本机镜像库和独立密钥，R7F 客户端未测项继续保留，见 [服务器材料定版](r7f-server-release-seal-acceptance-2026-09-30.md)。下方 109 文件包保留前轮范围。
+
+2026-09-30 17:15 UTC：Work 已完成正常停止/零资源、5,938 条目新加密备份与独立恢复、5,740 个 Home 文件一致性核对，并经用户固定入口用原 Home 重建健康新代次。DIRECT/显示/浏览器及 Worker HTTPS/绕过拒绝通过；用户确认页面/输入正常，原书签/登录项不适用。Personal 与用户主动关闭后的“测试”身份保持，见 [Work 生产维护](r7f-work-production-rebuild-acceptance-2026-09-30.md)。
+
+## R7F 当前材料校验
+
+2026-09-30 已固定 109 文件的私有审核材料，最终 76 文件 Adapter 源码以原工具链复建，与发布及运行二进制逐字节一致。旧恢复身份的直接 401 与当前身份 200 已补齐；完整结果、失败记录和 16:55 UTC “测试”BROWSER_EXITED 的新观测见 [材料验收](r7f-release-materials-acceptance-2026-09-30.md)。
+
+从仓库根目录执行只读校验；清单摘要取自独立验收记录，不使用待验清单自行生成的摘要代替信任依据：
+
+```bash
+python3 -B infra/sealskin/checks/check-release-materials.py \
+  --bundle infra/sealskin/runtime/r7f-release-materials-20260930/bundle \
+  --manifest-sha256 88b17f393d932143eb29124352b679aa3469754d2d86c8cf5589ffa50cedabb2
+```
+
+校验器只输出汇总状态，拒绝篡改、遗漏/额外文件、不安全权限和越界/符号链接，不应用任何文件。该包不含 Docker 镜像层或 age 私有 identity，不是可直接启动的整机恢复包；历史迁移前二进制不能直接读取迁移后的目录，回退继续使用当前管理流程并保留最新共享状态。
+
+
+2026-09-30 R7F 当前页面验证见 [客户端页面验收](r7f-client-ui-acceptance-2026-09-30.md)：隔离 Chromium 三页面/三视区 9 组通过；生产显示模板仅修正效果 label，ID/revision、设备/缩放/兼容和三个运行浏览器均保持。检查器 [check-management-ui.py](checks/check-management-ui.py) 仅允许固定 QA origin 的读取和登录 POST，使用私有连接/账号文件输出截图及几何结果，不提交管理或启动请求。生产快照、旧值核对与原子替换回执在忽略目录，Mac 用户已确认首页/窄窗口、代理页、模板/网络下拉正常及 r10 实际右键无 Firefox；Trilium 0.106.0 首页/窄窗口、代理页、下拉/Tab 焦点和 Personal/Work 页面与输入已确认正常，菜单无法检查；当前精确尺寸等仍未提供。
+
 [文档导航](../../docs/README.md) · [开发进度](../../docs/progress.md) · [运维总览](../../docs/operations.md) · [验收索引](../../docs/acceptance/README.md)
 
 这是当前主机的 SealSkin 验证栈。当前采用 [Profile、Relay 与网络生命周期补丁](lifecycle/README.md) `0.3.2-lifecycle-v2-a8c7be8a22ededd3`，基于固定摘要的官方 `0.3.2-ls58`；运行容器已安装同版 payload，Compose 引用版本化镜像供重建使用。精确范围见 [生命周期保护发布记录](lifecycle-protection-acceptance-2026-09-13.md)。升级必须重新执行源码审计和验收。端口只绑定到 `127.0.0.1`，公网由已配置的 Caddy HTTPS 入口转发。
@@ -62,6 +87,8 @@ R5A 已完成上游 HTTP/HTTPS/SOCKS5 六种认证组合、正常退出修复与
 
 R5C1 的受管理 DIRECT 候选保留内部 SOCKS5 与 Guard，使用批准解析器和公开 IPv4 TCP 网关，不需要外部上游或凭据。控制器/网关需要固定的只读宿主机地址证据，见 [DIRECT 配置与 QA](lifecycle/direct-network.md)、[可选 Compose overlay](compose.direct.yml) 和 [验收报告](direct-network-acceptance-2026-09-14.md)。生产基础 Compose 未启用此挂载，候选未部署。
 
+R7B 已把精确的生产兼容 Work Firefox/Wayland 父镜像叠加最小 Relay 锁定层，并在独立受管理 DIRECT generation 中通过真实公开 HTTPS、四类原始绕过拒绝、网关停止 fail-closed、正常 Stop/换代和 Cookie/localStorage/IndexedDB 恢复。候选 `sha256:895907b7…`、构建与清理见 [组件说明](../work-firefox-managed/README.md)和 [R7B 验收](r7b-managed-work-egress-acceptance-2026-09-21.md)；生产 Work 仍停用/停止，基础 Compose 仍未启用 DIRECT 地址证据，发布归 R7F。
+
 R5C2 候选增加代理端点的批准引导解析器、绑定回答/TTL 和恢复校验，使用固定 dnspython 与临时 pip wheel；旧空字段保留兼容路径。配置和依赖见 [引导 DNS 与 TTL](lifecycle/bootstrap-dns.md)。最终候选的私有回归、标准 Unbound/受控公网端点的三路径真实 TTL、浏览器故障/恢复、清理和文档已通过 [验收](approved-dns-ttl-acceptance-2026-09-14.md)，工作项已收尾，未部署生产。
 
 [专用公开权威 DNS](checks/public-dns-authority/README.md) 提供 CoreDNS、精确递归入口、Cloudflare 清单与轮换方法。五轮端点服务和临时递归设施已清理，原基础权威恢复、外部复测通过；基础 QA 委派、SSH 访问和用户端口规则暂留后续验证，不能把早先准备阶段的 SSH/端口失败继续视为当前阻塞。
@@ -94,7 +121,7 @@ systemctl --user enable --now profile-adapter.service
 systemctl --user status profile-adapter.service
 ```
 
-该服务保留原配置、状态文件和 SealSkin 会话绑定，崩溃后由 systemd 重启。用户服务在退出登录后及开机时运行还需要 `loginctl enable-linger`。本次主机对 `loginctl enable-linger sshUser` 返回 `Access denied`，当前 `Linger=no`；启用服务不等于已经通过退出登录或主机重启验收，这一步仍需主机管理员处理。
+该服务保留原配置、状态文件和 SealSkin 会话绑定，崩溃后由 systemd 重启。用户服务在退出登录后及开机时运行还需要 `loginctl enable-linger`。R2C 后续已由管理员启用并确认 `Linger=yes`，正式 VPS 重启中用户管理器与 Adapter 在首个 SSH 登录前启动；退出全部登录后的行为验证未执行，并于 2026-09-20 按用户决定移出当前范围。启用 linger 本身仍不能代替未执行场景的通过证据。
 
 [Camoufox Worker](../camoufox/README.md) 的 r4 已通过完整冻结/重放、存储、Canvas/字体/音频稳定性和正常 X11 入口验收，安装为独立 `camoufox-personal-r4` 应用。该应用使用额外只读 mounts 保留 SealSkin 的 Home volumes，固定实际镜像摘要和成功报告，限制 1536 MiB / 1.5 CPU。现有 Personal/Work 应用、会话和 Home 保持原绑定；当前 Camoufox 只使用独立 cleanroom 验收。
 
@@ -143,3 +170,13 @@ docker compose down
 ```
 
 `docker compose down` 不会删除 `config/` 或 `storage/`。不要使用 `down -v`，因为这里使用的是主机 bind mount。删除 Home 或 storage 前，先确认没有运行中的 Worker，并完成备份演练。
+
+- [R6K 本机隔离恢复与回退](r6k-disaster-recovery-acceptance-2026-10-01.md)：合成 Work 实际恢复已通过，真实归档仅离线核对；异机冷恢复待独立资源。
+
+## Chromix 154 已安装（2026-10-01）
+
+R6L 已追加固定 Chromix 环境与管理模板，更新最小 Adapter；控制器仍为 R6J1，现有生产 Worker 和 Home 保持。生产尚未创建 Chromix 浏览器，管理页面新建时选择 Chromix 154 并选择网络。首次模板为 Linux/en-US/UTC/1280×720/DPR1，操作/构建/回退见 [Chromix](../chromix/README.md)，范围与证据见 [验收](r6l-chromix-acceptance-2026-10-01.md)。
+
+R6Q 已限定更新 Adapter 和空闲作业执行器：通用指纹配置、生成时引擎选择、旧源/作业兼容，当前运行实例保持。当前生产健康和交付范围见 [R6Q 验收](r6q-engine-neutral-acceptance-2026-10-01.md)。
+
+2026-10-02：[R7G1 动态代理已部署](r7g1-deployment-acceptance-2026-10-02.md)。新建域名策略采用动态 Relay；既有策略/静态代次及 DIRECT 默认保持。旧控制器回退前须正常清理全部动态代次并核对无 pending/lease，不能回放旧用户数据。商业供应方自然漂移与新 GUI 热切换观察未测，用户已允许部署。

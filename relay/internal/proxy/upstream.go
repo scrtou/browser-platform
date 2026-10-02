@@ -86,7 +86,11 @@ func (s *Server) dialUpstream(parent context.Context, req request) (net.Conn, er
 	}
 	ctx, cancel := context.WithTimeout(parent, s.cfg.DialTimeout)
 	defer cancel()
-	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", s.cfg.UpstreamAddress)
+	upstreamAddress, err := s.currentUpstreamAddress()
+	if err != nil {
+		return nil, err
+	}
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", upstreamAddress)
 	if err != nil {
 		return nil, err
 	}

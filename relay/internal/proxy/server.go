@@ -412,6 +412,8 @@ func safeErrorCode(err error) string {
 		return "DIRECT_DNS_FAILED"
 	case errors.Is(err, errDirectHostEvidence):
 		return "DIRECT_HOST_EVIDENCE_UNAVAILABLE"
+	case errors.Is(err, errEndpointLease):
+		return "UPSTREAM_ENDPOINT_LEASE_INVALID"
 	case errors.Is(err, errUpstreamAuth):
 		return "UPSTREAM_AUTH_FAILED"
 	case errors.Is(err, errUpstreamTLS):
@@ -431,6 +433,7 @@ func safeErrorCode(err error) string {
 	}
 }
 
+var errEndpointLease = errors.New("upstream endpoint lease unavailable or invalid")
 var errUpstreamAuth = errors.New("upstream credentials rejected")
 var errUpstreamTLS = errors.New("upstream TLS verification failed")
 var errUpstreamProtocol = errors.New("upstream protocol invalid")

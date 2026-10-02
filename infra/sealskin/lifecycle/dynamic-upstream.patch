@@ -1,0 +1,791 @@
+diff --git a/server/app/api.py b/server/app/api.py
+index c969401..ebcf4f4 100644
+--- a/server/app/api.py
++++ b/server/app/api.py
+@@ -231,6 +231,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+     from .secret_runtime import authorization_monitor
+     tasks.append(asyncio.create_task(authorization_monitor()))
+     tasks.append(asyncio.create_task(coherence_sampler()))
++    from .dynamic_upstream import endpoint_monitor
++    tasks.append(asyncio.create_task(endpoint_monitor()))
+     if settings.watch_config_files:
+         tasks.append(asyncio.create_task(persistence.watch_paths(_watch_targets(), stop_event)))
+     try:
+diff --git a/server/app/dynamic_upstream.py b/server/app/dynamic_upstream.py
+new file mode 100644
+index 0000000..d2ad05d
+--- /dev/null
++++ b/server/app/dynamic_upstream.py
+@@ -0,0 +1,315 @@
++"""Hot-refresh proxy endpoints without changing a browser generation.
++
++The controller owns DNS, endpoint validation and nft updates. The long-lived
++Relay stays unprivileged and only reads an atomically replaced endpoint lease.
++Every failed transition is fail-closed: no Worker direct fallback is introduced.
++"""
++
++from __future__ import annotations
++
++import asyncio
++import json
++import logging
++import re
++import socket
++import time
++
++from docker.errors import NotFound
++from fastapi import HTTPException
++
++from . import network_runtime as network
++from .profile_runtime import home_path, lifecycle_lock
++
++logger = logging.getLogger(__name__)
++VERSION = 1
++POLL_SECONDS = 15
++MIN_REFRESH_SECONDS = 15
++MAX_REFRESH_SECONDS = 300
++RUNTIME_MOUNT = "/run/browser-platform-network"
++LEASE_FILE = "upstream-endpoint.json"
++NETWORK_FILE = "relay-network.json"
++
++
++def lease_id(reservation):
++    return network.digest({"kind": "dynamic-upstream", "identity": reservation["identity"],
++                           "policy_sha256": reservation["policy_sha256"]})
++
++
++def lease_value(reservation, address, revision):
++    policy = network.NetworkPolicy(**reservation["policy"])
++    return {"version": VERSION, "lease_id": lease_id(reservation), "revision": revision,
++            "upstream_ip": address, "upstream_port": policy.upstream_port}
++
++
++def endpoint_path(reservation):
++    identity = reservation["identity"]
++    return network.runtime_dir() / (identity["home_hash"] + "-" + identity["operation"]) / LEASE_FILE
++
++
++def relay_network_path(reservation):
++    identity = reservation["identity"]
++    return network.runtime_dir() / (identity["home_hash"] + "-" + identity["operation"]) / NETWORK_FILE
++
++
++def next_refresh(observation):
++    now = time.time()
++    expiry = observation.get("expires_at")
++    if type(expiry) in (int, float) and expiry > now:
++        return min(now + MAX_REFRESH_SECONDS, max(now + MIN_REFRESH_SECONDS, expiry))
++    return now + 60
++
++
++def eligible(reservation):
++    policy = network.NetworkPolicy(**reservation["policy"])
++    allocation = reservation.get("allocation") or {}
++    endpoint = reservation.get("endpoint") or {}
++    if (policy.mode == "direct" or not allocation or allocation.get("dynamic_upstream_version") != VERSION or
++            reservation.get("phase") not in {"ready", "worker_starting", "running"} or
++            endpoint.get("version") != VERSION or endpoint.get("lease_id") != lease_id(reservation)):
++        return False
++    from .network_dns import numeric_endpoint
++    return numeric_endpoint(policy.upstream_host) is None
++
++
++def validate_endpoint_state(reservation):
++    if not eligible(reservation):
++        return
++    allocation = reservation["allocation"]
++    endpoint = reservation["endpoint"]
++    policy = network.NetworkPolicy(**reservation["policy"])
++    if (type(endpoint.get("revision")) is not int or endpoint["revision"] < 1 or
++            endpoint.get("selected_ipv4") not in endpoint.get("addresses", []) or
++            endpoint.get("upstream_port") != policy.upstream_port or
++            not re.fullmatch(network.SHA, allocation.get("endpoint_lease_sha256", "")) or
++            allocation.get("endpoint_lease_id") != endpoint["lease_id"] or
++            allocation.get("endpoint_revision") != endpoint["revision"]):
++        network.reject("NETWORK_DYNAMIC_ENDPOINT_INVALID", 503)
++    expected = lease_value(reservation, endpoint["selected_ipv4"], endpoint["revision"])
++    if network.digest(expected) != allocation["endpoint_lease_sha256"]:
++        network.reject("NETWORK_DYNAMIC_ENDPOINT_INVALID", 503)
++
++
++def _apply_rules(relay, config, expected):
++    network.atomic_json(relay_network_path(config), expected)
++    command = ["python3", "-B", "/usr/local/lib/browser-platform/network-guard.py",
++               "--network-config", RUNTIME_MOUNT + "/" + NETWORK_FILE, "--apply-only"]
++    result = relay.exec_run(command, user="0:0", demux=False)
++    output = result.output.decode("utf-8", "replace") if isinstance(result.output, bytes) else str(result.output)
++    if result.exit_code != 0 or len(output) > 4096:
++        raise RuntimeError("NETWORK_DYNAMIC_GUARD_APPLY_FAILED")
++    try:
++        value = json.loads(output.strip())
++    except ValueError as exc:
++        raise RuntimeError("NETWORK_DYNAMIC_GUARD_APPLY_FAILED") from exc
++    if value != {"network_guard_applied": network.digest(expected)}:
++        raise RuntimeError("NETWORK_DYNAMIC_GUARD_APPLY_FAILED")
++
++
++def _tcp_preflight(address, port, timeout):
++    with socket.create_connection((address, port), timeout=min(timeout, 5)):
++        return True
++
++
++def _network_config(reservation, addresses):
++    policy = network.NetworkPolicy(**reservation["policy"])
++    allocation = reservation["allocation"]
++    return {"version": 1, "role": "relay-v2", "uid": network.settings.puid, "gid": network.settings.pgid,
++            "internal_cidr": allocation["internal_cidr"], "upstream_ipv4": sorted(set(addresses)),
++            "upstream_port": policy.upstream_port}
++
++
++def _record_error(reservation, code):
++    endpoint = reservation.get("endpoint") or {}
++    endpoint["last_error"] = {"code": code, "at": time.time()}
++    endpoint["next_refresh_at"] = time.time() + MIN_REFRESH_SECONDS
++    reservation["endpoint"] = endpoint
++    network.save_reservation(reservation)
++
++
++async def _recover_pending(reservation):
++    """Rollback an interrupted transition before accepting new connections."""
++    endpoint = reservation["endpoint"]
++    if not endpoint.get("pending"):
++        return False
++    allocation = reservation["allocation"]
++    current = endpoint["selected_ipv4"]
++    old_lease = lease_value(reservation, current, endpoint["revision"])
++    client = await asyncio.to_thread(network.get_docker_client)
++    owned_relay = False
++    try:
++        relay = await asyncio.to_thread(client.containers.get, allocation["relay_id"])
++        await asyncio.to_thread(relay.reload)
++        if relay.status != "running":
++            raise RuntimeError("NETWORK_DYNAMIC_RELAY_NOT_RUNNING")
++        labels = relay.attrs.get("Config", {}).get("Labels") or {}
++        if any(labels.get(k) != v for k, v in network.resource_labels(reservation, "relay").items()):
++            network.reject("NETWORK_RESOURCE_OWNERSHIP_UNPROVEN", 503)
++        owned_relay = True
++        network.atomic_json(endpoint_path(reservation), old_lease)
++        await asyncio.to_thread(_apply_rules, relay, reservation, _network_config(reservation, [current]))
++    except Exception:
++        # A restart may leave the lease/rules half-transitioned. Stop the
++        # Relay first, restore the old lease if possible, and keep the
++        # generation explicitly degraded so cleanup remains retryable.
++        try:
++            if owned_relay and relay.status == "running":
++                await asyncio.to_thread(relay.stop, timeout=10)
++        except Exception:
++            logger.error("NETWORK_DYNAMIC_ENDPOINT_FAIL_CLOSED_FAILED")
++        try:
++            network.atomic_json(endpoint_path(reservation), old_lease)
++        except Exception:
++            _record_error(reservation, "NETWORK_DYNAMIC_ENDPOINT_ROLLBACK_FAILED")
++            return True
++        # Keep intent until rules are restored or lifecycle cleanup completes.
++        reservation["endpoint"] = endpoint
++        _record_error(reservation, "NETWORK_DYNAMIC_ENDPOINT_ROLLBACK_FAILED")
++        return True
++    endpoint.pop("pending", None)
++    endpoint.pop("last_error", None)
++    reservation["endpoint"] = endpoint
++    network.save_reservation(reservation)
++    return True
++
++
++async def refresh(reservation):
++    """Refresh one running generation. Return a bounded, non-secret result."""
++    if not eligible(reservation):
++        return {"result": "not_applicable"}
++    endpoint = reservation["endpoint"]
++    if endpoint.get("pending"):
++        await _recover_pending(reservation)
++        if reservation["endpoint"].get("pending"):
++            return {"result": "retained", "reason": "NETWORK_DYNAMIC_ENDPOINT_ROLLBACK_FAILED"}
++        return {"result": "rolled_back"}
++    if time.time() < endpoint.get("next_refresh_at", 0):
++        return {"result": "not_due"}
++    policy = network.NetworkPolicy(**reservation["policy"])
++    try:
++        observed = await asyncio.to_thread(network.resolve_bootstrap, policy, reservation["identity"],
++                                           reservation["policy_sha256"])
++    except Exception as exc:
++        code = getattr(exc, "code", None) or getattr(exc, "detail", None) or "NETWORK_DYNAMIC_DNS_FAILED"
++        _record_error(reservation, str(code) if str(code).startswith("NETWORK_") else "NETWORK_DYNAMIC_DNS_FAILED")
++        return {"result": "retained", "reason": "NETWORK_DYNAMIC_DNS_FAILED"}
++
++    current = endpoint["selected_ipv4"]
++    addresses = observed["addresses"]
++    if current in addresses:
++        endpoint["addresses"] = addresses
++        endpoint["observation"] = observed
++        endpoint["next_refresh_at"] = next_refresh(observed)
++        endpoint.pop("last_error", None)
++        reservation["allocation"]["bootstrap_dns_sha256"] = network.digest(observed)
++        reservation["bootstrap_dns"] = observed
++        reservation["upstream_ipv4"] = addresses
++        reservation["endpoint"] = endpoint
++        network.save_reservation(reservation)
++        return {"result": "unchanged"}
++
++    candidate = observed["selected_ipv4"]
++    try:
++        await asyncio.to_thread(_tcp_preflight, candidate, policy.upstream_port, policy.probe_timeout_seconds)
++    except OSError:
++        _record_error(reservation, "NETWORK_DYNAMIC_ENDPOINT_UNREACHABLE")
++        return {"result": "retained", "reason": "NETWORK_DYNAMIC_ENDPOINT_UNREACHABLE"}
++
++    client = await asyncio.to_thread(network.get_docker_client)
++    allocation = reservation["allocation"]
++    try:
++        relay = await asyncio.to_thread(client.containers.get, allocation["relay_id"])
++        await asyncio.to_thread(relay.reload)
++    except NotFound:
++        _record_error(reservation, "NETWORK_DYNAMIC_RELAY_MISSING")
++        return {"result": "retained", "reason": "NETWORK_DYNAMIC_RELAY_MISSING"}
++    if relay.status != "running":
++        _record_error(reservation, "NETWORK_DYNAMIC_RELAY_NOT_RUNNING")
++        return {"result": "retained", "reason": "NETWORK_DYNAMIC_RELAY_NOT_RUNNING"}
++
++    labels = relay.attrs.get("Config", {}).get("Labels") or {}
++    expected_labels = network.resource_labels(reservation, "relay")
++    if any(labels.get(k) != v for k, v in expected_labels.items()):
++        network.reject("NETWORK_RESOURCE_OWNERSHIP_UNPROVEN", 503)
++
++    old_revision = endpoint["revision"]
++    old_lease = lease_value(reservation, current, old_revision)
++    new_revision = old_revision + 1
++    new_lease = lease_value(reservation, candidate, new_revision)
++    transition = _network_config(reservation, [current, candidate])
++    old_only = _network_config(reservation, [current])
++    new_only = _network_config(reservation, [candidate])
++    endpoint["pending"] = {"revision": new_revision, "selected_ipv4": candidate}
++    reservation["endpoint"] = endpoint
++    network.save_reservation(reservation)
++
++    try:
++        await asyncio.to_thread(_apply_rules, relay, reservation, transition)
++        network.atomic_json(endpoint_path(reservation), new_lease)
++        from .profile_health import upstream_probe
++        probe = await asyncio.to_thread(upstream_probe, allocation["relay_ip"], policy)
++        if probe.get("status") != "pass" or probe.get("code") != "PROXY_OK":
++            raise RuntimeError("NETWORK_DYNAMIC_ENDPOINT_PROBE_FAILED")
++        await asyncio.to_thread(_apply_rules, relay, reservation, new_only)
++    except Exception:
++        try:
++            network.atomic_json(endpoint_path(reservation), old_lease)
++            await asyncio.to_thread(_apply_rules, relay, reservation, old_only)
++        except Exception:
++            # If the privileged nft transaction itself cannot be restored,
++            # stop the Relay. The Worker namespace still has no direct route;
++            # a stopped Relay is the only safe fallback until operator repair.
++            logger.error("NETWORK_DYNAMIC_ENDPOINT_ROLLBACK_FAILED")
++            try:
++                await asyncio.to_thread(relay.stop, timeout=10)
++            except Exception:
++                logger.error("NETWORK_DYNAMIC_ENDPOINT_FAIL_CLOSED_FAILED")
++            _record_error(reservation, "NETWORK_DYNAMIC_ENDPOINT_ROLLBACK_FAILED")
++            return {"result": "retained", "reason": "NETWORK_DYNAMIC_ENDPOINT_ROLLBACK_FAILED"}
++        endpoint.pop("pending", None)
++        reservation["endpoint"] = endpoint
++        _record_error(reservation, "NETWORK_DYNAMIC_ENDPOINT_SWITCH_FAILED")
++        return {"result": "retained", "reason": "NETWORK_DYNAMIC_ENDPOINT_SWITCH_FAILED"}
++
++    endpoint.update({"revision": new_revision, "selected_ipv4": candidate, "addresses": addresses,
++                     "upstream_port": policy.upstream_port, "observation": observed,
++                     "updated_at": time.time(), "next_refresh_at": next_refresh(observed)})
++    endpoint.pop("last_error", None)
++    endpoint.pop("pending", None)
++    allocation["endpoint_revision"] = new_revision
++    allocation["endpoint_lease_sha256"] = network.digest(new_lease)
++    allocation["relay_network_sha256"] = network.digest(new_only)
++    allocation["bootstrap_dns_sha256"] = network.digest(observed)
++    reservation["endpoint"] = endpoint
++    reservation["allocation"] = allocation
++    reservation["bootstrap_dns"] = observed
++    reservation["upstream_ipv4"] = addresses
++    network.save_reservation(reservation)
++    return {"result": "updated"}
++
++
++async def endpoint_monitor():
++    """Continuously refresh supported running proxy generations."""
++    while True:
++        await asyncio.sleep(POLL_SECONDS)
++        root = network.runtime_dir()
++        if not root.exists():
++            continue
++        for path in sorted(root.glob("*.json")):
++            try:
++                raw = network.read_json(path)
++                identity = raw.get("identity")
++                if not isinstance(identity, dict) or not identity.get("home"):
++                    continue
++                reservation = network.read_reservation(identity)
++                if not reservation or not eligible(reservation):
++                    continue
++                async with lifecycle_lock("home:" + home_path(identity["owner"], identity["home"])):
++                    reservation = network.read_reservation(identity)
++                    if reservation:
++                        await refresh(reservation)
++            except asyncio.CancelledError:
++                raise
++            except Exception as exc:
++                code = getattr(exc, "detail", None)
++                logger.warning("Dynamic upstream refresh retained one generation (%s).",
++                               code if isinstance(code, str) and code.startswith("NETWORK_") else type(exc).__name__)
+diff --git a/server/app/network_dns.py b/server/app/network_dns.py
+index 0f2030b..9e0bcee 100644
+--- a/server/app/network_dns.py
++++ b/server/app/network_dns.py
+@@ -286,16 +286,45 @@ def validate_allocation(client, reservation, relay=None):
+     identity = reservation["identity"]
+     directory = network.runtime_dir() / (identity["home_hash"] + "-" + identity["operation"])
+     relay = relay or client.containers.get(allocation["relay_id"])
+-    for filename, key, endpoint in (("relay.json", "relay_config_sha256", "upstream_host"),
+-                                    ("relay-network.json", "relay_network_sha256", "upstream_ip")):
+-        path = directory / filename
+-        config = network.read_json(path)
+-        if (network.digest(config) != allocation.get(key) or
+-                config.get(endpoint) != reservation["bootstrap_dns"]["selected_ipv4"] or
+-                config.get("upstream_port") != reservation["policy"]["upstream_port"]):
+-            network.reject("NETWORK_BOOTSTRAP_CONFIG_CHANGED", 503)
+-        destination = "/run/config/relay.json" if filename == "relay.json" else "/run/config/network.json"
+-        mounts = [m for m in relay.attrs.get("Mounts", []) if m.get("Destination") == destination]
+-        if (len(mounts) != 1 or mounts[0].get("Source") != network.translate_path_to_host(str(path)) or
+-                mounts[0].get("RW") is not False or mounts[0].get("Type") != "bind"):
+-            network.reject("NETWORK_BOOTSTRAP_CONFIG_MOUNT_CHANGED", 503)
++    dynamic = allocation.get("dynamic_upstream_version") == 1
++    relay_config = network.read_json(directory / "relay.json")
++    if (network.digest(relay_config) != allocation.get("relay_config_sha256") or
++            relay_config.get("upstream_port") != reservation["policy"]["upstream_port"]):
++        network.reject("NETWORK_BOOTSTRAP_CONFIG_CHANGED", 503)
++    if dynamic:
++        from .dynamic_upstream import RUNTIME_MOUNT, endpoint_path, lease_value, validate_endpoint_state
++        validate_endpoint_state(reservation)
++        endpoint = reservation["endpoint"]
++        if (relay_config.get("endpoint_lease_id") != endpoint["lease_id"] or
++                relay_config.get("endpoint_lease_file") != RUNTIME_MOUNT + "/upstream-endpoint.json"):
++            network.reject("NETWORK_DYNAMIC_ENDPOINT_INVALID", 503)
++        lease = network.read_json(endpoint_path(reservation))
++        if (lease != lease_value(reservation, endpoint["selected_ipv4"], endpoint["revision"]) or
++                network.digest(lease) != allocation.get("endpoint_lease_sha256")):
++            network.reject("NETWORK_DYNAMIC_ENDPOINT_INVALID", 503)
++        relay_network = network.read_json(directory / "relay-network.json")
++        expected_network = {"version": 1, "role": "relay-v2", "uid": network.settings.puid,
++                            "gid": network.settings.pgid, "internal_cidr": allocation["internal_cidr"],
++                            "upstream_ipv4": [endpoint["selected_ipv4"]],
++                            "upstream_port": reservation["policy"]["upstream_port"]}
++        if relay_network != expected_network or network.digest(relay_network) != allocation.get("relay_network_sha256"):
++            network.reject("NETWORK_DYNAMIC_GUARD_CHANGED", 503)
++        host_directory = network.translate_path_to_host(str(directory))
++        mounts = [m for m in relay.attrs.get("Mounts", []) if m.get("Destination") == RUNTIME_MOUNT]
++        if (len(mounts) != 1 or mounts[0].get("Source") != host_directory or mounts[0].get("RW") is not False or
++                mounts[0].get("Type") != "bind"):
++            network.reject("NETWORK_DYNAMIC_ENDPOINT_MOUNT_CHANGED", 503)
++    else:
++        for filename, key, endpoint_name in (("relay.json", "relay_config_sha256", "upstream_host"),
++                                             ("relay-network.json", "relay_network_sha256", "upstream_ip")):
++            path = directory / filename
++            config = network.read_json(path)
++            if (network.digest(config) != allocation.get(key) or
++                    config.get(endpoint_name) != reservation["bootstrap_dns"]["selected_ipv4"] or
++                    config.get("upstream_port") != reservation["policy"]["upstream_port"]):
++                network.reject("NETWORK_BOOTSTRAP_CONFIG_CHANGED", 503)
++            destination = "/run/config/relay.json" if filename == "relay.json" else "/run/config/network.json"
++            mounts = [m for m in relay.attrs.get("Mounts", []) if m.get("Destination") == destination]
++            if (len(mounts) != 1 or mounts[0].get("Source") != network.translate_path_to_host(str(path)) or
++                    mounts[0].get("RW") is not False or mounts[0].get("Type") != "bind"):
++                network.reject("NETWORK_BOOTSTRAP_CONFIG_MOUNT_CHANGED", 503)
+diff --git a/server/app/network_runtime.py b/server/app/network_runtime.py
+index 387ab0d..d96a837 100644
+--- a/server/app/network_runtime.py
++++ b/server/app/network_runtime.py
+@@ -346,6 +346,9 @@ def read_reservation(identity: dict[str, str]) -> dict[str, Any] | None:
+                     allocation.get("coherence_result_root") != str(coherence_directory(value) / "observations") or
+                     any(not re.fullmatch(SHA, allocation.get(key, "")) for key in ("guard_rules_sha256", "relay_rules_sha256"))):
+                 reject("COHERENCE_RESERVATION_INVALID", 503)
++        if allocation and allocation.get("dynamic_upstream_version") == 1:
++            from .dynamic_upstream import validate_endpoint_state
++            validate_endpoint_state(value)
+         return value
+     except (OSError, ValueError, TypeError, KeyError) as exc:
+         raise HTTPException(503, "NETWORK_RESERVATION_INVALID") from exc
+@@ -575,6 +578,9 @@ async def prepare(identity: dict[str, str], policy_id: str, policy: NetworkPolic
+         raise HTTPException(422, "NETWORK_IMAGE_UNAVAILABLE") from exc
+     if (image.attrs.get("Config", {}).get("Labels") or {}).get(PREFIX + "network-guard") != "1":
+         reject("NETWORK_ENFORCEMENT_IMAGE_REQUIRED", 422)
++    from .network_dns import numeric_endpoint
++    dynamic_upstream = (policy.mode != "direct" and numeric_endpoint(policy.upstream_host) is None and
++                        (image.attrs.get("Config", {}).get("Labels") or {}).get(PREFIX + "dynamic-upstream") == "1")
+     if ((policy.upstream_protocol or policy.upstream_auth) and
+             (image.attrs.get("Config", {}).get("Labels") or {}).get(PREFIX + "proxy-upstreams") != "1"):
+         reject("NETWORK_UPSTREAM_IMAGE_REQUIRED", 422)
+@@ -639,6 +645,17 @@ async def prepare(identity: dict[str, str], policy_id: str, policy: NetworkPolic
+                                 host_ipv4_file=HOST_IPV4_FILE, host_ipv4_snapshot=direct_hosts)
+         else:
+             relay_config.update(upstream_host=addresses[0], upstream_port=policy.upstream_port)
++            if dynamic_upstream:
++                from .dynamic_upstream import RUNTIME_MOUNT, lease_id, lease_value, endpoint_path, next_refresh
++                endpoint_id = lease_id(reservation)
++                endpoint = {"version": 1, "lease_id": endpoint_id, "revision": 1,
++                            "selected_ipv4": addresses[0], "addresses": addresses,
++                            "upstream_port": policy.upstream_port, "observation": observed,
++                            "updated_at": time.time(), "next_refresh_at": next_refresh(observed)}
++                reservation["endpoint"] = endpoint
++                await asyncio.to_thread(atomic_json, endpoint_path(reservation), lease_value(reservation, addresses[0], 1))
++                relay_config.update(endpoint_lease_file=RUNTIME_MOUNT + "/upstream-endpoint.json",
++                                    endpoint_lease_id=endpoint_id)
+         material_source = None
+         if policy.username_secret_ref:
+             from .secret_runtime import lease_id, materialize
+@@ -660,16 +677,22 @@ async def prepare(identity: dict[str, str], policy_id: str, policy: NetworkPolic
+             coherence_allocation = await asyncio.to_thread(prepare_gate, reservation, policy, relay_config, volumes)
+         await asyncio.to_thread(atomic_json, config, relay_config)
+         volumes[translate_path_to_host(str(config))] = {"bind": "/run/config/relay.json", "mode": "ro"}
++        if dynamic_upstream:
++            from .dynamic_upstream import RUNTIME_MOUNT
++            volumes[translate_path_to_host(str(directory))] = {"bind": RUNTIME_MOUNT, "mode": "ro"}
+         if material_source:
+             volumes[material_source] = {"bind": "/run/secrets", "mode": "ro"}
+-        relay_network = {"version": 1, "role": "direct" if direct_hosts else "relay",
++        relay_network = {"version": 1, "role": "direct" if direct_hosts else "relay-v2" if dynamic_upstream else "relay",
+                          "uid": settings.puid, "gid": settings.pgid, "internal_cidr": subnet}
+         if direct_hosts:
+             from .network_direct import HOST_IPV4_SOURCE
+             relay_network.update(approved_resolver_ip=policy.approved_resolver_ip, host_ipv4=direct_hosts)
+             volumes[HOST_IPV4_SOURCE] = {"bind": HOST_IPV4_FILE, "mode": "ro"}
+         else:
+-            relay_network.update(upstream_ip=addresses[0], upstream_port=policy.upstream_port)
++            if dynamic_upstream:
++                relay_network.update(upstream_ipv4=[addresses[0]], upstream_port=policy.upstream_port)
++            else:
++                relay_network.update(upstream_ip=addresses[0], upstream_port=policy.upstream_port)
+         relay_network_path = directory / "relay-network.json"
+         await asyncio.to_thread(atomic_json, relay_network_path, relay_network)
+         volumes[translate_path_to_host(str(relay_network_path))] = {"bind": "/run/config/network.json", "mode": "ro"}
+@@ -725,7 +748,7 @@ async def prepare(identity: dict[str, str], policy_id: str, policy: NetworkPolic
+         guard_ip = guard.attrs["NetworkSettings"]["Networks"][internal.name]["IPAddress"]
+         if guard_ip != guard_address:
+             reject("NETWORK_GUARD_ADDRESS_UNKNOWN", 503)
+-        allocation = {"internal_id": internal.id, "internal_name": internal.name, "egress_id": egress.id,
++        allocation = {"internal_id": internal.id, "internal_name": internal.name, "internal_cidr": subnet, "egress_id": egress.id,
+                       "relay_id": relay.id, "relay_ip": relay_ip, "policy_id": policy_id,
+                       "policy_sha256": reservation["policy_sha256"], "enforcement_version": 1,
+                       "guard_id": guard.id, "guard_ip": guard_ip, "controller_ip": controller_ip,
+@@ -736,6 +759,11 @@ async def prepare(identity: dict[str, str], policy_id: str, policy: NetworkPolic
+         else:
+             allocation.update(bootstrap_dns_sha256=digest(reservation["bootstrap_dns"]),
+                               relay_config_sha256=digest(relay_config), relay_network_sha256=digest(relay_network))
++            if dynamic_upstream:
++                from .dynamic_upstream import lease_value
++                allocation.update(dynamic_upstream_version=1, endpoint_lease_id=reservation["endpoint"]["lease_id"],
++                                  endpoint_revision=1,
++                                  endpoint_lease_sha256=digest(lease_value(reservation, addresses[0], 1)))
+         if policy.coherence:
+             from .coherence_exec import inspect_rules
+             from .coherence_runtime import result_directory
+@@ -790,6 +818,15 @@ async def restore_controller_attachment(identity):
+         reject("NETWORK_RECOVERY_RESOURCES_INCOMPLETE")
+     client = await asyncio.to_thread(get_docker_client)
+     controller = await asyncio.to_thread(self_container, client)
++    if allocation.get("dynamic_upstream_version") == 1 and (reservation.get("endpoint") or {}).get("pending"):
++        from .dynamic_upstream import _recover_pending
++        await _recover_pending(reservation)
++        reservation = read_reservation(identity)
++        allocation = reservation.get("allocation") if reservation else None
++        endpoint_error = ((reservation or {}).get("endpoint") or {}).get("last_error") or {}
++        if (not allocation or (reservation.get("endpoint") or {}).get("pending") or
++                endpoint_error.get("code") == "NETWORK_DYNAMIC_ENDPOINT_ROLLBACK_FAILED"):
++            reject("NETWORK_DYNAMIC_ENDPOINT_ROLLBACK_FAILED", 503)
+     previous = None
+     if reservation["controller_id"] != controller.id:
+         try:
+diff --git a/server/tests/test_network_dns.py b/server/tests/test_network_dns.py
+index 447a8ef..b2a65e1 100644
+--- a/server/tests/test_network_dns.py
++++ b/server/tests/test_network_dns.py
+@@ -120,6 +120,23 @@ def test_real_udp_complete_answer_ttl_and_no_application_cache(wire):
+     assert len(wire.events) == 2  # Nonzero TTL is evidence, not a controller cache.
+ 
+ 
++def test_real_udp_two_answer_rotation_refreshes_selected_address_and_ttl(wire):
++    wire.reply = lambda q, t: a_answer(q, "192.0.2.10", 12)
++    first = wire.resolve()
++    assert first["addresses"] == ["192.0.2.10"]
++    assert first["selected_ipv4"] == "192.0.2.10"
++    assert first["ttl_seconds"] == 12
++    assert first["expires_at"] == first["queries"][0]["received_at"] + 12
++
++    wire.reply = lambda q, t: a_answer(q, "192.0.2.11", 27)
++    second = wire.resolve()
++    assert second["addresses"] == ["192.0.2.11"]
++    assert second["selected_ipv4"] == "192.0.2.11"
++    assert second["ttl_seconds"] == 27
++    assert second["expires_at"] == second["queries"][0]["received_at"] + 27
++    assert wire.events == [("proxy.qa.test.", "udp"), ("proxy.qa.test.", "udp")]
++
++
+ @pytest.mark.parametrize("count", [1, 8])
+ def test_cname_chain_can_cross_packets_with_one_total_budget(wire, count):
+     def reply(query, transport):
+@@ -326,14 +343,18 @@ async def test_changed_dns_evidence_or_configuration_blocks_resume_before_start(
+     value = network.read_reservation(approved.identity)
+     if fault in {"config", "acl", "mount"}:
+         relay = by_role(approved, "relay")
+-        destination = "/run/config/network.json" if fault == "acl" else "/run/config/relay.json"
++        from app import dynamic_upstream as dynamic
++        destination = dynamic.RUNTIME_MOUNT if fault == "mount" else "/run/config/network.json" if fault == "acl" else "/run/config/relay.json"
+         mount = next(m for m in relay.attrs["Mounts"] if m["Destination"] == destination)
+         if fault == "mount":
+             mount["RW"] = True
+         else:
+             path = Path(mount["Source"])
+             config = json.loads(path.read_text())
+-            config["upstream_ip" if fault == "acl" else "upstream_host"] = "192.0.2.99"
++            if fault == "acl" and config.get("role") == "relay-v2":
++                config["upstream_ipv4"] = ["192.0.2.99"]
++            else:
++                config["upstream_ip" if fault == "acl" else "upstream_host"] = "192.0.2.99"
+             path.write_text(json.dumps(config))
+     else:
+         if fault == "binding":
+diff --git a/server/tests/test_network_runtime.py b/server/tests/test_network_runtime.py
+index daefbed..6152d01 100644
+--- a/server/tests/test_network_runtime.py
++++ b/server/tests/test_network_runtime.py
+@@ -15,6 +15,7 @@ from docker.errors import APIError, NotFound
+ from fastapi import HTTPException
+ 
+ from app import config_store, docker_utils, session_runtime
++from app import dynamic_upstream as dynamic
+ from app import network_runtime as network
+ from app import profile_runtime as runtime
+ from app.launch import ensure_container_for_session, launch_application, stop_session
+@@ -77,7 +78,8 @@ class FakeContainer:
+         self.short_id = self.id[:12]
+         self.name = kwargs.get("name", role)
+         self.status = "created"
+-        inherited = {network.PREFIX + "network-guard": "1", "image-vendor": "qa"} if role in {"guard", "relay"} else {}
++        inherited = {network.PREFIX + "network-guard": "1", network.PREFIX + "dynamic-upstream": "1",
++                     "image-vendor": "qa"} if role in {"guard", "relay"} else {}
+         self.attrs = {"Id": self.id, "Name": "/" + self.name,
+                       "Config": {"Labels": {**inherited, **kwargs.get("labels", {})}},
+                       "Mounts": [{"Source": source, "Destination": bind["bind"], "Type": "bind",
+@@ -106,7 +108,14 @@ class FakeContainer:
+             return json.dumps({"network_guard_ready": network.digest(json.loads(Path(source).read_text()))}).encode()
+         return json.dumps(self.docker.probe_evidence).encode()
+ 
+-    def stop(self, timeout):
++    def exec_run(self, command, user=None, demux=False):
++        assert self.role == "relay" and user == "0:0" and "--apply-only" in command
++        mount = next(m for m in self.attrs["Mounts"] if m["Destination"] == dynamic.RUNTIME_MOUNT)
++        value = json.loads((Path(mount["Source"]) / dynamic.NETWORK_FILE).read_text())
++        return SimpleNamespace(exit_code=0,
++                               output=json.dumps({"network_guard_applied": network.digest(value)}).encode())
++
++    def stop(self, *, timeout):
+         self.docker.event("stop", self.role)
+         if self.docker.stop_failure == self.role:
+             raise APIError("injected stop failure")
+@@ -134,7 +143,8 @@ class FakeDocker:
+                                           create=self.create_container, run=self.run_container)
+         self.networks = SimpleNamespace(get=self.get_network, list=self.list_networks, create=self.create_network)
+         self.images = SimpleNamespace(get=lambda _: SimpleNamespace(attrs={"Config": {"Labels": {
+-            network.PREFIX + "network-guard": "1", session_runtime.LABEL: "1"}}}))
++            network.PREFIX + "network-guard": "1", network.PREFIX + "dynamic-upstream": "1",
++            session_runtime.LABEL: "1"}}}))
+         self.api = SimpleNamespace(create_endpoint_config=lambda **kwargs: kwargs)
+         controller = FakeContainer(self, {"volumes": {str(network.base_dir()): {"bind": str(network.base_dir())}}})
+         controller.status = "running"
+@@ -534,19 +544,116 @@ async def test_guard_stop_failure_retains_home_and_networks(managed):
+     await assert_empty(managed)
+ 
+ 
+-async def test_upstream_resolution_is_frozen_before_relay_start(managed):
++async def test_upstream_resolution_creates_hot_endpoint_lease_before_relay_start(managed):
+     await launch_application(**launch_args(managed))
+     reservation = network.read_reservation(managed.identity)
+     assert reservation["upstream_ipv4"] == ["203.0.113.9"]
++    assert reservation["endpoint"]["selected_ipv4"] == "203.0.113.9"
+     relay = next(c for c in managed.docker.container_values.values() if c.role == "relay")
+     sources = {bind["bind"]: Path(source) for source, bind in relay.kwargs["volumes"].items()}
+     config = json.loads(sources["/run/config/relay.json"].read_text())
+     firewall = json.loads(sources["/run/config/network.json"].read_text())
+-    assert config["upstream_host"] == firewall["upstream_ip"] == "203.0.113.9"
++    lease = json.loads((sources[dynamic.RUNTIME_MOUNT] / dynamic.LEASE_FILE).read_text())
++    assert config["upstream_host"] == lease["upstream_ip"] == "203.0.113.9"
++    assert firewall["role"] == "relay-v2" and firewall["upstream_ipv4"] == ["203.0.113.9"]
++    assert config["endpoint_lease_id"] == lease["lease_id"] == reservation["endpoint"]["lease_id"]
+     assert reservation["policy"]["upstream_host"] == "qa.example"
+     await stop(managed)
+ 
+ 
++async def test_domain_upstream_without_dynamic_capability_keeps_static_generation(managed, monkeypatch):
++    managed.docker.images.get = lambda _: SimpleNamespace(attrs={"Config": {"Labels": {
++        network.PREFIX + "network-guard": "1", session_runtime.LABEL: "1"}}})
++    await launch_application(**launch_args(managed))
++    reservation = network.read_reservation(managed.identity)
++    assert "endpoint" not in reservation
++    assert "dynamic_upstream_version" not in reservation["allocation"]
++    relay = next(c for c in managed.docker.container_values.values() if c.role == "relay")
++    sources = {bind["bind"]: Path(source) for source, bind in relay.kwargs["volumes"].items()}
++    firewall = json.loads(sources["/run/config/network.json"].read_text())
++    assert firewall["role"] == "relay" and firewall["upstream_ip"] == "203.0.113.9"
++    await stop(managed)
++
++
++async def test_dynamic_upstream_switches_without_worker_generation_change(managed, monkeypatch):
++    launched = await launch_application(**launch_args(managed))
++    before = network.read_reservation(managed.identity)
++    before["endpoint"]["next_refresh_at"] = 0
++    network.save_reservation(before)
++    observed = network.resolve_bootstrap(managed.policy, managed.identity, before["policy_sha256"])
++    observed["addresses"] = ["203.0.113.10"]
++    observed["selected_ipv4"] = "203.0.113.10"
++    monkeypatch.setattr(network, "resolve_bootstrap", lambda *_: observed)
++    monkeypatch.setattr(dynamic, "_tcp_preflight", lambda *_: True)
++    from app import profile_health
++    monkeypatch.setattr(profile_health, "upstream_probe", lambda *_: {"status": "pass", "code": "PROXY_OK"})
++    worker = next(c for c in managed.docker.container_values.values() if c.role == "worker")
++    result = await dynamic.refresh(network.read_reservation(managed.identity))
++    after = network.read_reservation(managed.identity)
++    assert result == {"result": "updated"}
++    assert after["identity"]["operation"] == before["identity"]["operation"] == OPERATION
++    assert next(c for c in managed.docker.container_values.values() if c.role == "worker").id == worker.id
++    assert after["endpoint"]["selected_ipv4"] == "203.0.113.10" and after["endpoint"]["revision"] == 2
++    lease = json.loads(dynamic.endpoint_path(after).read_text())
++    rules = json.loads(dynamic.relay_network_path(after).read_text())
++    assert lease["upstream_ip"] == "203.0.113.10" and lease["revision"] == 2
++    assert rules["upstream_ipv4"] == ["203.0.113.10"]
++    await stop(managed)
++
++
++async def test_dynamic_upstream_refreshes_dns_evidence_when_current_address_remains(managed, monkeypatch):
++    await launch_application(**launch_args(managed))
++    before = network.read_reservation(managed.identity)
++    before["endpoint"]["next_refresh_at"] = 0
++    network.save_reservation(before)
++    observed = network.resolve_bootstrap(managed.policy, managed.identity, before["policy_sha256"])
++    observed["addresses"] = ["203.0.113.9", "203.0.113.10"]
++    observed["selected_ipv4"] = "203.0.113.9"
++    monkeypatch.setattr(network, "resolve_bootstrap", lambda *_: observed)
++    result = await dynamic.refresh(network.read_reservation(managed.identity))
++    after = network.read_reservation(managed.identity)
++    assert result == {"result": "unchanged"}
++    assert after["upstream_ipv4"] == observed["addresses"]
++    assert after["bootstrap_dns"] == observed
++    assert after["allocation"]["bootstrap_dns_sha256"] == network.digest(observed)
++    await stop(managed)
++
++
++async def test_dynamic_upstream_pending_transition_recovers_to_old_endpoint(managed):
++    await launch_application(**launch_args(managed))
++    reservation = network.read_reservation(managed.identity)
++    reservation["endpoint"]["pending"] = {"revision": 2, "selected_ipv4": "203.0.113.10"}
++    network.save_reservation(reservation)
++    result = await dynamic.refresh(network.read_reservation(managed.identity))
++    after = network.read_reservation(managed.identity)
++    assert result == {"result": "rolled_back"}
++    assert "pending" not in after["endpoint"]
++    assert json.loads(dynamic.endpoint_path(after).read_text())["upstream_ip"] == "203.0.113.9"
++    assert json.loads(dynamic.relay_network_path(after).read_text())["upstream_ipv4"] == ["203.0.113.9"]
++    await stop(managed)
++
++
++async def test_dynamic_upstream_failed_probe_rolls_back_lease_and_acl(managed, monkeypatch):
++    await launch_application(**launch_args(managed))
++    before = network.read_reservation(managed.identity)
++    before["endpoint"]["next_refresh_at"] = 0
++    network.save_reservation(before)
++    observed = network.resolve_bootstrap(managed.policy, managed.identity, before["policy_sha256"])
++    observed["addresses"] = ["203.0.113.10"]
++    observed["selected_ipv4"] = "203.0.113.10"
++    monkeypatch.setattr(network, "resolve_bootstrap", lambda *_: observed)
++    monkeypatch.setattr(dynamic, "_tcp_preflight", lambda *_: True)
++    from app import profile_health
++    monkeypatch.setattr(profile_health, "upstream_probe", lambda *_: {"status": "unknown", "code": "PROXY_UPSTREAM_UNKNOWN"})
++    result = await dynamic.refresh(network.read_reservation(managed.identity))
++    after = network.read_reservation(managed.identity)
++    assert result["result"] == "retained"
++    assert after["endpoint"]["selected_ipv4"] == "203.0.113.9" and after["endpoint"]["revision"] == 1
++    assert json.loads(dynamic.endpoint_path(after).read_text())["upstream_ip"] == "203.0.113.9"
++    assert json.loads(dynamic.relay_network_path(after).read_text())["upstream_ipv4"] == ["203.0.113.9"]
++    await stop(managed)
++
++
+ async def test_failed_endpoint_resolution_retains_reservation_without_docker_resources(managed, monkeypatch):
+     def failed(_):
+         raise OSError("resolver unavailable")
+@@ -689,3 +796,73 @@ async def test_missing_image_never_creates_a_reservation(managed, missing):
+         await launch_application(**launch_args(managed))
+     assert not managed.docker.events
+     assert not network.read_reservation(managed.identity)
++
++
++@pytest.mark.parametrize("pending", [False, True])
++@pytest.mark.parametrize("stop_fails", [False, True])
++async def test_dynamic_guard_rollback_failure_stops_owned_relay_and_retains_intent(managed, monkeypatch, pending, stop_fails):
++    await launch_application(**launch_args(managed))
++    reservation = network.read_reservation(managed.identity)
++    reservation["endpoint"]["next_refresh_at"] = 0
++    if pending:
++        reservation["endpoint"]["pending"] = {"revision": 2, "selected_ipv4": "203.0.113.10"}
++    network.save_reservation(reservation)
++    relay = managed.docker.container_values[reservation["allocation"]["relay_id"]]
++    observed = network.resolve_bootstrap(managed.policy, managed.identity, reservation["policy_sha256"])
++    observed.update(addresses=["203.0.113.10"], selected_ipv4="203.0.113.10")
++    monkeypatch.setattr(network, "resolve_bootstrap", lambda *_: observed)
++    monkeypatch.setattr(dynamic, "_tcp_preflight", lambda *_: True)
++    def failed(*_):
++        raise RuntimeError("injected nft failure")
++    monkeypatch.setattr(dynamic, "_apply_rules", failed)
++    managed.docker.stop_failure = "relay" if stop_fails else None
++    result = await dynamic.refresh(network.read_reservation(managed.identity))
++    after = network.read_reservation(managed.identity)
++    assert result == {"result": "retained", "reason": "NETWORK_DYNAMIC_ENDPOINT_ROLLBACK_FAILED"}
++    assert after["endpoint"]["pending"] == {"revision": 2, "selected_ipv4": "203.0.113.10"}
++    assert relay.status == ("running" if stop_fails else "exited")
++    assert after["endpoint"]["revision"] == 1
++    managed.docker.stop_failure = None
++    await stop(managed)
++
++
++async def test_dynamic_pending_recovery_does_not_stop_unproven_relay(managed):
++    await launch_application(**launch_args(managed))
++    reservation = network.read_reservation(managed.identity)
++    reservation["endpoint"]["pending"] = {"revision": 2, "selected_ipv4": "203.0.113.10"}
++    network.save_reservation(reservation)
++    relay = managed.docker.container_values[reservation["allocation"]["relay_id"]]
++    labels = relay.attrs["Config"]["Labels"]
++    key = network.PREFIX + "owner"
++    old_owner = labels[key]
++    labels[key] = "foreign-owner"
++    result = await dynamic.refresh(network.read_reservation(managed.identity))
++    assert result["result"] == "retained"
++    assert relay.status == "running"
++    assert network.read_reservation(managed.identity)["endpoint"]["pending"]
++    labels[key] = old_owner
++    await stop(managed)
++
++
++async def test_dynamic_recovery_retry_clears_error_before_controller_attachment(managed, monkeypatch):
++    await launch_application(**launch_args(managed))
++    value = network.read_reservation(managed.identity)
++    value["endpoint"]["pending"] = {"revision": 2, "selected_ipv4": "203.0.113.10"}
++    network.save_reservation(value)
++    original_apply = dynamic._apply_rules
++    def fail(*args):
++        raise RuntimeError("injected first recovery failure")
++    monkeypatch.setattr(dynamic, "_apply_rules", fail)
++    first = await dynamic.refresh(network.read_reservation(managed.identity))
++    assert first["reason"] == "NETWORK_DYNAMIC_ENDPOINT_ROLLBACK_FAILED"
++    relay = managed.docker.container_values[value["allocation"]["relay_id"]]
++    assert relay.status == "exited"
++    monkeypatch.setattr(dynamic, "_apply_rules", original_apply)
++    relay.start()
++    previous, current = replace_controller(managed)
++    restored = await network.restore_controller_networks()
++    assert restored == [{"home_hash": managed.identity["home_hash"], "result": "attached"}]
++    after = network.read_reservation(managed.identity)
++    assert after["controller_id"] == current.id
++    assert not after["endpoint"].get("pending") and not after["endpoint"].get("last_error")
++    await stop(managed)

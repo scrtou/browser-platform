@@ -1,0 +1,107 @@
+--- /dev/null
++++ b/server/app/bounded_logs.py
+@@ -0,0 +1,7 @@
++"""Fixed local Docker retention for all new platform-created containers."""
++from docker.types import LogConfig
++
++
++def bounded_log_config():
++    # Fresh objects: a caller must not mutate defaults for a later generation.
++    return LogConfig(type="json-file", config={"max-size": "10m", "max-file": "3", "compress": "true"})
+--- a/server/app/network_runtime.py
++++ b/server/app/network_runtime.py
+@@ -27,6 +27,7 @@
+ from fastapi import HTTPException
+ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_serializer, model_validator
+ 
++from .bounded_logs import bounded_log_config
+ from .docker_utils import get_docker_client, translate_path_to_host
+ from .settings import settings
+ from .coherence_policy import CoherencePolicy, validate_probe_origin
+@@ -702,7 +703,7 @@
+                 source = secret_source(getattr(policy, kind + "_file"), getattr(policy, kind + "_sha256"))
+                 prefix = "/run/config/" if material_source and kind == "upstream_tls_ca" else "/run/secrets/"
+                 volumes[source] = {"bind": prefix + destination, "mode": "ro"}
+-        relay = await asyncio.to_thread(client.containers.create, image=policy.relay_image,
++        relay = await asyncio.to_thread(client.containers.create, image=policy.relay_image, log_config=bounded_log_config(),
+                                        name=resource_name(identity, "relay"),
+                                        command=["--network-config", "/run/config/network.json", "--relay-config", "/run/config/relay.json"],
+                                        labels=resource_labels(reservation, "relay"), network=internal.name,
+@@ -732,7 +733,7 @@
+         if policy.coherence:
+             from .coherence_runtime import result_mount
+             guard_volumes.update(result_mount(reservation, "guard"))
+-        guard = await asyncio.to_thread(client.containers.create, image=policy.relay_image,
++        guard = await asyncio.to_thread(client.containers.create, image=policy.relay_image, log_config=bounded_log_config(),
+                                        name=resource_name(identity, "guard"),
+                                        command=["--network-config", "/run/config/network.json"],
+                                        labels=resource_labels(reservation, "guard"), network=internal.name,
+@@ -949,7 +950,7 @@
+     volumes = {}
+     if policy.probe_ca_file:
+         volumes[secret_source(policy.probe_ca_file, policy.probe_ca_sha256)] = {"bind": "/run/probe-ca.pem", "mode": "ro"}
+-    probe = await asyncio.to_thread(client.containers.create, image=policy.probe_image,
++    probe = await asyncio.to_thread(client.containers.create, image=policy.probe_image, log_config=bounded_log_config(),
+                                    name=resource_name(reservation["identity"], "probe"),
+                                    entrypoint=["python3", "-c", script], command=[allocation["relay_ip"], policy.probe_url,
+                                    str(policy.probe_timeout_seconds), "/run/probe-ca.pem" if volumes else ""],
+--- a/server/app/providers/docker_provider.py
++++ b/server/app/providers/docker_provider.py
+@@ -13,6 +13,7 @@
+ from docker.types import DeviceRequest
+ from fastapi import HTTPException
+ 
++from ..bounded_logs import bounded_log_config
+ from ..docker_utils import get_docker_client
+ from .base_provider import BaseProvider
+ 
+@@ -158,6 +159,9 @@
+ 
+         if config.get("docker_overrides"):
+             run_kwargs.update(config["docker_overrides"])
++
++        # Platform retention cannot be disabled by an application override.
++        run_kwargs["log_config"] = bounded_log_config()
+ 
+         # This capability comes from the actual image, not an application
+         # label override. Explicit stop supplies the required Docker grace time.
+--- /dev/null
++++ b/server/tests/test_bounded_logs.py
+@@ -0,0 +1,37 @@
++"""Creation policy, override protection and isolated mutable inputs."""
++from unittest.mock import AsyncMock
++import pytest
++from app.bounded_logs import bounded_log_config
++from app.providers import docker_provider
++from app.launch import launch_application
++from tests.test_network_runtime import managed, launch_args
++from tests.test_profile_runtime import containers, SID, DISPLAY_ENV
++
++EXPECTED = {"Type": "json-file", "Config": {"max-size": "10m", "max-file": "3", "compress": "true"}}
++
++
++def test_policy_cannot_be_mutated_across_creates():
++    first = bounded_log_config()
++    assert first == EXPECTED
++    first["Config"]["max-size"] = "0"
++    assert bounded_log_config() == EXPECTED
++
++
++@pytest.mark.parametrize("override", [{}, {"log_config": {"Type": "none"}}, {"log_config": {"Type": "json-file", "Config": {"max-size": "0"}}}])
++async def test_worker_retention_overrides_application(containers, monkeypatch, override):
++    provider = docker_provider.DockerProvider({"provider_config": {"image": "qa-image", "port": 3000, "docker_overrides": override}})
++    monkeypatch.setattr(provider, "_wait_for_container_ready", AsyncMock(return_value="127.0.0.1"))
++    await provider.launch(SID, DISPLAY_ENV, {})
++    assert containers.run_kwargs["log_config"] == EXPECTED
++
++
++async def test_managed_sidecars_and_probe_get_policy(managed, monkeypatch):
++    seen = {}
++    original = managed.docker.containers.create
++    def create(**kwargs):
++        role = kwargs["labels"]["io.browser-platform.role"]
++        seen[role] = kwargs.get("log_config")
++        return original(**kwargs)
++    monkeypatch.setattr(managed.docker.containers, "create", create)
++    await launch_application(**launch_args(managed))
++    assert seen == {role: EXPECTED for role in ("relay", "guard", "probe")}

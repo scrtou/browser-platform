@@ -50,7 +50,7 @@ def main():
         for name, expected in base_hashes.items():
             if sha((work / "server/app" / name).read_bytes()) != expected:
                 raise SystemExit(f"Upstream source mismatch: {name}")
-        patches = ("profile-lifecycle.patch", "environment-management.patch")
+        patches = ("profile-lifecycle.patch", "environment-management.patch", "proxy-create-authorization.patch", "dynamic-upstream.patch", "bounded-logs.patch")
         for patch_name in patches:
             subprocess.run(["git", "apply", "--check", str(package / patch_name)], cwd=work, check=True)
             subprocess.run(["git", "apply", str(package / patch_name)], cwd=work, check=True)
@@ -59,7 +59,7 @@ def main():
         files = {}
         for name in sorted([*base_hashes, "profile_runtime.py", "profile_health.py", "profile_resume.py", "launch_journal.py", "network_runtime.py", "network_probe.py", "network_direct.py", "network_dns.py", "secret_store.py", "secret_runtime.py",
                             "coherence_policy.py", "coherence_geoip.py", "coherence_report.py", "coherence_runtime.py", "coherence_exec.py", "browser_observe.py",
-                            "session_secrets.py", "session_runtime.py", "safe_output.py", "environment_management.py", "proxy_probe.py"]):
+                            "session_secrets.py", "session_runtime.py", "safe_output.py", "environment_management.py", "proxy_probe.py", "dynamic_upstream.py", "bounded_logs.py"]):
             after = (work / "server/app" / name).read_bytes()
             target = payload / "app" / name
             target.parent.mkdir(parents=True, exist_ok=True)

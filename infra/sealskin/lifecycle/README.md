@@ -1,8 +1,16 @@
 # SealSkin Profile、Relay 与网络生命周期
 
+2026-10-01 [R6W 已发布](../r6w-existing-proxy-acceptance-2026-10-01.md)：新建浏览器可复用已有认证代理，控制器只追加精确授权，原密文/凭据版本与撤销语义保持。独立最小准备器 `prepare-proxy-reuse.py` 基于 R6J1，只改 `secret_store.py` 和 `environment_management.py`；没有发布 R7G。
+
+2026-10-01 当前日志专用生产镜像为 `ad21dd6d…`：保留原 overlay，仅两处创建代码和新日志模块变化；三 Home 经授权备份/独立恢复/重建，11 个容器限额生效。R7G/R6I 未部署；[最新生产验收](../r6j1-log-deployment-acceptance-2026-10-01.md)及 R6J1 增量材料补充下方历史版本快照。
+
 [文档导航](../../../docs/README.md) · [开发进度](../../../docs/progress.md) · [运维总览](../../../docs/operations.md) · [验收索引](../../../docs/acceptance/README.md)
 
-该补丁基于 SealSkin commit `2b13a42483c1dc7d367d5c340437bdc8ecd84bb4`，基础镜像固定为 `0.3.2-ls58@sha256:d52c155eb78882b27c7780e77df335939d46cd06a514c9fa310039307542ee6a`。生产发布为 `0.3.2-lifecycle-v2`（网络 v2 + 健康观测 + 按序恢复 + 启动日志/删除保护/显示连接观测）；R5A 的 `0.3.2-proxy-v1` 增加上游协议/认证/CA 修订及支持新 Worker 的正常退出，隔离验收已通过，未部署生产。R5B 的 `0.3.2-secrets-v1` 增加加密版本存储、精确授权、tmpfs 租约撤销与加密恢复，已通过 [独立 QA](../secret-store-acceptance-2026-09-14.md)，同样未部署。线上安装版本以 [开发进度](../../../docs/progress.md#deployment) 为准。
+2026-09-30 R7G 隔离增量已完成，未部署生产：真实 monitor/批准 DNS/认证 SOCKS5/双 Worker 8 组集成、556 控制器与 101 QA 工具回归通过。修复故障停止的 Docker SDK 参数、pending 恢复归属和失败意图保留，见 [本轮验收](../r7g-controller-integration-acceptance-2026-09-30.md)。生产仍使用 `bfcd878f…` 控制器，下方日期记录保留原范围。
+
+该补丁基于 SealSkin commit `2b13a42483c1dc7d367d5c340437bdc8ecd84bb4`，基础镜像固定为 `0.3.2-ls58@sha256:d52c155eb78882b27c7780e77df335939d46cd06a514c9fa310039307542ee6a`。历史基础发布为 `0.3.2-lifecycle-v2`（网络 v2 + 健康观测 + 按序恢复 + 启动日志/删除保护/显示连接观测）；R5A 的 `0.3.2-proxy-v1` 增加上游协议/认证/CA 修订及支持新 Worker 的正常退出，隔离验收已通过，未部署生产。R5B 的 `0.3.2-secrets-v1` 增加加密版本存储、精确授权、tmpfs 租约撤销与加密恢复，已通过 [独立 QA](../secret-store-acceptance-2026-09-14.md)，同样未部署。线上安装版本以 [开发进度](../../../docs/progress.md#deployment) 为准。
+
+2026-09-29 当前控制器为 `r6f-existing-overlay-recheck`（`bfcd878f…`），本轮未重建；宿主机 IPv4 只读证据已挂载。Adapter `346d6377…` 修复了 DIRECT 能力解码遗漏，运行清单版本可通过 inspect 核对。Work 仍待受管理目录迁移及公网验收，见 [R7F 续跑报告](../r7f-production-review-acceptance-2026-09-29.md)。
 
 R6C/R6D 候选在上述生命周期补丁之后再应用 [environment-management.patch](environment-management.patch)。R6C 为受保护的命名 Home 增加控制器拥有的归档端点：只接受 Adapter 的加密请求，在 Home 锁内确认资源为空，写入脱敏清单后原子移动到归档命名空间。R6D 增加管理员加密路由 `/api/admin/environment-management/`：`proxy-secrets` 经同一 Secret Store 导入并只返回引用；`proxy-probe` 在控制器进程内把上游冻结为公网 IPv4 后做有界 socks5/HTTP/HTTPS CONNECT 与隧道内 TLS 检查（`proxy_probe.py`），不创建 Docker 资源、不替代启动时的 Guard 命名空间探针；`network-policies` 在注册表锁内用 `NetworkPolicy` 模型校验后只追加修订，摘要沿用本节规则，同内容重试返回相同摘要、同 ID 不同内容拒绝，HTTPS 上游 CA 作为 `network-secrets/<policy>-upstream-ca.pem` 0600 独占写入。构建脚本会同时校验两层补丁并把摘要写入 manifest，`environment_management.py`、`proxy_probe.py` 纳入安装文件清单。该补丁只在隔离候选验证，生产控制器未替换；见 [DEV-048](../../../docs/deviations/DEV-2026-09-18-048-home-archive-controller-api.md)、[DEV-049](../../../docs/deviations/DEV-2026-09-18-049-proxy-secret-import-channel.md)、[DEV-050](../../../docs/deviations/DEV-2026-09-18-050-proxy-draft-probe-scope.md)。
 
@@ -10,7 +18,7 @@ SealSkin 继续独占 Docker 生命周期。Adapter 先持久化策略引用和�
 
 R5C1 的 `0.3.2-direct-v1` 候选增加受管理 DIRECT、固定解析器和宿主机公网地址保护，以及浏览器初始 URL 与会话标记分离；生产尚未采用。配置、只读地址挂载、健康与恢复限制见 [受管理 DIRECT](direct-network.md)，版本和隔离结果见 [R5C1 验收](../direct-network-acceptance-2026-09-14.md)。
 
-R5C2 的 `0.3.2-dns-v1` 候选增加代理端点批准解析器、绑定 DNS 回答/TTL、恢复配置校验和固定依赖，见 [引导 DNS 与 TTL](bootstrap-dns.md)。私有回归与标准 Unbound/受控公网端点的三路径真实 TTL、浏览器故障/恢复和清理已通过 [验收](../approved-dns-ttl-acceptance-2026-09-14.md)，工作项已收尾，未部署生产。
+R5C2 的 `0.3.2-dns-v1` 候选增加代理端点批准解析器、绑定 DNS 回答/TTL、恢复配置校验和固定依赖，见 [引导 DNS 与 TTL](bootstrap-dns.md)。私有回归与标准 Unbound/受控公网端点的三路径真实 TTL、浏览器故障/恢复和清理已通过 [验收](../approved-dns-ttl-acceptance-2026-09-14.md)，工作项已收尾，未部署生产。R7G 的 `dynamic-upstream.patch` 在此之后提供可选动态域名扩展：仅对非数值 `upstream_host` 且镜像声明 `io.browser-platform.dynamic-upstream=1` 的代次启用；准备器会把 `dynamic_upstream.py` 纳入 payload 和 manifest。
 
 [专用公开权威 DNS](../checks/public-dns-authority/README.md) 的公开委派、实际递归和外部 UDP/TCP 均有证据。五轮外部轻量端点与临时递归设施已清理，原 CoreDNS 恢复并通过本机/外部复测；基础 QA 委派/权威、SSH 和用户规则暂留给后续项，不重复应用历史防火墙提案。
 
@@ -32,7 +40,7 @@ SealSkin 自发现优先使用自身 hostname，保留 Docker 配置的主网络
 
 受管理的启动先创建持久化网络占用，再分配各自的 internal／egress bridge、Relay 和 Guard。Guard 在私有网络命名空间内安装 nftables 规则并降权后，一次性探测容器与 Worker 才能通过 `network_mode: container:<guard-id>` 使用该命名空间。探测验证经网关的 HTTPS/TLS 与绕过网关的 IPv4／IPv6／本地 DNS 阻断，成功且探测容器删除后才启动 Worker。Worker 最终网络不能被应用 overrides 改回默认 bridge。失败留下可对账的资源，入口不会重复创建。
 
-Worker 仅可向自己的 Relay 数值地址 TCP 1080 发起连接，显示端口只接收固定控制器地址的连接；其他出站、入站和转发默认拒绝。Docker DNS `127.0.0.11` 在 loopback 放行前单独拒绝。`proxy_required` 的 Relay 只可连接分配时由控制器解析并冻结的一个上游 IPv4／端口；网站域名经内部 SOCKS5 交给 Relay，再通过所选 SOCKS5/HTTP(S) CONNECT 交上游解析。DIRECT 网关改为只向批准的数值解析器查询，完整目标集合通过地址 ACL 后才连接公开 IPv4 TCP；禁止上游和凭据。两种模式的 Relay、Guard、控制器地址都显式固定。初始化器完成规则安装后丢弃全部 capabilities；Worker 不获得 `NET_ADMIN`／`NET_RAW`。
+Worker 仅可向自己的 Relay 数值地址 TCP 1080 发起连接，显示端口只接收固定控制器地址的连接；其他出站、入站和转发默认拒绝。Docker DNS `127.0.0.11` 在 loopback 放行前单独拒绝。静态 `proxy_required` 的 Relay 只可连接分配时由控制器解析并冻结的一个上游 IPv4／端口。动态域名代次仍不把 DNS 交给 Worker：控制器按批准 DNS/TTL 重新解析，先用候选地址做有界 TCP 预检，Guard 通过一次 nft 事务短暂允许旧/新集合，Relay 原子读取 endpoint lease；真实代理探测成功后只保留新地址，失败回滚或停止 Relay 以保持阻断。已建立 TCP 连接自然结束，新连接读取当前 lease。网站域名经内部 SOCKS5 交给 Relay，再通过所选 SOCKS5/HTTP(S) CONNECT 交上游解析。DIRECT 网关改为只向批准的数值解析器查询，完整目标集合通过地址 ACL 后才连接公开 IPv4 TCP；禁止上游和凭据。两种模式的 Relay、Guard、控制器地址都显式固定。初始化器完成规则安装后丢弃全部 capabilities；Worker 不获得 `NET_ADMIN`／`NET_RAW`。
 
 引用型凭据先持久化停止意图、失效租约并确认 Relay 退出，再正常关闭 Worker；所有 Worker 消失后回收 Guard／Relay／网络及占用并删除临时材料。旧文件策略保持原停止顺序。异属端点阻止网络资源清理。网络和容器标签绑定 scope、Home、Profile、operation、应用及策略摘要；创建响应丢失仍能按确定名称和标签找到资源。清理中断后重复 stop/reconcile 即可继续；不能通过删除网络占用文件释放 Home。
 
@@ -182,9 +190,13 @@ python3 infra/sealskin/lifecycle/check-network-live.py --root /private/network-c
 python3 infra/sealskin/lifecycle/check-network-live.py --root /private/network-check/qa --stage partial
 python3 infra/sealskin/lifecycle/check-network-live.py --root /private/network-check/qa --stage finish
 python3 infra/sealskin/lifecycle/cleanup-network-qa.py --root /private/network-check/qa
+# 聚焦 QA 可显式传同一证据根内的 PASS 摘要：
+python3 infra/sealskin/lifecycle/cleanup-network-qa.py \
+  --root /private/focused-check/qa \
+  --completed-evidence /private/focused-check/final/summary.json
 ```
 
-准备器自动创建 QA 用户、两个命名 Home、测试 CA、应用和网络策略。QA 会停止和删除自己创建的资源；清理工具先确认没有 Session、generation 容器、网络和占用，再删除 QA 控制服务、上游、私钥与数据。失败时保留现场，先通过 QA 的 stop/reconcile 处理占用。完整私有证据位于 `runtime/network-lifecycle-2026-09-13/`。整理后的公开脚本已在该目录的独立 `reproduction/` 中从空目录完成 prepare → initial → finish → cleanup，6 项场景检查及清理通过；17 项完整故障结果仍保留在原 `qa/live-results.json`。
+准备器自动创建 QA 用户、两个命名 Home、测试 CA、应用和网络策略。QA 会停止和删除自己创建的资源；清理工具先确认没有 Session、generation 容器、网络和占用，再删除 QA 控制服务、上游、私钥与数据。默认完成证据仍为 `qa/live-results.json`；聚焦运行可显式传同一 QA 证据根内、非符号链接且顶层 `result=PASS` 的 JSON 摘要，不能用空文件或失败摘要绕过。失败时保留现场，先通过 QA 的 stop/reconcile 处理占用。完整私有证据位于 `runtime/network-lifecycle-2026-09-13/`。整理后的公开脚本已在该目录的独立 `reproduction/` 中从空目录完成 prepare → initial → finish → cleanup，6 项场景检查及清理通过；17 项完整故障结果仍保留在原 `qa/live-results.json`。
 
 健康场景使用同一 QA 拓扑：`../checks/check-health-live.py --root /private/network-check/qa` 先把 QA 应用 `network-qa-app-a` 的入口替换为进程模拟 Worker（符号链接的 Python 进程冒充 `firefox`、`Xvfb`、`selkies`，端口 3000 模拟显示端点），再依次验证健康代次、缓存／节流、反复查询不创建、浏览器退出与重开、显示故障、Relay／上游／Guard 故障、停止后 offline、控制面停止时 unknown 与报告过期，结果写入 `qa/health-results.json`。
 
@@ -197,6 +209,8 @@ R5C1 使用准备器的 `--direct-host-evidence` 和 `../checks/check-direct-net
 R5C2 使用 [引导 DNS 检查器](../checks/check-bootstrap-dns.py) 验证正常 Camoufox 的批准解析器、TTL 记录、冻结端点、重启/恢复及失败保留。公开工具支持严格单样本和显式多样本计划；第五轮的完整结论另由浏览器、代次、上游、权威日志及抓包关联取得，单独采样仍只返回 PARTIAL。重现步骤、公共前端限制与最终结果见 [DNS QA](bootstrap-dns.md#公开-dns-的待执行材料)。
 
 Camoufox 客户端、重建与迁移准备命令见 [组件说明](../../camoufox/README.md#受管理网络与客户端包)。同一 QA 桌面的网络、剪贴板和客户端脚本必须顺序运行。直接使用 SealSkin API 的浏览器 QA 可以不启动 Adapter；清理工具在没有 PID 文件时会先核对该 QA 二进制/配置的进程不存在，再清理控制器。任何残余 Home 占用或未知进程仍须核对，不能强行删除代次。
+
+R7B 将生产兼容 Work Firefox/Wayland 的精确父镜像叠加 [受管理网络配置层](../../work-firefox-managed/README.md)，以独立 DIRECT policy/Home 验证公开 HTTPS、Worker 四类原始绕过拒绝、网关停止后的 fail-closed、正常换代和 Cookie/localStorage/IndexedDB 恢复。候选与清理已通过，生产 Work 仍停止且未绑定；控制器的宿主地址证据挂载、DIRECT 网关和应用策略只在 R7F 固定发布中生效，见 [R7B 验收](../r7b-managed-work-egress-acceptance-2026-09-21.md)。
 
 `check-docker-restart.py --root ... --daemon-image docker:29.8.0-dind@sha256:77759fdec1efef224ba7110ef7b5b3c6af6164ffaef5441d3beba059bde8b857` 使用无外部网络的临时 privileged Docker-in-Docker 容器，cgroup／network namespace 独立，不挂载宿主机 Docker socket。它读取父目录 `guard-image-final.json`，只重启内部 daemon，结束后删除临时容器和测试密钥。此检查不代替正式主机重启。清理标准 QA 前，先经生命周期 API 停止所有额外测试 Home，再移除观察端点及测试 CA 私钥；清理工具遇到未识别的 QA 资源会拒绝继续。
 
@@ -220,3 +234,25 @@ R5C3 将可选 `coherence` 固定到网络修订，在正常 Camoufox Worker 的
 每次观测最多有效 60 秒，每 30 秒开始续查，全局最多两个后台任务。UNKNOWN 保留占用；实际绕过或拓扑/规则漂移先暂停精确 Worker。出口比较历史按代次单独持久化，与相应报告和锁定原子更新，跨临时失败与同代次恢复保留，不能替代新鲜证据。规则仍有已知绕过时不得直接执行正常 stop，因为浏览器正常退出会先 unpause；先在暂停状态下恢复限制，再经原生命周期停止。
 
 Babel 2.17.0/CLDR 46 与 dnspython 同由 [依赖锁](python-dependencies.json) 固定，安装器检查模块和数据，离线 wheel 也核对 SHA。准备器的运行 manifest 包含 26 个文件，并分别固定 payload release 与包装摘要。回退需先以理解本版字段的控制器清理相关代次，保留真实 Home、最新 journal 和旧版本；不把 QA 的重建或数据清理步骤应用于生产。
+
+## R7G 动态上游隔离集成
+
+[check-dynamic-upstream.py](../checks/check-dynamic-upstream.py) 复用全新 `prepare-network-qa.py` 部署，准备时必须挂载独立 `--display-runtime-root`，并为运行器提供精确 Session-auth Worker 镜像。它用完整 App PUT 去掉旧测试启动覆盖，生成独立 SOCKS5 凭据与批准 DNS；两个测试代理放在控制网桥之外，避免同网桥发布端口的 hairpin 路径失效。`prepare → run` 使用正常生命周期 API；`stop` 只释放所记录的 QA 代次/夹具，成功后再按报告执行总清理。
+
+QA Docker 通道新增固定动态规则命令，只对已批准镜像和当前归属 Relay 开放；attached 输出按 Docker upgrade 边界转发，输出有界且无 stdin。`dynamic-apply-error` 只针对 `policy.json` 指定的精确 QA Relay 注入失败，用于验证双失败停止。生产代码的两个停止分支使用 `timeout=10`；恢复故障仅停止已证实归属的 Relay，并保留 pending 直到规则恢复或正常清理。
+
+[check-dynamic-recovery.py](../checks/check-dynamic-recovery.py) 在上述 `prepare` 后运行，验证正常监视器产生的三个事务中断点和恢复失败后的重试。`dynamic-hold` 必须绑定精确 QA Relay、规则地址及 create/result 阶段，最多 30 秒，释放返回失败而不迟到写入。恢复成功才清除当前错误；失败保留 pending。四组实机、557 控制器与 107 QA 工具回归通过，QA 清零且生产保持，见[恢复验收](../r7g-controller-recovery-acceptance-2026-09-30.md)。
+
+R7G 当前[审核包](../r7g-review-materials-acceptance-2026-09-30.md)保存固定 Git 对象、离线 wheel、准备器和 patch，84 文件可离线重现；包不含镜像层或生产状态。新增 [check-dynamic-public.py](../checks/check-dynamic-public.py) 复用专用 QA DNS/新端点包，用 Worker HTTPS/WSS 与实际 socket 来源核对动态路径；当前仅准备与共享 zone 保护回归通过，公网端到端待入站恢复，不能直接用于生产。
+
+[check-dynamic-concurrency.py](../checks/check-dynamic-concurrency.py) 在私有夹具准备后并发提交八个启动请求，核对 Home 唯一代次、monitor/stop 同锁、peer 独立可用和旧 operation 拒绝；三组实机结果见[并发验收](../r7g-concurrency-acceptance-2026-09-30.md)。限定请求数的边界验证不等同容量压力测试。
+
+[check-dynamic-compatibility.py](../checks/check-dynamic-compatibility.py) 使用明确基线镜像在隔离环境验证静态代次升级、混合运行和受控回退。它在切回旧控制器前拒绝任何残留动态 endpoint；四组实机及完整应用 overlay 核对通过，见[兼容验收](../r7g-static-upgrade-acceptance-2026-09-30.md)。该工具不挂载生产配置或 Home；旧格式文件凭据范围不能替代实际生产 Store 迁移。
+
+[check-dynamic-secrets.py](../checks/check-dynamic-secrets.py) 补齐动态端点与 Secret Store 组合：endpoint lease 更新时 credential lease 保持，monitor 持 Home 锁期间撤销仍先阻断出站、再等待正常清理。三组实机通过，见[组合验收](../r7g-secret-combination-acceptance-2026-09-30.md)；仅使用新 QA Store/密钥，不代表生产迁移。
+
+R6J 日志策略（2026-10-01，候选未部署）：准备器依次应用 profile-lifecycle、environment-management、dynamic-upstream、bounded-logs 四层补丁并固定摘要；新增 bounded_logs.py。新建 Worker/Relay/Guard/启动探测固定 json-file / 10 MiB × 3 / 压缩，Worker 应用 overrides 不可取消；既有容器不修改。562 项控制器和真实四类创建检查通过，见[日志验收](../r6j-log-policy-acceptance-2026-10-01.md)。
+
+- [R6K 本机隔离恢复与回退](../checks/disaster-recovery.md)：合成 Work 实际恢复已通过，真实归档仅离线核对；异机冷恢复待独立资源。
+
+2026-10-02：[R7G1 动态代理已部署](../r7g1-deployment-acceptance-2026-10-02.md)。新建域名策略采用动态 Relay；既有策略/静态代次及 DIRECT 默认保持。旧控制器回退前须正常清理全部动态代次并核对无 pending/lease，不能回放旧用户数据。商业供应方自然漂移与新 GUI 热切换观察未测，用户已允许部署。

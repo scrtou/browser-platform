@@ -1,5 +1,7 @@
 # 设计偏差记录
 
+[DEV-129 Relay APK 版本留存](DEV-2026-10-02-129-relay-apk-version-retention.md)：已解决并部署，明确补丁锁、全部集成与异机镜像核对通过。
+
 [DEV-128 灾备 QA Cookie 有效期](DEV-2026-10-02-128-recovery-cookie-lifetime.md)：已解决；一年期合成 sentinel 新检查点跨机读回/回退通过，历史过期证据保留。
 
 [DEV-127 原生异机恢复模块冲突](DEV-2026-10-02-127-remote-recovery-module-collision.md)：已解决，独立模块名加载后 Camoufox/Chromix 跨机恢复、重开和回退通过。
