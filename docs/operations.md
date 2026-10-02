@@ -1,5 +1,7 @@
 # 运维、开机与恢复
 
+[R6AU真实业务一致性备份](../infra/sealskin/r6au-consistent-business-backup-acceptance-2026-10-02.md)已完成：2026-10-02 19:30:56 UTC停止检查点、完整加密归档与异机恢复/读回/断网副本验证通过，生产原运行范围已恢复。按[整体备份步骤](../infra/sealskin/checks/consistent-business-backup.md)使用单独留存的修正工具、密文、收据和身份；旧历史Home材料的时点限制仍适用于旧材料。
+
 当前部署统一封存为 [server-2026.10.02.3](releases/server-2026.10.02.3.md)，独立机程序归档、359源文件/双二进制及16镜像ID已核对。包内RECOVERY.md明确动态退役、缩放复位、tmpfs/信任/产物依赖和状态保留条件。真实历史Home加当前元数据仍非一致性业务备份；以下旧版本段落按原时点阅读。
 
 R6AS运维更新：三引擎固定网络与升级恢复矩阵、独立QA清理及启动预算修正已完成，见[验收](../infra/sealskin/r6as-fixed-version-matrix-acceptance-2026-10-02.md)。启动请求等待有界180秒；真正超时仍保留unknown与占用，应走正常安全关闭，不重复发送或删除journal。回退到R6AR只恢复程序；降到`.2`还须先退役动态代次并按R6AR规则复位非零缩放，不能恢复旧在线目录覆盖用户新操作。

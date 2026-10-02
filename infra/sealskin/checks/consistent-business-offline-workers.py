@@ -20,7 +20,17 @@ try:
   for key,value in {'binding.json':json.dumps({'version':1,'session_id':sid,'uid':uid}).encode(),'basic.htpasswd':basic.encode(),'master-token':secrets.token_urlsafe(32).encode()}.items():
    f=sd/key;f.write_bytes(value);f.chmod(0o600);os.chown(f,uid,uid)
   env=dict(x.split('=',1) for x in original['Config']['Env']);env['SUBFOLDER']='/'+sid+'/';env['SELKIES_ALLOWED_ORIGINS']='http://127.0.0.1';env['SEALSKIN_URL']='http://127.0.0.1:1'
-  args=['docker','create','--name',name,'--label','io.browser-platform.r6au-offline=true','--network','none','--restart','no','--memory','1g','--shm-size',str(original['HostConfig']['ShmSize']),'--security-opt','no-new-privileges:true']
+  host=original['HostConfig'];assert not host['Privileged'] and not host.get('Devices')
+  args=['docker','create','--name',name,'--label','io.browser-platform.r6au-offline=true','--network','none','--restart','no','--shm-size',str(host['ShmSize'])]
+  for key,flag in [('Memory','--memory'),('NanoCpus','--cpus'),('PidsLimit','--pids-limit')]:
+   if host.get(key):args += [flag,str(host[key]/1e9 if key=='NanoCpus' else host[key])]
+  for cap in host.get('CapDrop') or []:args += ['--cap-drop',cap]
+  assert not host.get('CapAdd'),'unexpected capabilities in offline Worker'
+  for option in host.get('SecurityOpt') or []:
+   if option.startswith('seccomp='):
+    seccomp=qa/(name+'-seccomp.json');seccomp.write_text(json.dumps(json.loads(option.split('=',1)[1])));option='seccomp='+str(seccomp)
+   args += ['--security-opt',option]
+  assert any(v.startswith('no-new-privileges') for v in host.get('SecurityOpt') or [])
   for k,v in env.items():args+=['-e',k+'='+v]
   for mount in original['Mounts']:
    target=mount['Destination']

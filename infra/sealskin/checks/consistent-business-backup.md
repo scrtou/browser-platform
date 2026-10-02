@@ -44,10 +44,14 @@ python3 infra/sealskin/checks/consistent-business-backup.py verify \
 
 ## 工具验证
 
-`test_consistent_business_backup.py`使用真实age和独立合成数据验证：往返/权限/链接/恢复标记与拒绝覆盖、未静止拒绝、篡改密文、错误密钥、错误manifest pin、精确socket排除及其他特殊节点拒绝、源别名/越界/重复前缀拒绝。增加作业链接往返/不读取外部目标、链接父节点拒绝与配置链接拒绝后，本机及独立机各10项通过。Python3.11的流式tar不接受compresslevel参数，压缩层使用显式GzipFile；首次失败保留在R6AU私有记录。
+`test_consistent_business_backup.py`使用真实age和独立合成数据验证：往返/权限/链接/恢复标记与拒绝覆盖、未静止拒绝、篡改密文、错误密钥、错误manifest pin、精确socket排除及其他特殊节点拒绝、源别名/越界/重复前缀拒绝。增加作业链接往返/不读取外部目标、链接父节点拒绝与配置链接拒绝后，本机及独立机各11项通过（包含下述解压工作量回归）。Python3.11的流式tar不接受compresslevel参数，压缩层使用显式GzipFile；首次失败保留在R6AU私有记录。
 
 恢复后可使用[逐文件与数据库读回](consistent-business-readback.py)、[离线Secret Store授权读回](consistent-business-secret-readback.py)及[无网络Worker副本检查](consistent-business-offline-workers.py)。三个工具限定R6AU私有恢复根，不能对生产路径执行；原恢复文件与可写QA副本分开。Worker检查使用新的合成显示令牌、不发布端口且使用Docker的none网络，不代表真实第三方登录验证。
 
 维护异常恢复必须等待Controller认证API返回正常应用列表；建立客户端时也可能因TLS服务初始化抛错，该阶段同样纳入有界重试。只有各原活动Profile新鲜healthy、原停用Profile保持停止，才声明生产恢复。
 
 大包验证按tar成员顺序读取内容，而不是按规范化JSON清单排序读取，避免gzip反复回退解压。清单集合、所有摘要、metadata及链接安全检查保持；嵌套目录回归对解压总工作量设上界，旧实现可复现超限。
+
+SQLite读回要求3.43以上以支持Firefox FTS5 contentless_delete；Debian12可按[固定依赖](consistent-business-readback-requirements.txt)在工具旁sqlite-runtime目录安装经SHA核对的pysqlite3 wheel。数据库先复制到临时目录，使用转义URI只读打开并保留WAL/SHM；普通库要求quick_check=ok。Firefox suggest.sqlite仅声明geonames_collate/i18n_collate两个原生规则名称，处理器调用即失败；quick_check和完整逐表扫描必须成功且比较调用计数为0。不会伪造排序函数，也不把quick_check扩大成原生索引排序语义验收。
+
+挂载闭包区分持久输入与重新生成的运行输入。DIRECT Relay的只读/proc/1/net/fib_trie由新宿主内核提供；旧Session显示秘密与代次租约不回放。离线Worker仍带原镜像的seccomp、安全和资源配置，同时强制无网络、无公开端口和独立Home副本。

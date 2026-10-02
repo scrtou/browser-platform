@@ -1,6 +1,6 @@
 # DEV-133 · 维护重开遗漏容量准入预检
 
-状态：处理中。关联：[R6AU](../work-items/R6AU-2026-10-02-consistent-business-backup.md)。
+状态：已解决（R6AU最终验收通过）。关联：[R6AU](../work-items/R6AU-2026-10-02-consistent-business-backup.md)。
 
 预期：正常停止真实浏览器前，必须同时核对代理、磁盘、内存、活动数量及启动并发的恢复条件。
 
@@ -11,3 +11,5 @@
 证据：被忽略的R6AU私有目录中的personal-normal-stop.log、personal-normal-start.log、personal-recovery-stage.json。修复及生产恢复未验证前，不标为解决。
 
 本轮进展：已释放R6C标准编译缓存、44个无镜像共享引用的旧BuildKit缓存节点，以及6个停止的合成QA浏览器缓存（持久profile与日志保留）；632MiB固定浏览器安装包已在独立机按版本SHA与完整ZIP CRC验证后转存，当前镜像不变。本机恢复到至少4096+1024MiB，预计归档空间另作扣减预检，第二次归档后原3个浏览器已恢复healthy。完整R6AU异机验收完成后收尾。
+
+最终验证：[R6AU验收](../../infra/sealskin/r6au-consistent-business-backup-acceptance-2026-10-02.md)通过，本文早期失败/待验段落保留其时点。完整归档恢复、数据库/授权读回、原安全配置下三份断网浏览器启动/正常关闭、生产恢复和临时清理均完成。

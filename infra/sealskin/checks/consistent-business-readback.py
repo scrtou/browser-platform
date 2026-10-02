@@ -1,9 +1,16 @@
 """Read raw restored business state without activating any service."""
 from pathlib import Path
-import argparse,json,hashlib,sqlite3,tempfile,shutil,os,stat,subprocess
+import argparse,json,hashlib,tempfile,shutil,os,stat,subprocess,sys
+sys.path.insert(0, str(Path(__file__).with_name("sqlite-runtime")))
+try:
+ from pysqlite3 import dbapi2 as sqlite3
+except ImportError:
+ import sqlite3
+if sqlite3.sqlite_version_info < (3, 43, 0):
+ raise SystemExit("SQLite >= 3.43 required for Firefox contentless_delete tables")
 p=argparse.ArgumentParser();p.add_argument('--root',type=Path,required=True);args=p.parse_args();root=args.root.resolve();os.umask(0o077)
 assert (root/'RECOVERY_PENDING').is_file() and root.parent.name=='r6au-consistent-20261002'
-manifest=json.loads((root/'MANIFEST.json').read_text());entries=manifest['entries'];results={'files':0,'sqlite':[]}
+manifest=json.loads((root/'MANIFEST.json').read_text());entries=manifest['entries'];results={'files':0,'sqlite':[],'sqlite_runtime_version':sqlite3.sqlite_version}
 for name,row in entries.items():
  path=root/name;info=path.lstat();assert stat.S_IMODE(info.st_mode)==row['mode'] and info.st_uid==row['uid'] and info.st_gid==row['gid']
  if row['kind']=='file':
@@ -21,8 +28,30 @@ for name,row in entries.items():
   for suffix in ['-wal','-shm']:
    side=path.with_name(path.name+suffix)
    if side.is_file() and not side.is_symlink():shutil.copy2(side,copy.with_name(copy.name+suffix))
-  db=sqlite3.connect('file:'+str(copy)+'?mode=ro',uri=True);checks=[v[0] for v in db.execute('PRAGMA quick_check')];assert checks==['ok'],name
-  tables={r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")};counts={t:db.execute('SELECT count(*) FROM "'+t+'"').fetchone()[0] for t in sorted(tables & {'moz_cookies','moz_places','moz_bookmarks','cookies','logins'})};db.close();results['sqlite'].append({'path':name,'quick_check':'ok','table_count':len(tables),'counts':counts})
+  db=sqlite3.connect(copy.as_uri()+'?mode=ro',uri=True)
+  native_collation=None; native_calls=[0]
+  def require_native_comparator(left, right):
+   native_calls[0]+=1
+   raise RuntimeError('Firefox native collation comparison required')
+  if path.name=='suggest.sqlite':
+   # These names are registered by Mozilla Suggest. Declaration allows schema
+   # preparation; any attempt to compare values is refused, never fabricated.
+   native_collation='geonames_collate/i18n_collate'
+   for collation in ['geonames_collate','i18n_collate']:
+    db.create_collation(collation,require_native_comparator)
+  checks=[value[0] for value in db.execute('PRAGMA quick_check')]
+  assert native_calls[0]==0 and checks==['ok'],name
+  tables={row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")};counts={}
+  if native_collation:
+   db.text_factory=bytes
+   for table in sorted(tables):
+    quoted='"'+table.replace('"','""')+'"'
+    counts[table]=sum(1 for _ in db.execute('SELECT * FROM '+quoted))
+    assert native_calls[0]==0,'native comparison cannot be substituted'
+  else:
+   counts={table:db.execute('SELECT count(*) FROM "'+table+'"').fetchone()[0] for table in sorted(tables & {'moz_cookies','moz_places','moz_bookmarks','cookies','logins'})}
+  db.close();results['sqlite'].append({'path':name,'quick_check':'ok','table_count':len(tables),'counts':counts,'native_collation':native_collation,'native_comparator_calls':native_calls[0],'full_table_scan':bool(native_collation)})
+
 config=json.loads((root/'adapter/config.json').read_text());directory=json.loads((root/'adapter/dependencies/profile_directory.json').read_text());journal=json.loads((root/'adapter/state.json').read_text());assert all(v['status']=='stopped' for v in journal['bindings'].values());results['journal_bindings']=len(journal['bindings']);results['directory_records']=len(directory['browsers']);results['directory_deleted']=sum(v.get('status')=='deleted' for v in directory['browsers'])
 plan=json.loads((root/'metadata/source-plan.json').read_text())
 def mapped(source):
@@ -34,13 +63,18 @@ for group in ['sealskin','sealskin_admin','access']:
   if key.endswith('_file') and isinstance(value,str):assert mapped(value).is_file()
 for key in ['state_file','environment_job_spool','environment_catalog','template_catalog','network_profile_catalog','profile_directory','legacy_network_migrations']:assert mapped(config[key]).exists()
 # Full actual mount closure, with ephemeral display secrets deliberately replaced for QA.
-workers=json.loads((root/'metadata/active-containers.json').read_text());results['worker_images']=sorted({c['Image'] for c in workers if c['Name'].startswith('/bp-home-')})
+workers=json.loads((root/'metadata/active-containers.json').read_text());results['worker_images']=sorted({c['Image'] for c in workers if c['Name'].startswith('/bp-home-')});results['regenerated_kernel_mounts']=0
 for c in workers:
  subprocess.run(['docker','image','inspect',c['Image']],stdout=subprocess.DEVNULL,check=True)
  for m in c['Mounts']:
+  if (c['Name'].startswith('/bp-relay-') and m['Type']=='bind' and
+      m['Source']=='/proc/1/net/fib_trie' and
+      m['Destination']=='/run/browser-platform-host/ipv4-fib-trie' and not m['RW']):
+   results['regenerated_kernel_mounts']+=1
+   continue
   if m['Destination'].startswith('/run/browser-platform-session-input') or m['Destination']=='/run/secrets':continue
   # Stopped-generation configuration has intentionally been removed by normal Stop.
   if '/profile-network-runtime/' in m['Source']:continue
   assert mapped(m['Source']).exists()
 results.update(result='PASS',raw_restored_files_verified=True,identity_files_present=True,referenced_mounts_present=True,services_activated=False)
-(root.parent/'readback-result.json').write_text(json.dumps(results,indent=2)+'\n');print(json.dumps({k:results[k] for k in ['result','files','journal_bindings','directory_records','directory_deleted']}|{'sqlite_databases':len(results['sqlite'])}))
+(root.parent/'readback-result.json').write_text(json.dumps(results,indent=2)+'\n');print(json.dumps({k:results[k] for k in ['result','files','journal_bindings','directory_records','directory_deleted']}|{'sqlite_databases':len(results['sqlite']),'native_collation_table_scans':sum(bool(v['native_collation']) for v in results['sqlite'])}))

@@ -1,0 +1,2 @@
+# Independent Debian 12 / CPython 3.11 / x86_64 recovery runtime.
+pysqlite3-binary==0.5.4.post2 --hash=sha256:3060a56666ede382c9af3e4b086e30c9ffb65133b3fa606c2d1b9fbff512f241

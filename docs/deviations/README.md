@@ -1,5 +1,13 @@
 # 设计偏差记录
 
+R6AU维护偏差DEV-133至139现均已解决，完整恢复与生产验收见[R6AU报告](../../infra/sealskin/r6au-consistent-business-backup-acceptance-2026-10-02.md)；以下早期条目保留追踪入口。
+
+- [DEV-139 离线Worker安全配置](DEV-2026-10-02-139-offline-worker-security-options.md)：已解决，R6AU三份断网副本验证通过。
+
+- [DEV-138 恢复内核挂载](DEV-2026-10-02-138-recovery-kernel-mount.md)：已解决，R6AU完整读回通过。
+
+- [DEV-137 Firefox原生排序规则读回](DEV-2026-10-02-137-sqlite-native-collation-readback.md)：R6AU处理中，普通数据库完整检查与原生排序表扫描分别记录，不伪造索引通过。
+
 - [DEV-136 大归档解压读取顺序](DEV-2026-10-02-136-backup-gzip-verification-order.md)：R6AU处理中，保持完整验证并修复重复解压开销。
 
 - [DEV-134 整体备份作业链接](DEV-2026-10-02-134-business-backup-job-links.md)、[DEV-135 维护恢复就绪门槛](DEV-2026-10-02-135-maintenance-controller-readiness.md)：R6AU处理中，首次真实备份未生成归档，先恢复原活动浏览器。

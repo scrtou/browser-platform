@@ -1,5 +1,7 @@
 # 验收索引
 
+[R6AU 一致性业务备份](../../infra/sealskin/r6au-consistent-business-backup-acceptance-2026-10-02.md)：已收尾；整体加密归档/异机恢复、239个数据库、授权/撤销、三份断网真实Home副本及生产恢复通过。
+
 [R6AT 统一版本封存](../../infra/sealskin/r6at-unified-release-acceptance-2026-10-02.md)：`server-2026.10.02.3` 已封存；359 文件、双归档/二进制、异机16镜像ID及生产/Git保护通过。
 
 [R6AS 固定版本矩阵](../../infra/sealskin/r6as-fixed-version-matrix-acceptance-2026-10-02.md)：已收尾；三引擎完整矩阵/清理、异机Firefox与慢启动修正部署通过。
