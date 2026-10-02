@@ -1,5 +1,7 @@
 # 远程浏览器管理面设计：新增/修改/删除、代理、指纹与访问
 
+R6AV补充：删除唯一测试管理员是本次离线维护的明确授权，不新增线上绕过最后管理员保护的接口。无预置账号使用显式v3初始化状态和CLI首位管理员命令；缺失/损坏账号文件不自动转换为该状态。旧浏览器未记录任何环境/浏览器/显示模板ID时，归档v1的environment_artifact_id使用保留值`legacy-unrecorded`，表示未记录，不是已验收产物；实际Home/应用/Profile修订与幂等归档检查保持，原目录不补造绑定。
+
 状态：**设计（2026-09-17 第 2 版，按用户需求修订）；第 1–5 步候选代码与隔离测试完成。2026-09-19 已在生产受控启用第 1–2 步安全子集：列表、账号、名称/起始页、停用/启用和安全关闭；新增/删除、代理与自定义指纹仍按实际后端能力关闭。第 6 步的完整组合仍进行中，管理员页面和普通账号边界已完成真实客户端验收。**
 
 相关基础：[当前架构](../../design.md)、[代理与环境规格](specification.md)、[入口登录与 Session 访问](../../../infra/sealskin/entry-auth/README.md)、[Secret Store](../../../infra/sealskin/lifecycle/secret-store.md)、[按 generation 分配代理与网络](../../../infra/sealskin/lifecycle/README.md#按-generation-分配代理与网络)、[受管理 DIRECT](../../../infra/sealskin/lifecycle/direct-network.md)、[Camoufox 产物与验收](../../../infra/camoufox/README.md)、[R6 工作项](../../work-items/R6-2026-09-16-environment-management.md)。

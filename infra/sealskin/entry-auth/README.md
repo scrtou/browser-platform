@@ -1,5 +1,7 @@
 # 入口登录与 Session 访问
 
+R6AV初始化契约：发行不预置账号。明确的初始注册表为`{"version":3,"users":[],"setup_required":true}`，权限和属主检查不变；旧格式空表、缺失/损坏表继续拒绝。入口显示等待管理员初始化，所有登录均拒绝。使用`profile-accounts init --config <私有配置> --user <管理员名>`从标准输入读取密码，文件锁内只允许首位管理员创建，已有账号不覆盖；成功后写回正常v2表并由网关重载。普通put在等待初始化时也只接受admin，UI/API仍禁止自删与最后管理员删除。
+
 [Adapter](../../../adapter/README.md) · [工作项](../../../docs/work-items/R5D-2026-09-14-entry-authentication.md) · [加密备份](../lifecycle/secret-store.md)
 
 R5D 候选 3 在独立阶段完成本地账号、短期访问授权及 HTTPS/真实 Selkies 验收；其原候选当时没有部署。R4B 已把后续共享组合部署生产，两个公开 origin 的所有请求都经过 Adapter；SealSkin API 和原 Session 监听只在本机可达。示例见 [Caddyfile](Caddyfile.example)，阶段范围和固定摘要见 [验收报告](../entry-authentication-acceptance-2026-09-15.md)。

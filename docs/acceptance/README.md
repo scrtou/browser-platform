@@ -1,5 +1,7 @@
 # 验收索引
 
+[R6AV 测试数据清理](../../infra/sealskin/r6av-test-cleanup-acceptance-2026-10-02.md)：已收尾；指定数据清理、显式CLI初始化、旧Home归档修复、完整回归/部署与异机留存通过。
+
 [R6AU 一致性业务备份](../../infra/sealskin/r6au-consistent-business-backup-acceptance-2026-10-02.md)：已收尾；整体加密归档/异机恢复、239个数据库、授权/撤销、三份断网真实Home副本及生产恢复通过。
 
 [R6AT 统一版本封存](../../infra/sealskin/r6at-unified-release-acceptance-2026-10-02.md)：`server-2026.10.02.3` 已封存；359 文件、双归档/二进制、异机16镜像ID及生产/Git保护通过。

@@ -1,0 +1,14 @@
+--- a/cmd/profile-adapter/main.go
++++ b/cmd/profile-adapter/main.go
+@@ -27,0 +28 @@
++	cleanupMode := flag.String("maintenance-cleanup", "", "R6AV scoped cleanup under service lock")
+@@ -43 +44 @@
+-	for name, value := range map[string]string{"maintenance-stop": *maintenanceStop, "maintenance-start": *maintenanceStart, "reset": *resetProfile, "stop": *stopProfile, "reconcile": *reconcileProfile, "inspect": *inspectProfile,
++	for name, value := range map[string]string{"maintenance-cleanup": *cleanupMode, "maintenance-stop": *maintenanceStop, "maintenance-start": *maintenanceStart, "reset": *resetProfile, "stop": *stopProfile, "reconcile": *reconcileProfile, "inspect": *inspectProfile,
+@@ -89 +90 @@
+-	if action != "" && action != "reset" && action != "maintenance-start" && action != "maintenance-stop" {
++	if action != "" && action != "reset" && action != "maintenance-start" && action != "maintenance-stop" && action != "maintenance-cleanup" {
+@@ -213,0 +215,3 @@
++	}
++	if action == "maintenance-cleanup" {
++		return r6avCleanup(cfg, profiles, target)

@@ -1,5 +1,7 @@
 # 运维、开机与恢复
 
+首位管理员由服务器运维在运行Adapter的系统用户下创建：`/home/sshUser/.local/lib/browser-platform/profile-accounts init --config /home/sshUser/code/browser-platform/infra/sealskin/adapter-config.json --user <自选管理员名>`。密码只从标准输入读取，可在受信任终端用`read -r -s bp_admin_password`并以`printf '%s' "$bp_admin_password"`管道传入，完成后`unset bp_admin_password`；不把密码放在参数或配置中。命令拒绝重复初始化，不能覆盖已有账号。等待初始化时入口只显示提示，CLI完成后网关重载即可登录。v3初始化表不能直接回退给只认识v1/v2的旧Adapter：先以新CLI完成初始化，或保持支持v3的程序；不得恢复旧owner表撤销本次清理。
+
 [R6AU真实业务一致性备份](../infra/sealskin/r6au-consistent-business-backup-acceptance-2026-10-02.md)已完成：2026-10-02 19:30:56 UTC停止检查点、完整加密归档与异机恢复/读回/断网副本验证通过，生产原运行范围已恢复。按[整体备份步骤](../infra/sealskin/checks/consistent-business-backup.md)使用单独留存的修正工具、密文、收据和身份；旧历史Home材料的时点限制仍适用于旧材料。
 
 当前部署统一封存为 [server-2026.10.02.3](releases/server-2026.10.02.3.md)，独立机程序归档、359源文件/双二进制及16镜像ID已核对。包内RECOVERY.md明确动态退役、缩放复位、tmpfs/信任/产物依赖和状态保留条件。真实历史Home加当前元数据仍非一致性业务备份；以下旧版本段落按原时点阅读。

@@ -1,5 +1,9 @@
 # 设计偏差记录
 
+- [DEV-141 旧Home归档元数据](DEV-2026-10-02-141-legacy-home-archive-metadata.md)：已解决，R6AV部署与实际清理通过。
+
+- [DEV-140 账号初始化状态](DEV-2026-10-02-140-account-bootstrap-state.md)：已解决，R6AV部署与实际清理通过。
+
 R6AU维护偏差DEV-133至139现均已解决，完整恢复与生产验收见[R6AU报告](../../infra/sealskin/r6au-consistent-business-backup-acceptance-2026-10-02.md)；以下早期条目保留追踪入口。
 
 - [DEV-139 离线Worker安全配置](DEV-2026-10-02-139-offline-worker-security-options.md)：已解决，R6AU三份断网副本验证通过。
