@@ -1,5 +1,7 @@
 # 代理与浏览器环境配套规格
 
+当前交付证据入口：[server-2026.10.02.3](../../releases/server-2026.10.02.3.md)与[R6AS矩阵](../../../infra/sealskin/r6as-fixed-version-matrix-acceptance-2026-10-02.md)。动态控制器/Relay、共享缩放保存、旧Work兼容及原生启动180秒预算已部署；本轮R6AT只统一封存，没有更改产品契约。供应方缺证和各验证对应的实际版本继续明确保留。
+
 R6AS已补齐Camoufox152、Chromix154.0.8037.57、Firefox155.0.1的六协议认证与受管理DIRECT固定矩阵，以及注明版本的升级/恢复/回退证据，见[验收](../../../infra/sealskin/r6as-fixed-version-matrix-acceptance-2026-10-02.md)。LaunchURL按顺序创建网络与原生Worker，使用与恢复相同的180秒有界等待；取消/歧义仍保留独占与操作身份。此结果不扩展为商业供应方自然漂移或任意浏览器大版本迁移已测。
 
 

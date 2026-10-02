@@ -1,5 +1,7 @@
 # SealSkin 部署与配置
 
+当前统一版本：[server-2026.10.02.3](../../docs/releases/server-2026.10.02.3.md)已封存并通过异机归档/镜像核对，包含R6AS Adapter、R7G1控制器/Relay、R6Z1 runner与journald预算。恢复和回退以包内RECOVERY.md为准；`.2`为历史静态基线，现有Home/Session/目录/凭据保持。
+
 2026-10-02 当前交付为R6AS Adapter（`63d88d1e…`）、R7G1控制器和R6Z1 runner。三引擎固定六协议/认证、DIRECT、程序升级/回退和异机恢复范围见[R6AS验收](r6as-fixed-version-matrix-acceptance-2026-10-02.md)；商业供应方自然漂移仍未测。下方早期版本段落保留历史时点，不覆盖当前部署。
 
 

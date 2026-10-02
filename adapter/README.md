@@ -1,5 +1,7 @@
 # SealSkin Profile Adapter
 
+当前部署已封存为 [server-2026.10.02.3](../docs/releases/server-2026.10.02.3.md)：R6AS Adapter `63d88d1e…`，精确121文件及原始二进制、恢复说明均在发布树。混合开发工作树不作为部署身份；慢启动增量与历史矩阵按实际版本分别记录。
+
 R6AS当前已部署：LaunchURL使用现有180秒长操作预算，避免正常原生启动超过45秒后提前转为unknown；幂等键、取消与真正不确定响应的保护保持。三引擎固定网络/升级矩阵、两次额外50秒真实启动及完整Go回归见[R6AS验收](../infra/sealskin/r6as-fixed-version-matrix-acceptance-2026-10-02.md)。当前源码在R6AR精确快照上增加两路径；统一版本封存随后记录。
 
 

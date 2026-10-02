@@ -1,0 +1,286 @@
+{
+  "release": {
+    "version": "server-2026.10.02.3",
+    "date": "2026-10-02",
+    "scope": "exact deployed program snapshot; no business identities or image layers",
+    "parent_release": "server-2026.10.02.2",
+    "repository_baseline": "9949989d4394b183fbdbf05fd85fa8c64cb2a962",
+    "adapter": {
+      "sha256": "63d88d1e152285983cc8c55ab41f1f6b2d849df51da5505139eb137041742aa0",
+      "source_files": 121,
+      "source_manifest_sha256": "8b8ab5969a8ecadbe9f3c41f600116619a80d0734acea4ccb524fb03c9d9ebd1",
+      "source": "R6AS bounded native launch on exact R6AR shared scaling source",
+      "build": {
+        "go": "1.27.1",
+        "goos": "linux",
+        "goarch": "amd64",
+        "cgo_enabled": false,
+        "trimpath": true,
+        "buildvcs": false
+      }
+    },
+    "controller": {
+      "image": "sha256:33a6d2fcd00502f6df7b8e75a2b3eaa70c0e933077919cbdda5dbe77d5fb7b57",
+      "installed_files": 98,
+      "source_files_including_tests": 126,
+      "source": "R7G1 dynamic upstream with prior R6W/R6J1 patches",
+      "source_manifest_sha256": "1539eda3e50445c6a1d1b9db2f75536d8a03179f9c84c11bc36d3a6cb3acb9d0",
+      "base_image": "sha256:1d93d6b8a92e7d431a603d4f2778b92aa2e91e8943df25c73f49f9013ef8a40e"
+    },
+    "relay": {
+      "image": "sha256:d57f441789051be7d7a3770d66211f680741a5b413ca8c5dcc765b8ec8bd286d",
+      "binary_sha256": "3c8f8bf22a30fad69071a3443bb1ee291bab419c76abac4f65b597d260e8cf83",
+      "source": "R7G1 frozen guarded Relay",
+      "retained_static_direct_image": "sha256:a785d443bf7ede16e0f4728bbcc552a17f6340e6a3fea2d01bd839776716888a"
+    },
+    "runner": {
+      "source_manifest_sha256": "58ed623d3c1aebe321f333049fbf3a3f8afbe55a0c665ee6ac592931c7a52d37",
+      "native_targets_sha256": "226a4b731ac91b4e5b011efe738cdf8ec68bb53451f219c9aab71de3afb017bb",
+      "source": "R6Z1 accepted window geometry"
+    },
+    "journald": {
+      "source_sha256": "a1a90927f035a75fa6d219e6ec2ed1f3b012fa662b2c7970f30316329b18ea0b",
+      "system_max_use_mib": 512,
+      "runtime_max_use_mib": 64,
+      "max_retention_days": 30,
+      "max_file_age_days": 1,
+      "long_term_expiry_observation": "NOT_YET_ELAPSED"
+    },
+    "external_images": [
+      {
+        "id": "sha256:10f6420a1e409ce98cdc18a8830f023b46a30e4697d258126d6bf591c8fcc371",
+        "tags": [
+          "browser-platform/camoufox:0.5.6-beta.30-r9-desktop"
+        ],
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      {
+        "id": "sha256:19f20e6ec641f6240cdc238ae041fc16c93515c83b2da1943871026949d3a2e6",
+        "tags": [
+          "browser-platform/chromix:154-cjk-r2"
+        ],
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      {
+        "id": "sha256:1d93d6b8a92e7d431a603d4f2778b92aa2e91e8943df25c73f49f9013ef8a40e",
+        "tags": [
+          "browser-platform/sealskin:r6w-proxy-reuse-20261001"
+        ],
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      {
+        "id": "sha256:819a225630907a72466a2c67e23cc6261e0efcd790744948dd13183f3f4bd0ac",
+        "tags": [
+          "browser-platform/chromix:154-scaling-r1"
+        ],
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      {
+        "id": "sha256:87d738952e41403184a8e261dd2e749d116b57d5b07ef3b12bb1b5af0d82ad57",
+        "tags": [
+          "browser-platform/profile-relay:relay-v1"
+        ],
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      {
+        "id": "sha256:895907b7cecf793db5b5b108e9a9ac371d0d381833e729d0b5cc16f8eee8e356",
+        "tags": [
+          "browser-platform/firefox:work-wayland-managed-r1-d9c842fa9088fac1"
+        ],
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      {
+        "id": "sha256:90f757b138d096d8182b89fbacd5aa36b3a23bc17be35a677460f9878971426a",
+        "tags": [
+          "browser-platform/chromix:custom-95c89fce0b07b76d"
+        ],
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      {
+        "id": "sha256:9a128663eb05d1b7a64a9519b597b745ba2b9be76af7b6649755a2a50d168306",
+        "tags": [
+          "browser-platform/camoufox:r10-managed-desktop-candidate",
+          "browser-platform/chromix-base:9a128663eb05d1b7a64a9519b597b745ba2b9be76af7b6649755a2a50d168306"
+        ],
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      {
+        "id": "sha256:a785d443bf7ede16e0f4728bbcc552a17f6340e6a3fea2d01bd839776716888a",
+        "tags": [
+          "browser-platform/profile-relay:guard-v1-399a552251bb0c5a"
+        ],
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      {
+        "id": "sha256:ae7a4e612f1655e87b50dcd24530e159a006a82a5a606254f6a3e915f95b932e",
+        "tags": [
+          "browser-platform/firefox:custom-2cfe9b5b776bea0d"
+        ],
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      {
+        "id": "sha256:b8ea10d04b00484f6376e7ecb5e80ff0fbf1d3af22c4300c18cbc3c3ad0a5f43",
+        "tags": [
+          "browser-platform/chromix:custom-21da63c58e7fa5d5"
+        ],
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      {
+        "id": "sha256:cd521d91037af114833f9df994e3242c4d6078859212909c586b412da660a3ae",
+        "tags": [
+          "browser-platform/chromix:154.0.8037.57-74d5d5b623c6b919"
+        ],
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      {
+        "id": "sha256:e7e71db14431fa944b0593b5160104ecf61565b756e82cbeaf86f075b6b0af29",
+        "tags": [
+          "browser-platform/chromix:154-auto-r4"
+        ],
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      {
+        "id": "sha256:f37c2f809411c5dfc04183dbf9ce1c109d43864036cd4b695a2a59748d83e31d",
+        "tags": [
+          "browser-platform/camoufox:custom-ce094869b6eb872f"
+        ],
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      {
+        "id": "sha256:33a6d2fcd00502f6df7b8e75a2b3eaa70c0e933077919cbdda5dbe77d5fb7b57",
+        "tags": [
+          "browser-platform/sealskin:r7g1-dynamic-20261002"
+        ],
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      {
+        "id": "sha256:d57f441789051be7d7a3770d66211f680741a5b413ca8c5dcc765b8ec8bd286d",
+        "tags": [
+          "browser-platform/profile-relay:guard-v1-f35ff66b6b9f3b9f"
+        ],
+        "architecture": "amd64",
+        "os": "linux"
+      }
+    ],
+    "image_inventory_scope": "Pinned current and retained .2 controller/worker/Relay references; not a full host dependency inventory. Image layers and Caddy/session trust recovery materials are retained separately in R6AP/R7G1 private recovery storage.",
+    "validation": {
+      "dynamic": "R7G1: 571 controller tests, 52 Guard/QA tests, 22 real integration groups",
+      "display": "R6AR: 30 real cases, complete Go test/vet and targeted race",
+      "fixed_matrix": "R6AS: 18 protocol combinations / 210 network checks, 66 DIRECT checks, 9 server upgrade/rollback stages, native Firefox encrypted remote recovery",
+      "matrix_program_target_adapter": "8fb90eb29208ccea7ba235c814b6669470af47ba6c026a5f53c03e9f2cf95393",
+      "final_adapter_increment": "R6AS: complete frozen/workspace Go test/vet, old-implementation regression detection, two real Firefox launches with 50-second response delay and remaining DIRECT health/fault/recovery/cleanup; historical matrix was not all rerun on this binary",
+      "runner": "R6Z1 unchanged exact source and targets; existing same-version worker publication/recovery evidence",
+      "remote_recovery": "R6AP synthetic legacy Work/Camoufox/Chromix; R6AS synthetic native Firefox; retired independent QA",
+      "client": "Current client validation user-confirmed; unreported historical dimensions not invented"
+    },
+    "exclusions": [
+      "Docker image layers",
+      "real Homes, configurations, accounts, credentials, cookies, keys, journals, jobs and accepted artifact data",
+      "unreleased workspace edits"
+    ],
+    "remaining_validation": [
+      "commercial supplier natural DNS drift and new supplier GUI switching: NOT_TESTED",
+      "arbitrary browser-major migrations without supplied accepted targets: NOT_TESTED",
+      "real historical Home archives plus current metadata: OFFLINE_ONLY, not a coherent current business backup"
+    ]
+  },
+  "sealing": {
+    "result": "PASS",
+    "version": "server-2026.10.02.3",
+    "commit": "278c5ea7719f9419aff004909aa0442c8ee36734",
+    "parent_release_commit": "f0b84fb409d6f78a6b9a911cc1fbd0457b08424e",
+    "tree": "48d15bc35dfbf775066c775cec7ec9ddb22e165b",
+    "branch": "refs/heads/release/server-2026.10.02.3",
+    "tag": "server-2026.10.02.3",
+    "source_files_including_manifest": 359,
+    "manifest_entries": 358,
+    "source_manifest_sha256": "da17d7362ddd76eda860ca80cb13e5031602b0b87415f8dbd2ed55b4946cf641",
+    "artifacts": [
+      {
+        "artifact": "browser-platform-server-2026.10.02.3-source.tar.gz",
+        "sha256": "27fbf2b197d6417cd1436cac58bf41dc5b5798ba1ee1252f2b1ee75247dd3e38",
+        "size_bytes": 13577517,
+        "verification": {
+          "result": "PASS",
+          "source_files": 358,
+          "binary_files": 0,
+          "version": "server-2026.10.02.3"
+        }
+      },
+      {
+        "artifact": "browser-platform-server-2026.10.02.3-linux-amd64.tar.gz",
+        "sha256": "2276abf60c3e8519fbfb71ad7111b9563aed42bca724d4cd31e84215febdcc8a",
+        "size_bytes": 27949502,
+        "verification": {
+          "result": "PASS",
+          "source_files": 358,
+          "binary_files": 2,
+          "version": "server-2026.10.02.3"
+        }
+      }
+    ],
+    "original_head_index_preserved": true,
+    "remote_published": false,
+    "deployed_now": false
+  },
+  "independent_host_verification": {
+    "result": "PASS",
+    "version": "server-2026.10.02.3",
+    "release_commit": "278c5ea7719f9419aff004909aa0442c8ee36734",
+    "manifest_sha256": "da17d7362ddd76eda860ca80cb13e5031602b0b87415f8dbd2ed55b4946cf641",
+    "artifacts": [
+      {
+        "artifact": "browser-platform-server-2026.10.02.3-source.tar.gz",
+        "sha256": "27fbf2b197d6417cd1436cac58bf41dc5b5798ba1ee1252f2b1ee75247dd3e38",
+        "verification": {
+          "result": "PASS",
+          "source_files": 358,
+          "binary_files": 0,
+          "version": "server-2026.10.02.3"
+        }
+      },
+      {
+        "artifact": "browser-platform-server-2026.10.02.3-linux-amd64.tar.gz",
+        "sha256": "2276abf60c3e8519fbfb71ad7111b9563aed42bca724d4cd31e84215febdcc8a",
+        "verification": {
+          "result": "PASS",
+          "source_files": 358,
+          "binary_files": 2,
+          "version": "server-2026.10.02.3"
+        }
+      }
+    ],
+    "pinned_images_verified": 16,
+    "containers_unchanged": true,
+    "active_qa_containers": 0,
+    "programs_activated": false,
+    "destination": "/root/browser-platform-recovery/server-2026.10.02.3"
+  },
+  "protection": {
+    "result": "PASS",
+    "production_protected_state_unchanged": true,
+    "adapter_pid_unchanged": true,
+    "adapter_sha256": "63d88d1e152285983cc8c55ab41f1f6b2d849df51da5505139eb137041742aa0",
+    "ready": true,
+    "journald_unchanged": true,
+    "git_head_index_unchanged_during_sealing": true,
+    "preexisting_workspace_files_unchanged_during_sealing": 907,
+    "no_service_restart": true,
+    "no_git_push": true
+  }
+}

@@ -1,5 +1,7 @@
 # 验收索引
 
+[R6AT 统一版本封存](../../infra/sealskin/r6at-unified-release-acceptance-2026-10-02.md)：`server-2026.10.02.3` 已封存；359 文件、双归档/二进制、异机16镜像ID及生产/Git保护通过。
+
 [R6AS 固定版本矩阵](../../infra/sealskin/r6as-fixed-version-matrix-acceptance-2026-10-02.md)：已收尾；三引擎完整矩阵/清理、异机Firefox与慢启动修正部署通过。
 
 
