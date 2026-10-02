@@ -1,5 +1,9 @@
 # 设计偏差记录
 
+[DEV-143 重连输入验收](DEV-2026-10-02-143-remote-reconnect-input.md)：诊断中；R6AW非root自动显示重连文本未精确匹配，保留失败并补诊断。
+
+[DEV-142 独立机QA运行身份](DEV-2026-10-02-142-remote-qa-runtime-user.md)：处理中；R6AW首任务误用UID0被正确拒绝，改为独立非root合成QA后重验。
+
 - [DEV-141 旧Home归档元数据](DEV-2026-10-02-141-legacy-home-archive-metadata.md)：已解决，R6AV部署与实际清理通过。
 
 - [DEV-140 账号初始化状态](DEV-2026-10-02-140-account-bootstrap-state.md)：已解决，R6AV部署与实际清理通过。

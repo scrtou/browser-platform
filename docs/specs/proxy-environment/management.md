@@ -210,3 +210,11 @@ Profile `ui_scaling_percent` 保存 0（客户端默认）或 100–300、步长
 管理页面可修改百分比；已授权且绑定有效的 Session 通过独立同源、CSRF 保护的显示设置入口保存 Selkies UI Scaling。该入口仅允许修改当前 Session 对应的 Profile，不提供 Profile 参数，不触发 Home/Worker 生命周期。Profile revision 冲突返回 409，界面提示刷新，不能自动覆盖其他客户端的保存。保存成功后当前客户端发送原生 DPI 消息；刷新、重连或新客户端读取服务器设置。已打开的其他控制页面需要刷新，不宣称实时同步。精确已审核资产摘要才允许变换，未知 JS 保持原样。
 
 新能力的验收与部署状态以 [R6AR](../../work-items/R6AR-2026-10-02-display-persistence.md) 为准，以上历史 R6O/R6S 的“未持久化”描述保留当时范围。
+
+## R6AW：1.0 内置数据契约
+
+本项实施中，部署及24组合验收结果以[R6AW工作项](../../work-items/R6AW-2026-10-02-protected-builtins.md)为准。发行版规定4个通用指纹：US（en-US、America/New_York）、TW（zh-TW、Asia/Taipei）、JP（ja-JP、Asia/Tokyo）、CN（zh-CN、Asia/Shanghai）；完整语言列表以源码种子为准。固定保留ID为`fp-0000000000000001`至`fp-0000000000000004`，version2/revision1/builtin=true。来源仍无引擎、设备、screen或DPR字段。
+
+显示种子只有既有`display-0000000000000001`自动分辨率/system DPR，以及新增`display-0000000000000002`固定1920×1080、窗口1920×1080、DPR1。两者均revision1/builtin=true。自动显示的历史创建时间与字节不变。来源初始化仅补齐缺失文件，不覆盖已有文件；保留ID的内容、builtin标志或删除标记异常时拒绝加载，不能静默修复或隐藏。API不能创建、修改或删除保留来源，UI不提供删除表单。显示尺寸按mode判断，不能把所有内置显示都呈现为自动模式。
+
+三引擎×四指纹×两显示的24个组合分别运行既有完整验收后，发布器才给精确的compatibility三元组写入builtin=true。内置组合不能经API或UI删除。普通用户后来生成的组合不因使用内置来源而自动变成内置；重复发布同一已安装组合保留其builtin标志。验收队列/合成Home不随内置数据安装；管理员账号不预置。来源种子存在不代表组合accepted，也不代表浏览器不可识别。

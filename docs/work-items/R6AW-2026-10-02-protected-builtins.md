@@ -1,0 +1,31 @@
+# R6AW · 规定内置模板与24个受保护验收组合
+
+状态：进行中（2026-10-02）。前项R6AV已收尾：工作记录提交`76c0d7e`，精确Adapter源码提交`7edc66c`。归属：[1.0交付计划](../v1.0-delivery-plan.md)。
+
+## 范围及完成条件
+
+内置指纹仅4个：通用US（en-US / America/New_York）、通用TW（zh-TW / Asia/Taipei）、通用JP（ja-JP / Asia/Tokyo）、通用CN（zh-CN / Asia/Shanghai）。显示仅2个：既有“自动分辨率 · DPR 随缩放变化”，以及1920×1080、DPR1的常用固定显示。内置来源不可经UI/API删除，普通自定义来源能力保持。
+
+按当前3个固定引擎×4个指纹×2个显示，完成24个独立组合的真实生成/浏览器运行验收。沿现有正常门槛（反复重建、独立Home、实际环境观察、显示与输入、离线恢复），不从笛卡尔积或旧版本报告推定accepted。发布24个内置accepted组合并保护删除；用户自行生成的其他组合仍按普通引用保护处理。
+
+完成证据：空安装与R6AV清理后种子一致；仅4/2/24个内置对象可见，24份报告与实际摘要/镜像绑定；UI无内置删除入口，构造API请求拒绝、普通自定义删除仍可用；生成/缓存/旧格式兼容、回归、限定发布、实际新建可选项和独立留存通过。当前零账号状态保持，测试只用隔离QA管理员；不在生产预置登录账号。
+
+## 代码地图与初步核对
+
+`TemplateSources`负责私有来源文件/默认自动显示，`CreateTemplateCombination`把目标/来源SHA冻结到作业；`template_sources.py`校验严格字段、缓存同来源设备、`native_jobs.py`/Camoufox runner生成并执行验收，再写环境目录和compatibility；`CompatibleTemplates`控制真实新建/应用选择；`DeleteTemplateData`与管理HTML共同控制删除。
+
+当前代码仅保护一个内置自动显示，指纹无builtin字段，组合无内置保护。Python读取来源的字段集合严格，新增内置来源字段必须同步读者，不能只改Go展示。现有生成器不会凭保存来源自动产生accepted组合；本项明确补齐实际24组合。当前部署Runner为R6Z1，Adapter为R6AV，Controller保持R7G1。
+
+主要QA使用独立机器、独立目录/容器/Home及合成数据，保留R6AU原始恢复目录/密文及独立机原有停止容器。本机仅部署验收后的源码、种子、组合及必要镜像/引用资产。发现偏差立即记录；当前无已判定的新实现偏差。
+
+需更新：模板/生成器组件说明、管理规格与内置数据定义、安装种子/升级边界、验收/偏差/工作项索引、进度/roadmap和1.0计划。私有证据根`infra/sealskin/runtime/r6aw-protected-builtins-20261002/`。本项收尾后再开始1.0统一整理与新机部署，最后指纹增强仅写方案。
+
+## 实施增量
+
+受保护六来源、精确组合builtin标志、UI/API删除拒绝及固定显示按mode渲染已实现；补充并发重复初始化、来源损坏/删除标记拒绝、普通删除保持、组合保护、Python保留ID和重复发布回归。精确候选由R6AV源码逐文件追加，runner仅从R6Z1固定源码更新来源读者；候选183文件已异机校验。Go全套test/vet、删除/初始化race及11项Python来源测试通过。主机整目录Python发现依赖了未设置的产物环境变量，该尝试不记为通过，按组件测试环境继续执行。
+
+独立机器的`r6aw-protected-builtins-20261002/qa`已开始正常服务入队及完整runner验收。当前仅有运行中的第一批，尚无24项通过结论；未发布到生产，1.0未定版。生产继续R6AV待初始化状态。
+
+首个远端任务因误用宿主UID0被显示认证正确拒绝；已登记[DEV-142](../deviations/DEV-2026-10-02-142-remote-qa-runtime-user.md)。保留失败报告，修正为非root合成QA环境后重新完整验收，门槛不变。
+
+候选源码已独立提交到`review/r6aw-builtins`：`a2785183eda88beec93b6d66c0c4b3d92fbc6e8a`，包含精确Adapter及runner源码，明确未部署/矩阵待验收；原工作分支和混合改动保持。非root启动后重连输入另发现[DEV-143](../deviations/DEV-2026-10-02-143-remote-reconnect-input.md)，正在独立诊断，尚不能收尾。
