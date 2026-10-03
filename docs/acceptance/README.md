@@ -1,5 +1,7 @@
 # 验收索引
 
+[R6AY 指纹能力方案](r6ay-fingerprint-plan-2026-10-03.md)：文档验收通过，源码事实、增强步骤和保留边界明确；未实施新功能。
+
 [R6AX 1.0全新安装与部署](../../infra/sealskin/r6ax-v1-install-acceptance-2026-10-03.md)：最终包新安装/初始化与管理、相同程序三引擎/服务/主机重启和生产保护部署通过；[阶段记录](../../infra/sealskin/r6ax-v1-install-stage-records-2026-10-03.md)保留原失败。Git定版材料见发行记录。
 
 

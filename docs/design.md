@@ -1,5 +1,7 @@
 # 当前架构与设计决策
 
+后续指纹增强设计见[能力评估与方案](fingerprint-capability-plan.md)，目前仅文档；当前模板缓存/冻结产物与Home契约不因该方案改变。
+
 R6AP 已验证独立机器的镜像导入、三引擎合成 Home 恢复和最新权限审查。恢复仍保留单一控制器所有权；真实历史备份与当前控制目录不得未经时点对账同时激活。见[验收](../infra/sealskin/r6ap-remote-recovery-acceptance-2026-10-02.md)。
 
 R6AI容量发布：已收尾并部署：容量改为按机器CPU/内存/磁盘自动推导，保留逐项覆盖和实时内存/并发预算保护；当前机器算得4个活动、1个并发，迁移重新计算。两套Go test/vet、容量race、只读诊断与保护发布通过，原浏览器和会话保持。 见[验收](../infra/sealskin/r6ai-capacity-release-acceptance-2026-10-02.md)。
