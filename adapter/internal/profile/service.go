@@ -361,7 +361,7 @@ func WithNetworkProfileCatalog(path string) Option {
 // Records lists every browser definition with its directory metadata.
 func (s *Service) Records() []Record { return s.directory.all() }
 
-// ProfileIDs lists the configured Profile IDs in a stable order.
+// ProfileIDs lists the authoritative, non-deleted directory IDs in stable order.
 func (s *Service) ProfileIDs() []string { return s.directory.ids() }
 
 func (s *Service) ManagementCapabilities() ManagementCapabilities {

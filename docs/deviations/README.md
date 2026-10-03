@@ -243,3 +243,5 @@ R6AU维护偏差DEV-133至139现均已解决，完整恢复与生产验收见[R6
 - [DEV-159 发布镜像保留引用](DEV-2026-10-03-159-fresh-image-retention.md)：处理中，按ID冷导入镜像需要防止悬空清理。
 
 - [DEV-160 恢复QA地址自动补全](DEV-2026-10-03-160-qa-url-autocomplete.md)：QA修正待验证，独立标记核对当次重启保存。
+
+- [DEV-161 动态浏览器开机恢复](DEV-2026-10-03-161-dynamic-browser-boot-recovery.md)：处理中，启动对账必须使用实际目录，DIRECT完整休眠入口不能被Guard停止提示拦截。

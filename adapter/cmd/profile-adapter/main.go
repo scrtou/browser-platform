@@ -279,16 +279,7 @@ func run(configPath, action, target string, logger *slog.Logger) error {
 			logger.Warn("SealSkin control plane not ready before startup reconciliation", "error", err)
 		}
 		cancelWait()
-		for _, definition := range cfg.Profiles {
-			recoverCtx, cancel := context.WithTimeout(ctx, sealskin.LongOperationTimeout+15*time.Second)
-			result, recoverErr := profiles.Reconcile(recoverCtx, definition.ID)
-			cancel()
-			if recoverErr != nil {
-				logger.Warn("profile still requires recovery", "profile", definition.ID, "error", recoverErr)
-			} else {
-				logger.Info("profile runtime reconciled", "profile", definition.ID, "status", result.Status)
-			}
-		}
+		reconcileAtStartup(ctx, profiles, logger)
 		listener, err := control.Listen(cfg.ControlSocket)
 		if err != nil {
 			return err

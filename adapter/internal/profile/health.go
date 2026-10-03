@@ -674,15 +674,15 @@ func selectRecovery(list *checkList, definition Definition) *Recovery {
 	egress := list.find("egress")
 	session, worker := list.find("session"), list.find("worker")
 	switch {
-	case egress != nil && egress.Status == CheckFail && (egress.Code == "DIRECT_GUARD_NOT_RUNNING" || egress.Code == "DIRECT_NAMESPACE_CHANGED"):
-		return &Recovery{Code: egress.Code, Title: "DIRECT 网络隔离不可用", Blocking: true, Steps: []string{
-			"由运维 stop-profile 清理本代次，确认资源全部消失后重新打开入口；Home 数据保留",
-			"不要单独重启 Guard 去接管仍存活的旧浏览器",
-		}}
 	case worker != nil && worker.Code == "WORKER_DORMANT":
 		return &Recovery{Code: "WORKER_DORMANT", Title: "浏览器容器已停止，可恢复", Blocking: false, Steps: []string{
 			"打开固定入口会先按序恢复本代次（Relay → Guard → 探测 → 浏览器），探测失败时不会联网启动",
 			"也可由运维执行 resume-profile；恢复失败时保留占用，按提示 stop-profile 后重新打开入口",
+		}}
+	case egress != nil && egress.Status == CheckFail && (egress.Code == "DIRECT_GUARD_NOT_RUNNING" || egress.Code == "DIRECT_NAMESPACE_CHANGED"):
+		return &Recovery{Code: egress.Code, Title: "DIRECT 网络隔离不可用", Blocking: true, Steps: []string{
+			"由运维 stop-profile 清理本代次，确认资源全部消失后重新打开入口；Home 数据保留",
+			"不要单独重启 Guard 去接管仍存活的旧浏览器",
 		}}
 	case proxy != nil && proxy.Status == CheckFail && (proxy.Code == "PROXY_GUARD_NOT_RUNNING" || proxy.Code == "PROXY_NAMESPACE_CHANGED"):
 		// A lost Guard also takes the display path down; name the cause, not the symptom.
