@@ -1,5 +1,7 @@
 # 设计偏差记录
 
+- [DEV-153 全新控制器UID绑定](DEV-2026-10-03-153-fresh-controller-uid-binding.md)：处理中，非1000系统用户需要同步配置两组UID/GID；保留首次安装失败。
+
 - [DEV-152 1.0遗留维护入口](DEV-2026-10-03-152-v1-source-maintenance-hooks.md)：处理中，工作区已清理但旧部署仍含临时入口，1.0须重新构建和验证。
 
 - [DEV-151 QA产物目录关联](DEV-2026-10-03-151-qa-artifact-directory-binding.md)：已完成R6AW最终24组合、适用补证/包校验及部署；原失败保留。

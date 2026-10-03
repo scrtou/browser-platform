@@ -6,6 +6,7 @@
   "control_socket": "./adapter-control.sock",
   "profile_directory": "./profiles.json",
   "environment_catalog": "./environment-catalog.json",
+  "template_catalog": "./template-catalog.json",
   "environment_job_spool": "./environment-jobs",
   "sealskin": {
     "api_base_url": "https://127.0.0.1:8443",
@@ -36,35 +37,9 @@
     "control_wait_seconds": 120
   },
   "limits": {
-    "max_active_profiles": 4,
-    "max_concurrent_launches": 2,
-    "min_free_disk_mib": 5120,
     "storage_path": "./storage"
   },
-  "profiles": [
-    {
-      "id": "personal",
-      "application_id": "firefox-personal-proxy",
-      "home_name": "personal",
-      "start_url": "https://example.com/",
-      "language": "en_US.UTF-8",
-      "timezone": "America/New_York",
-      "wayland_mode": true,
-      "idle_policy": {
-        "mode": "disconnected",
-        "timeout_seconds": 900
-      }
-    },
-    {
-      "id": "work",
-      "application_id": "firefox-work-proxy",
-      "home_name": "work",
-      "start_url": "https://example.com/",
-      "language": "en_US.UTF-8",
-      "timezone": "America/New_York",
-      "wayland_mode": true
-    }
-  ],
+  "profiles": [],
   "access": {
     "users_file": "./secrets/entry-users.json",
     "session_upstream_url": "https://127.0.0.1:8443",
@@ -72,5 +47,15 @@
     "session_tls_name": "sealskin.example.com",
     "session_seconds": 1800,
     "ticket_seconds": 30
+  },
+  "network_profile_catalog": "./network-profiles.json",
+  "direct_template": {
+    "owner": "profile-adapter",
+    "relay_image": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "probe_image": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "probe_url": "https://example.com/",
+    "probe_timeout_seconds": 10,
+    "approved_resolver_id": "cloudflare-r7b",
+    "approved_resolver_ip": "1.1.1.1"
   }
 }

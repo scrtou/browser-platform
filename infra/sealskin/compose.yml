@@ -1,10 +1,14 @@
+# Component reference only: use ../deployment/install.py for a complete new installation.
+# This historical standalone Compose lacks the required credential/Session tmpfs mounts.
 services:
   sealskin:
-    image: browser-platform/sealskin:0.3.2-lifecycle-v2-a8c7be8a22ededd3
+    image: "${SEALSKIN_CONTROLLER_IMAGE:?use the verified release controller image}"
     container_name: sealskin
     environment:
       PUID: "${PUID:-1000}"
       PGID: "${PGID:-1000}"
+      SEALSKIN_PUID: "${PUID:-1000}"
+      SEALSKIN_PGID: "${PGID:-1000}"
       TZ: "${TZ:-Etc/UTC}"
       HOST_URL: "${SEALSKIN_HOST_URL:-mysession.azhen.de}"
     volumes:
