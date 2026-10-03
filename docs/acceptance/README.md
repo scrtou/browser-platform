@@ -1,7 +1,7 @@
 # 验收索引
 
 
-[R6AW 内置24组合验收](../../infra/sealskin/r6aw-builtins-acceptance-2026-10-03.md)：进行中，保留两机矩阵和固定Camoufox桌面补证；尚未部署。
+[R6AW 内置24组合验收](../../infra/sealskin/r6aw-builtins-acceptance-2026-10-03.md)：已通过并部署；24组合、四份桌面补验、实际包/安装与244文件异机留存通过，原失败及异机慢盘限制保留。
 [R6AV 测试数据清理](../../infra/sealskin/r6av-test-cleanup-acceptance-2026-10-02.md)：已收尾；指定数据清理、显式CLI初始化、旧Home归档修复、完整回归/部署与异机留存通过。
 
 [R6AU 一致性业务备份](../../infra/sealskin/r6au-consistent-business-backup-acceptance-2026-10-02.md)：已收尾；整体加密归档/异机恢复、239个数据库、授权/撤销、三份断网真实Home副本及生产恢复通过。

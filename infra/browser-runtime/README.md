@@ -44,8 +44,10 @@ python3 infra/camoufox/acceptance.py \
 
 R4B 的 Work Wayland 候选已通过 10 项协议/身份单元检查、独立真实 Firefox 探测和完整控制器组合验收。实际 stop 在关闭对话框未处理时返回 503 并保留原 Worker/Home，取消后重试正常退出；`docker stop -t 30` 的 s6 顺序退出码为 0，原容器/Session resume 后即时 Cookie、localStorage、IndexedDB 均恢复。固定候选为 `sha256:ec848635e68db2d1c805fcf9972ef4586bcd86a9ed14b2075b0c5a40fbbc503f`，保留原 Work 镜像所有层，再增加退出和显示认证层；私有 App 候选只替换镜像字段，尚未部署。证据和版本边界见 [R4B 阶段验收](../sealskin/target-client-migration-acceptance-2026-09-15.md)。该范围不覆盖其他 compositor、浏览器或跨版本升级；r9 Camoufox 继续绑定此前已验收的退出层。
 
-## X11键盘输入顺序（R6AW，验收中）
+## X11键盘输入顺序（R6AW已部署）
 
 `install-keyboard-order.py`只接受固定Selkies输入源码摘要，为三个引擎的X11注入路径安装`keyboard_subprocess.py`。单次键盘子进程最多等待2秒；等待期间不处理后续按键，超时或取消先终止并回收进程，避免孤立进程稍后插入标点。失败文本不被标记为已原子输入，后续keyup仍可释放按键。Wayland和剪贴板流程保持原上游路径。
 
 `build-keyboard-order.py`位于环境引擎目录，按精确基础镜像离线构建薄层；`test_keyboard_subprocess.py`覆盖慢启动、超时、取消、管道排空和退出失败，`check-keyboard-order.py --source <固定上游input_handler.py>`以实际原方法及延迟子进程对照错序/修复结果。真实客户端继续原30毫秒输入和精确断言；该修复不放宽QA门槛。新镜像必须重新完成组合验收，详见[DEV-148](../../docs/deviations/DEV-2026-10-03-148-dynamic-input-order.md)。
+
+R6AW v6三镜像的24个完整组合及四份固定Camoufox正常桌面补验均通过并已部署。DEV-149的高I/O关闭超时仍遵守失败保留；镜像导入与浏览器QA串行后完整替代验收通过，不保证任意主机负载下固定时长退出。

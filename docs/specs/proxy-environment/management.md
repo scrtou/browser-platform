@@ -213,7 +213,7 @@ Profile `ui_scaling_percent` 保存 0（客户端默认）或 100–300、步长
 
 ## R6AW：1.0 内置数据契约
 
-本项实施中，部署及24组合验收结果以[R6AW工作项](../../work-items/R6AW-2026-10-02-protected-builtins.md)为准。发行版规定4个通用指纹：US（en-US、America/New_York）、TW（zh-TW、Asia/Taipei）、JP（ja-JP、Asia/Tokyo）、CN（zh-CN、Asia/Shanghai）；完整语言列表以源码种子为准。固定保留ID为`fp-0000000000000001`至`fp-0000000000000004`，version2/revision1/builtin=true。来源仍无引擎、设备、screen或DPR字段。
+本项已完成并部署，完整24组合和四份固定Camoufox桌面补验结果以[R6AW工作项](../../work-items/R6AW-2026-10-02-protected-builtins.md)为准。发行版规定4个通用指纹：US（en-US、America/New_York）、TW（zh-TW、Asia/Taipei）、JP（ja-JP、Asia/Tokyo）、CN（zh-CN、Asia/Shanghai）；完整语言列表以源码种子为准。固定保留ID为`fp-0000000000000001`至`fp-0000000000000004`，version2/revision1/builtin=true。来源仍无引擎、设备、screen或DPR字段。
 
 显示种子只有既有`display-0000000000000001`自动分辨率/system DPR，以及新增`display-0000000000000002`固定1920×1080、窗口1920×1080、DPR1。两者均revision1/builtin=true。自动显示的历史创建时间与字节不变。来源初始化仅补齐缺失文件，不覆盖已有文件；保留ID的内容、builtin标志或删除标记异常时拒绝加载，不能静默修复或隐藏。API不能创建、修改或删除保留来源，UI不提供删除表单。显示尺寸按mode判断，不能把所有内置显示都呈现为自动模式。
 

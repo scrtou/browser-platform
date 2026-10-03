@@ -1,24 +1,24 @@
 # 设计偏差记录
 
-- [DEV-151 QA产物目录关联](DEV-2026-10-03-151-qa-artifact-directory-binding.md)：修复中，自动Camoufox产物ID可与请求目录名不同，收集/清理按实际绑定核对。
+- [DEV-151 QA产物目录关联](DEV-2026-10-03-151-qa-artifact-directory-binding.md)：已完成R6AW最终24组合、适用补证/包校验及部署；原失败保留。
 
 - [DEV-150 Firefox首次存储探针超时](DEV-2026-10-03-150-firefox-storage-probe-timeout.md)：QA分配修订及本机两项原门槛完整验收通过；异机首次建库超时限制和failed保留。
 
 - [DEV-149 QA与冷导入I/O竞争](DEV-2026-10-03-149-qa-shutdown-io-contention.md)：执行隔离修订及原门槛完整替代验收通过；原12秒关闭失败保留。
 
-[DEV-148 TW自动Chromix输入错序](DEV-2026-10-03-148-dynamic-input-order.md)：诊断中；精确文本变成resizecheck-，焦点/尺寸正确且无资源耗尽，保留失败并核对事件顺序。
+[DEV-148 TW自动Chromix输入错序](DEV-2026-10-03-148-dynamic-input-order.md)：已完成R6AW最终24组合、适用补证/包校验及部署；原失败保留。
 
-[DEV-147 固定Camoufox桌面证据](DEV-2026-10-02-147-fixed-camoufox-desktop-evidence.md)：处理中；固定组合保留无头完整报告，补齐同产物的正常桌面完整验收。
+[DEV-147 固定Camoufox桌面证据](DEV-2026-10-02-147-fixed-camoufox-desktop-evidence.md)：已完成R6AW最终24组合、适用补证/包校验及部署；原失败保留。
 
-[DEV-146 内置包关联校验](DEV-2026-10-02-146-builtin-package-binding.md)：处理中；R6AW安装候选需要逐项核对来源、报告、设备缓存和兼容关系。
+[DEV-146 内置包关联校验](DEV-2026-10-02-146-builtin-package-binding.md)：已完成R6AW最终24组合、适用补证/包校验及部署；原失败保留。
 
-[DEV-145 客户端DPR与尺寸截断](DEV-2026-10-02-145-client-dpr-resolution-clamp.md)：修复中；R6AW确认实际JS初连逐轴截断/resize重复DPR，按原尺寸契约修复三引擎镜像。
+[DEV-145 客户端DPR与尺寸截断](DEV-2026-10-02-145-client-dpr-resolution-clamp.md)：已完成R6AW最终24组合、适用补证/包校验及部署；原失败保留。
 
-[DEV-144 BiDi初始文档就绪](DEV-2026-10-02-144-bidi-initial-document-readiness.md)：处理中；R6AW端口先于初始文档就绪，补有界轮询/记录且保留完整观察门槛。
+[DEV-144 BiDi初始文档就绪](DEV-2026-10-02-144-bidi-initial-document-readiness.md)：已完成R6AW最终24组合、适用补证/包校验及部署；原失败保留。
 
-[DEV-143 重连输入验收](DEV-2026-10-02-143-remote-reconnect-input.md)：诊断中；R6AW非root自动显示重连文本未精确匹配，保留失败并补诊断。
+[DEV-143 重连输入验收](DEV-2026-10-02-143-remote-reconnect-input.md)：已完成R6AW最终24组合、适用补证/包校验及部署；原失败保留。
 
-[DEV-142 独立机QA运行身份](DEV-2026-10-02-142-remote-qa-runtime-user.md)：处理中；R6AW首任务误用UID0被正确拒绝，改为独立非root合成QA后重验。
+[DEV-142 独立机QA运行身份](DEV-2026-10-02-142-remote-qa-runtime-user.md)：已完成R6AW最终24组合、适用补证/包校验及部署；原失败保留。
 
 - [DEV-141 旧Home归档元数据](DEV-2026-10-02-141-legacy-home-archive-metadata.md)：已解决，R6AV部署与实际清理通过。
 
