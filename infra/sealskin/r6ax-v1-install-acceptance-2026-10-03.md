@@ -40,3 +40,5 @@ QA脚本的即时刷新、敏感操作再认证及浏览器账号使用授权均
 attempt8 Firefox冷启动、显示、真实输入/正常关闭与SQLite历史通过。Camoufox显示后未找到输入标记；补齐显示焦点后仍失败，截图显示首次页面尚在加载，继续按精确Home只读窗口就绪检查排查（[DEV-158](../../docs/deviations/DEV-2026-10-03-158-fresh-qa-input-focus.md)）。attempt10未进入浏览器阶段：无标签发布镜像被控制器定时悬空清理，安装器已补实例/完整摘要保留标签（[DEV-159](../../docs/deviations/DEV-2026-10-03-159-fresh-image-retention.md)），从原已核验归档恢复依赖后继续。失败不改写为通过。
 
 三引擎attempt11完整冷启动/输入/关闭全部通过；services3/4已完成四服务重启、有活动Firefox和两个已停止浏览器的同Home恢复、initial历史/当次唯一warm标记/新增输入与数据库完整性。原地址栏自动补全导致的services2失败按[DEV-160](../../docs/deviations/DEV-2026-10-03-160-qa-url-autocomplete.md)保留。独立主机整机重启已开始，尚未提前标记通过。
+
+最终程序QA的Camoufox首次初始化超过控制器60秒门槛，见[DEV-162](../../docs/deviations/DEV-2026-10-03-162-camoufox-startup-latency.md)。原失败代次已通过归属检查正常停止、资源归零并保留Home；原门槛复验及最终重启仍在进行，尚未定版。
