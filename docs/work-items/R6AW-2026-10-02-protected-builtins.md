@@ -57,3 +57,5 @@ v4精确候选源码与目标表已提交`review/r6aw-viewport`：`52e8ef4213fbd
 新增[DEV-149](../deviations/DEV-2026-10-03-149-qa-shutdown-io-contention.md)：自动US Chromix在A-5正常退出超时，原failed保持，收尾第二次正常关闭确认后释放Worker。与同机冷导入重叠且I/O压力高；改为镜像操作与浏览器矩阵串行，保持原12秒门槛，新完整任务待冷导入结束及独立关闭诊断后建立。原分片调度尝试因原调度器已退出而安全拒绝，未中断Worker。
 
 DEV-150已复现新Home首次IndexedDB建库超过15秒，同期宿主fsync高延迟。正式门槛/镜像不改；后续分片调整为本机固定两份各六项、本机JP/CN自动六项、本机US/TW自动Firefox两项、独立机US/TW自动其他引擎四项。共24项仍逐一完整验收，独立机Firefox失败及诊断保留，不能记为异机该组合通过。
+
+2026-10-03 03:13 UTC：已20/24 accepted，固定12项与JP/CN自动六项、独立机US自动Camoufox/Chromix完成。接续US/TW Firefox的私有准备器曾将两地区全部三引擎同时预入队，触发原有pending上限并安全退出；未创建浏览器/失败验收报告。未选中的原始请求移入明确的deferred目录保留，按两个计划任务恢复执行；不修改原服务上限、不删除失败作业。当前本机US Firefox及独立机TW Camoufox在验收，另外两项排队。
