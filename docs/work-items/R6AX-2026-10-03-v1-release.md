@@ -57,3 +57,5 @@ attempt11三引擎冷启动/显示/真实输入/正常关闭与数据库读回�
 真实重启发现动态浏览器开机对账缺失及DIRECT休眠入口阻断，见[DEV-161](../deviations/DEV-2026-10-03-161-dynamic-browser-boot-recovery.md)。必须修复并重新构建/封装及实际重启验收；此前760文件程序包暂不定版，保留为修复前候选。
 
 最终程序QA的Camoufox首次初始化超过控制器60秒门槛，见[DEV-162](../deviations/DEV-2026-10-03-162-camoufox-startup-latency.md)。原失败代次已通过归属检查正常停止、资源归零并保留Home；原门槛复验及最终重启仍在进行，尚未定版。
+
+最新最终程序验证：initial3三引擎与services1/2全部通过。第二次独立主机重启后，开机对账在访问入口前自动恢复原Firefox/Relay/Guard，Session、operation和三个容器ID不变；对应回执已留存。重启后三引擎输入/关闭与最终归档新安装仍在执行，生产尚未切换。
