@@ -1,6 +1,6 @@
 # SealSkin 部署与配置
 
-当前正式运行范围见 [R6AW验收](r6aw-builtins-acceptance-2026-10-03.md)：4/2/24 内置已部署，测试账号/浏览器已清理；R6AX 的 1.0 全新安装仍验收中。新部署使用[安装入口](../deployment/README.md)与[部署说明](../../docs/deployment-v1.md)，不执行下方旧时点的 PoC 初始化命令。独立非1000用户必须同时设置 `PUID`/`PGID` 和 `SEALSKIN_PUID`/`SEALSKIN_PGID`；只读内置镜像校验由该非root用户执行。
+当前正式运行范围见[R6AX 1.0验收](r6ax-v1-install-acceptance-2026-10-03.md)：全新安装、管理员CLI、三引擎运行与重启恢复及生产部署通过；保留[R6AW](r6aw-builtins-acceptance-2026-10-03.md)原4/2/24数据与验收。新部署使用[安装入口](../deployment/README.md)与[部署说明](../../docs/deployment-v1.md)，不执行下方旧时点的 PoC 初始化命令。独立非1000用户必须同时设置 `PUID`/`PGID` 和 `SEALSKIN_PUID`/`SEALSKIN_PGID`；只读内置镜像校验由该非root用户执行。
 
 ## 历史部署与验收记录
 

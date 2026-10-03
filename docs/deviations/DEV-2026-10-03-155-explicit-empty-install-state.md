@@ -1,6 +1,6 @@
 # DEV-155 · 空环境必须显式初始化业务目录并验证就绪
 
-状态：处理中。关联 [R6AX](../work-items/R6AX-2026-10-03-v1-release.md)。
+状态：已解决（R6AX范围）。关联 [R6AX](../work-items/R6AX-2026-10-03-v1-release.md)。
 
 第三次安装完成控制器、内置包和服务启用，但 Adapter 因 `profile directory does not exist and no profiles are configured for import` 退出。源码另明确拒绝缺失账号表：未初始化状态必须是 v3、空 users 数组和 `setup_required=true`，不能以文件缺失替代。原 `/srv/bp-r6ax-fresh3` 的安装回执只证明启动命令执行，不能证明服务就绪；当时沟通中误称就绪通过已明确更正。
 
@@ -11,3 +11,5 @@
 进一步诊断发现，旧 `directory.open` 即使读取显式 `browsers: []` 也按空目录拒绝。R6AV 的生产“零浏览器”仍保留10个删除墓碑，未覆盖真正零历史的新安装。选择修复读取契约：有效版本/修订且明确空数组允许打开；缺失文件且无导入、`null`/缺字段/损坏JSON仍拒绝，绝不伪造删除墓碑。新增空目录首个记录持久化/重开与缺失损坏拒绝回归，重新完整构建、测试并更新1.0二进制摘要。
 
 旧拒绝测试显式将空数组列为错误，首次完整Go回归因此失败（私有 `go-test-empty-directory.log` 保留）。按新安装契约把该拒绝项改为null；新增正向测试独立验证合法空数组、忽略旧seed、首条记录写入和重开，其他拒绝/副作用断言保持。
+
+最终核对：R6AX最终包新安装、相同最终程序三引擎输入/关闭、服务与主机重启及保护生产部署已通过；本记录原失败与处理过程保留。具体适用证据见[R6AX最终验收](../../infra/sealskin/r6ax-v1-install-acceptance-2026-10-03.md)。

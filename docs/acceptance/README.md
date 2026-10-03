@@ -1,6 +1,6 @@
 # 验收索引
 
-[R6AX 1.0全新安装与定版](../../infra/sealskin/r6ax-v1-install-acceptance-2026-10-03.md)：进行中；七镜像冷导入、第四次新安装/HTTPS初始化、账号与内置数据检查通过，三引擎运行/重启及定版尚未完成。
+[R6AX 1.0全新安装与部署](../../infra/sealskin/r6ax-v1-install-acceptance-2026-10-03.md)：最终包新安装/初始化与管理、相同程序三引擎/服务/主机重启和生产保护部署通过；[阶段记录](../../infra/sealskin/r6ax-v1-install-stage-records-2026-10-03.md)保留原失败。Git定版材料见发行记录。
 
 
 [R6AW 内置24组合验收](../../infra/sealskin/r6aw-builtins-acceptance-2026-10-03.md)：已通过并部署；24组合、四份桌面补验、实际包/安装与244文件异机留存通过，原失败及异机慢盘限制保留。

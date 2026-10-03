@@ -1,6 +1,6 @@
 # DEV-161 · 动态浏览器未进入开机对账且DIRECT休眠提示阻断恢复
 
-状态：处理中。关联 [R6AX](../work-items/R6AX-2026-10-03-v1-release.md)。
+状态：已解决（R6AX范围）。关联 [R6AX](../work-items/R6AX-2026-10-03-v1-release.md)。
 
 真实主机重启后，运行中的Firefox原Worker/Relay/Guard均保留且已停止，Session/Home/操作绑定仍在。控制/入口服务和镜像正常恢复，但入口显示`WORKER_DORMANT`与`DIRECT_GUARD_NOT_RUNNING`，未触发按序恢复；原数据未删除。`reboot-attempt2`显示等待失败及完整状态保留。
 
@@ -11,3 +11,5 @@
 新增动态目录（含旧种子/删除记录）的启动选择、失败隔离及DIRECT休眠/存活故障健康回归；完整Go回归和新二进制，验证原休眠资源原地恢复，再以最终程序执行实际重启。旧程序包/清单保留并明确被后续包替代；1.0尚未发布。
 
 完整Go test/vet及新回归通过；新Adapter `bd628a51316a0779561a15b9a535770c751d5a745acf788dc9c21468564cb49a`在第四实例启动后，自动原地恢复原Firefox/Relay/Guard三个容器，Session/operation/容器ID均不变。新763文件程序包`5b30aad1038f97b51ad4230af8680274883312818c8b2785cd69e8c72f0e2191`替代原760文件候选，六程序重建与归档重封装通过；继续最终程序服务/主机重启与原包新安装。
+
+最终核对：R6AX最终包新安装、相同最终程序三引擎输入/关闭、服务与主机重启及保护生产部署已通过；本记录原失败与处理过程保留。具体适用证据见[R6AX最终验收](../../infra/sealskin/r6ax-v1-install-acceptance-2026-10-03.md)。

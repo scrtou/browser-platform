@@ -2,7 +2,7 @@
 
 [文档导航](README.md) · [运维](operations.md) · [安装组件](../infra/deployment/README.md) · [1.0交付计划](v1.0-delivery-plan.md)
 
-状态：R6AX 发布候选验证中，尚未定版。本说明覆盖全新 Linux amd64 应用安装；已有实例升级/备份恢复必须保留原身份、Home、日志和会话材料，不能重新初始化覆盖。
+[1.0发行记录](releases/v1.0.md)与[R6AX验收](../infra/sealskin/r6ax-v1-install-acceptance-2026-10-03.md)记录精确材料和验证范围。本说明覆盖全新 Linux amd64 应用安装；已有实例升级/备份恢复必须保留原身份、Home、日志和会话材料，不能重新初始化覆盖。
 
 ## 主机与发布材料
 
@@ -11,12 +11,13 @@
 通过 Docker 官方 Debian 仓库安装 Docker Engine/Compose，系统包安装 Caddy、Python 和 cryptography。实际版本应记录在部署验收中。准备两个指向主机的独立 DNS 名称、80/443 入站和足够磁盘空间。部署前验证可信发布记录中的程序归档、镜像归档摘要，安全解压到独立目录。程序包应包含 `adapter/`、`controller/`、`relay/`、`runner/`、`deployment/`、`builtins/`、`bin/`、`runtime-dependencies/` 与完整清单；不从原开发者工作目录引用浏览器缓存。
 
 ```bash
-# 校验值应从正式发布记录取得；当前候选不得当作正式版本。
-sha256sum browser-platform-1.0.tar.gz v1-exact-images.tar.gz
+# 校验值从1.0发行记录取得。
+sha256sum browser-platform-1.0-linux-amd64-v4.tar.gz v1-exact-images.tar.gz controller-managed-startup-image.tar.gz
 docker load --input v1-exact-images.tar.gz
+docker load --input controller-managed-startup-image.tar.gz
 ```
 
-镜像是完整七镜像归档，包含控制器、三浏览器、代理 Relay、DIRECT Relay 和探测器。不要以可变 tag 替代固定 ID，也不要仅复制单个镜像 JSON 描述。
+基础包包含原七镜像完整层（旧控制器、三浏览器、代理 Relay、DIRECT Relay 和探测器）；更新包提供新控制器完整层，当前安装从这两个包选取七个精确运行镜像。不要以可变 tag 替代固定 ID，也不要仅复制单个镜像 JSON 描述。
 
 ## 全新安装与管理员
 
@@ -70,3 +71,11 @@ unset bp_initial_password
 安装器在控制器启动前为七个精确镜像建立`browser-platform-retained/<实例名>:sha256-<完整摘要>`保留标签，并记录`image-retention.json`；运行配置仍按镜像ID锁定。按ID导入的镜像没有天然标签，缺少该引用会被控制器周期性悬空清理移除。不要删除在用实例的保留标签；退役后先核对全部实例/恢复点依赖，再按单独维护范围处理。
 
 开机对账以当前持久化浏览器目录为准（排除已删除记录），不再只看配置文件的导入种子。每个浏览器独立保留恢复预算，单项失败不阻塞其他项。完整且归属已核对的休眠代次通过原有Relay→Guard→探测→Worker顺序恢复；DIRECT的预期Guard停止不会遮住该恢复入口。健康异常本身不改为healthy，存活Worker的Guard故障继续阻断，入口仍须经过生命周期归属/网络检查。
+
+[DEV-162](deviations/DEV-2026-10-03-162-camoufox-startup-latency.md)保留两次独立机Camoufox环境初始化超过控制器60秒就绪门槛的事实。失败时保留unknown与原资源；通过归属检查正常停止后，更新控制器共享就绪预算后，启动/服务/主机重启实测通过；浏览器镜像与输入/存储要求保持，底层磁盘原因不作推定。遇到同类失败先检查inventory/journal和主机负载，经正常停止或对账处理，不直接删Home或替换未知代次。
+
+基础七镜像归档保留旧控制器，控制器更新包包含新控制器的完整层。两个镜像包均按发行记录校验并导入，当前安装使用七个精确运行镜像；基础包中的旧控制器仅保留供历史恢复。
+
+1.0开机仅对已确认休眠恢复失败的原代次，在同一逐浏览器195秒截止点内最多续试三次，间隔两秒；每次重新检查归属与停止意图。Guard本次启动日志/就绪门槛不变，永久失败保留unknown，不能通过新建容器绕过。实际整机验证见[DEV-163](deviations/DEV-2026-10-03-163-startup-resume-retry.md)。
+
+已有实例的Compose来源由实际运行容器config_files标签和部署回执确定；不能用仓库通用示例替换历史有效配置。R6AX生产的固定基础文件与原覆盖链见[运维说明](operations.md)。新安装器自行生成完整实例Compose，不依赖这一历史基础文件。

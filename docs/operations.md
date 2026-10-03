@@ -1,5 +1,7 @@
 # 运维、开机与恢复
 
+当前生产为[1.0发行版](releases/v1.0.md)：Adapter `b4c6ec2f…`、控制器 `2a966873…`。零网页账号、零未删除浏览器和10条删除历史保持。全新安装按[部署说明](deployment-v1.md)校验并导入基础七镜像包及完整控制器更新包；已有生产实例保留原身份/数据，只切换程序及最后一层Compose镜像引用。私有`infra/sealskin/runtime/r6ax-v1-release-20261003/production-program-backup-attempt3/`保存原Adapter、CLI与Compose引用，回退前核对新业务/版本兼容性，不用旧状态覆盖当前数据。以下版本段落保留各自时点。
+
 首位管理员由服务器运维在运行Adapter的系统用户下创建：`/home/sshUser/.local/lib/browser-platform/profile-accounts init --config /home/sshUser/code/browser-platform/infra/sealskin/adapter-config.json --user <自选管理员名>`。密码只从标准输入读取，可在受信任终端用`read -r -s bp_admin_password`并以`printf '%s' "$bp_admin_password"`管道传入，完成后`unset bp_admin_password`；不把密码放在参数或配置中。命令拒绝重复初始化，不能覆盖已有账号。等待初始化时入口只显示提示，CLI完成后网关重载即可登录。v3初始化表不能直接回退给只认识v1/v2的旧Adapter：先以新CLI完成初始化，或保持支持v3的程序；不得恢复旧owner表撤销本次清理。
 
 [R6AU真实业务一致性备份](../infra/sealskin/r6au-consistent-business-backup-acceptance-2026-10-02.md)已完成：2026-10-02 19:30:56 UTC停止检查点、完整加密归档与异机恢复/读回/断网副本验证通过，生产原运行范围已恢复。按[整体备份步骤](../infra/sealskin/checks/consistent-business-backup.md)使用单独留存的修正工具、密文、收据和身份；旧历史Home材料的时点限制仍适用于旧材料。
@@ -285,3 +287,5 @@ R6AA UI限定发布：只替换Adapter并重启profile-adapter.service，R6Z1执
 新 Adapter `8fb90eb2…` 已通过旧 Work 和三引擎 30 个真实显示场景；生产 Home、会话、Worker 与配置保持。回退旧 Adapter 前须通过新版本正常重置非零百分比并核对新增字段已消失，不能覆盖旧目录。新 Mac/Trilium 精确硬件组合未据此补造验证。详见 [验收](../infra/sealskin/r6ar-display-persistence-acceptance-2026-10-02.md)。
 
 开机对账以当前持久化浏览器目录为准（排除已删除记录），不再只看配置文件的导入种子。每个浏览器独立保留恢复预算，单项失败不阻塞其他项。完整且归属已核对的休眠代次通过原有Relay→Guard→探测→Worker顺序恢复；DIRECT的预期Guard停止不会遮住该恢复入口。健康异常本身不改为healthy，存活Worker的Guard故障继续阻断，入口仍须经过生命周期归属/网络检查。
+
+现有生产重建/回退按R6AX私有`production-compose-command-attempt3.json`中的完整配置链执行；首层是从Git固定的`production-base-before-v1.yml`，其余原覆盖层保持。仓库compose.yml现为通用组件示例，不能直接替代该存量配置。公开HTTPS检查使用真实浏览器；Python urllib被现有Cloudflare 1010规则拒绝不等于应用故障。

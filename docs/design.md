@@ -79,9 +79,9 @@ R7F 的无策略旧 Work 迁移使用服务端批准的完整应用与精确镜�
 
 R5C1 的 `profile_initial_url_version: 1` 将受管理浏览器的 HTTP(S) 初始 URL 与唯一 bootstrap 对账标记分开：`launch_context` 保留原标记，Worker 直接打开配置的起始页。DIRECT 继续拒绝宿主机地址。两个实际 Adapter 入口、重复进入和持久数据已验证；旧控制器不接收新字段，无绑定会话仍为 unknown，见 [启动中转页修复](deviations/DEV-2026-09-14-011-direct-bootstrap-url.md)。
 
-Docker 或主机重启后，Profile 的 Worker、Guard、Relay（均 `restart=no`，不使用自动删除）保持为已退出容器，会话记录与网络占用保留，称为**休眠代次**。Adapter 启动对账或入口识别休眠代次后，由 SealSkin 按 **Relay → Guard 规则就绪 → 控制器接回内网 → 一次性探测（代理 TLS 通过且直连阻断）→ Worker → 显示端点** 的顺序恢复同一批容器；任一步失败 Worker 不启动，占用保留并标为 `unknown`。恢复从不创建或删除容器。
+Docker 或主机重启后，Profile 的 Worker、Guard、Relay（均 `restart=no`，不使用自动删除）保持为已退出容器，会话记录与网络占用保留，称为**休眠代次**。Adapter 启动对账或入口识别休眠代次后，由 SealSkin 按 **Relay → Guard 规则就绪 → 控制器接回内网 → 一次性探测（代理 TLS 通过且直连阻断）→ Worker → 显示端点** 的顺序恢复同一批容器；任一步失败 Worker 不启动，占用保留并标为 `unknown`。恢复从不创建或删除容器。启动遍历当前持久化目录中的未删除浏览器，配置Profiles只作导入种子。每浏览器独立195秒预算；仅对已确认的休眠恢复失败最多续试三次、间隔两秒，使用同一截止点和原幂等键，每次重查归属及停止意图。其他错误保持原拒绝行为，永久失败保留unknown并继续下一项。
 
-所有命名 Home 的启动在 Docker create 前写入启动日志，控制进程崩溃或创建响应丢失后由清单中的 `launch` 资源暴露并阻止重复启动；清单为空即证明没有创建发生。Home 删除只在会话、容器、网络占用与启动日志全部不存在时执行。空闲回收以 SealSkin 代理持有的已认证显示连接数为唯一依据：断开后计时、重连取消、到期前重新观测，再经已验证的停止路径释放；轮询、健康检查与视频帧不算活动。自动重开浏览器与整机自动开机验收仍属于 [后续计划](roadmap.md)。实现细节见 [生命周期说明](../infra/sealskin/lifecycle/README.md)。
+所有命名 Home 的启动在 Docker create 前写入启动日志，控制进程崩溃或创建响应丢失后由清单中的 `launch` 资源暴露并阻止重复启动；清单为空即证明没有创建发生。Home 删除只在会话、容器、网络占用与启动日志全部不存在时执行。空闲回收以 SealSkin 代理持有的已认证显示连接数为唯一依据：断开后计时、重连取消、到期前重新观测，再经已验证的停止路径释放；轮询、健康检查与视频帧不算活动。1.0在独立机已验证动态浏览器目录中的原休眠代次自动恢复，见[R6AX验收](../infra/sealskin/r6ax-v1-install-acceptance-2026-10-03.md)；正常停止后创建新代次仍须用户启动。实现细节见 [生命周期说明](../infra/sealskin/lifecycle/README.md)。
 
 ## 受管理 Personal 的网络边界
 

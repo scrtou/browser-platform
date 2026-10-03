@@ -1,22 +1,30 @@
 # 设计偏差记录
 
-[DEV-164 显示输入目标](DEV-2026-10-03-164-qa-input-destination.md)：QA修正待验证，v8标记后半段进入快速查找框；原失败及数据保留。
+R6AX最终状态：DEV-152～161已完成对应实现/QA修订与适用安装、运行、重启和生产验证；DEV-162共享启动预算已修复并通过冷启动/主机重启，底层时延限制保留。DEV-163～167的恢复续试、QA输入/登录、生产Compose来源与真实浏览器公开入口均已验证。各记录原失败不改写。
 
-- [DEV-163 开机恢复续试](DEV-2026-10-03-163-startup-resume-retry.md)：处理中，Guard本次就绪晚于单次检查；在原预算内对已确认休眠恢复失败做有界对账重试，不放宽Guard安全门槛。
+[DEV-167 公开入口探针](DEV-2026-10-03-167-public-entry-probe.md)：已解决（QA），真实Chromium公开HTTPS通过，Python 403与回退证据保留。
 
-- [DEV-162 Camoufox初始化耗时](DEV-2026-10-03-162-camoufox-startup-latency.md)：处理中，整机重启后再次复现内部60秒预算截断；按既有180秒请求范围修复就绪截止点，冷启动重新验证。
+[DEV-166 生产Compose输入](DEV-2026-10-03-166-production-compose-source.md)：已解决，固定旧基础文件与完整有效配置一致，最终保护部署通过。
 
-- [DEV-157 长启动HTTPS响应头预算](DEV-2026-10-03-157-long-start-tls-header-timeout.md)：处理中；共享30秒Transport截断180秒启动，需独立长请求Transport及TLS回归。
+[DEV-165 创建授权后重新登录](DEV-2026-10-03-165-qa-create-grant-login.md)：已解决（QA），首次初始化检查与第二次管理检查分别保留。
 
-- [DEV-156 同主机QA网络变化](DEV-2026-10-03-156-fresh-qa-host-network-change.md)：处理中；host网络客户端因Docker接口变化取消启动，改为隔离namespace与固定Unix转发。
+[DEV-164 显示输入目标](DEV-2026-10-03-164-qa-input-destination.md)：已解决（QA），v8标记后半段进入快速查找框；原失败及数据保留。
 
-- [DEV-155 显式空状态与安装就绪](DEV-2026-10-03-155-explicit-empty-install-state.md)：处理中，缺失业务目录/账号表不能充当初始化状态；安装回执需等待真实就绪。
+- [DEV-163 开机恢复续试](DEV-2026-10-03-163-startup-resume-retry.md)：已解决，Guard本次就绪晚于单次检查；在原预算内对已确认休眠恢复失败做有界对账重试，不放宽Guard安全门槛。
 
-- [DEV-154 root内置镜像校验](DEV-2026-10-03-154-root-builtin-verification.md)：处理中，安装器需以目标非root用户执行只读校验，原失败保留。
+- [DEV-162 Camoufox初始化耗时](DEV-2026-10-03-162-camoufox-startup-latency.md)：共享150秒内部就绪预算已修复，578项回归和实际重启通过；原60秒失败与底层时延归因限制保留。
 
-- [DEV-153 全新控制器UID绑定](DEV-2026-10-03-153-fresh-controller-uid-binding.md)：处理中，非1000系统用户需要同步配置两组UID/GID；保留首次安装失败。
+- [DEV-157 长启动HTTPS响应头预算](DEV-2026-10-03-157-long-start-tls-header-timeout.md)：已解决；共享30秒Transport截断180秒启动，需独立长请求Transport及TLS回归。
 
-- [DEV-152 1.0遗留维护入口](DEV-2026-10-03-152-v1-source-maintenance-hooks.md)：处理中，工作区已清理但旧部署仍含临时入口，1.0须重新构建和验证。
+- [DEV-156 同主机QA网络变化](DEV-2026-10-03-156-fresh-qa-host-network-change.md)：已解决；host网络客户端因Docker接口变化取消启动，改为隔离namespace与固定Unix转发。
+
+- [DEV-155 显式空状态与安装就绪](DEV-2026-10-03-155-explicit-empty-install-state.md)：已解决，缺失业务目录/账号表不能充当初始化状态；安装回执需等待真实就绪。
+
+- [DEV-154 root内置镜像校验](DEV-2026-10-03-154-root-builtin-verification.md)：已解决，安装器需以目标非root用户执行只读校验，原失败保留。
+
+- [DEV-153 全新控制器UID绑定](DEV-2026-10-03-153-fresh-controller-uid-binding.md)：已解决，非1000系统用户需要同步配置两组UID/GID；保留首次安装失败。
+
+- [DEV-152 1.0遗留维护入口](DEV-2026-10-03-152-v1-source-maintenance-hooks.md)：已解决，工作区已清理但旧部署仍含临时入口，1.0须重新构建和验证。
 
 - [DEV-151 QA产物目录关联](DEV-2026-10-03-151-qa-artifact-directory-binding.md)：已完成R6AW最终24组合、适用补证/包校验及部署；原失败保留。
 
@@ -244,10 +252,10 @@ R6AU维护偏差DEV-133至139现均已解决，完整恢复与生产验收见[R6
 
 - [DEV-122：列表管理弹窗渐进增强与焦点](DEV-2026-10-02-122-management-list-dialog.md) · R6AC已修复部署。
 
-- [DEV-158 新安装QA输入焦点](DEV-2026-10-03-158-fresh-qa-input-focus.md)：待验证，R6AX保留Camoufox历史未写入失败。
+- [DEV-158 新安装QA输入焦点](DEV-2026-10-03-158-fresh-qa-input-focus.md)：已解决，R6AX保留Camoufox历史未写入失败。
 
-- [DEV-159 发布镜像保留引用](DEV-2026-10-03-159-fresh-image-retention.md)：处理中，按ID冷导入镜像需要防止悬空清理。
+- [DEV-159 发布镜像保留引用](DEV-2026-10-03-159-fresh-image-retention.md)：已解决，按ID冷导入镜像需要防止悬空清理。
 
-- [DEV-160 恢复QA地址自动补全](DEV-2026-10-03-160-qa-url-autocomplete.md)：QA修正待验证，独立标记核对当次重启保存。
+- [DEV-160 恢复QA地址自动补全](DEV-2026-10-03-160-qa-url-autocomplete.md)：已解决，独立标记核对当次重启保存。
 
-- [DEV-161 动态浏览器开机恢复](DEV-2026-10-03-161-dynamic-browser-boot-recovery.md)：处理中，启动对账必须使用实际目录，DIRECT完整休眠入口不能被Guard停止提示拦截。
+- [DEV-161 动态浏览器开机恢复](DEV-2026-10-03-161-dynamic-browser-boot-recovery.md)：已解决，启动对账必须使用实际目录，DIRECT完整休眠入口不能被Guard停止提示拦截。

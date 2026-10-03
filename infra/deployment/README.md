@@ -1,6 +1,6 @@
 # 1.0 全新安装入口
 
-当前为 [R6AX](../../docs/work-items/R6AX-2026-10-03-v1-release.md) 发布候选，实际独立安装/重启验收仍进行中；不得把候选材料当作已发布的 1.0。完整操作见[部署说明](../../docs/deployment-v1.md)。
+已通过[R6AX全新安装与重启验收](../../infra/sealskin/r6ax-v1-install-acceptance-2026-10-03.md)，精确材料见[1.0发行记录](../../docs/releases/v1.0.md)。完整操作见[部署说明](../../docs/deployment-v1.md)。
 
 `install.py` 只处理全新应用目录，安装固定镜像控制器、Adapter、环境任务执行器和双域名 HTTPS 入口。默认空账号/浏览器，安装已验收的 4/2/24 内置数据。使用独立非 root 系统用户，控制身份与网页管理员分离，后者由部署者通过 `profile-accounts init` 初始化。安装器明确创建空业务目录及v3初始化账号表，启动命令成功后继续检查真实readyz与受信任HTTPS初始化页。失败目录、密钥和日志保留，不自动删除或重试覆盖。
 
