@@ -17,7 +17,7 @@
 | 记录 | 事实与处置 |
 | --- | --- |
 | [DEV-152](../../docs/deviations/DEV-2026-10-03-152-v1-source-maintenance-hooks.md) | 已清理旧临时维护入口并构建，正式生产替换待完成。 |
-| [DEV-153](../../docs/deviations/DEV-2026-10-03-153-fresh-controller-uid-binding.md) | 首次新UID安装缺少控制器SEALSKIN_UID配置；同步两组UID/GID后第四次新安装通过，运行/重启继续验证。 |
+| [DEV-153](../../docs/deviations/DEV-2026-10-03-153-fresh-controller-uid-binding.md) | 首次新UID安装缺少控制器SEALSKIN_PUID/PGID配置；同步两组UID/GID后第四次新安装通过，运行/重启继续验证。 |
 | [DEV-154](../../docs/deviations/DEV-2026-10-03-154-root-builtin-verification.md) | root只读校验误触启动写入；改以目标非root用户校验，第四次24组合安装通过。 |
 | [DEV-155](../../docs/deviations/DEV-2026-10-03-155-explicit-empty-install-state.md) | 缺失状态与显式空目录被拒绝，第三次原安装回执没有验证就绪。补齐明确初始化状态、读取契约及实际HTTPS就绪门槛后，第四次完整安装通过。第三根后补文件/程序只算诊断，不算完整安装成功。 |
 
