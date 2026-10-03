@@ -43,7 +43,31 @@ flowchart LR
 
 下面命令为普通运维用户编写；如果已在root终端，省略 `sudo`，用自己的编辑器替代 `sudoedit`。
 
-准备已验证的程序包、基础镜像包及控制器更新镜像包：
+### 三个包在哪里、怎样取得
+
+三个包保存在独立交付机器 `141.11.120.93`，通过SSH端口22、root账号读取，目录为 `/srv/r6ax-v1-release-20261003/`。它们不在Git源码仓库中，也没有GitHub Release下载链接；以下是已获该机器访问权的部署者使用的获取方式。
+
+| 文件 | 大小 |
+| --- | --- |
+| `browser-platform-1.0-linux-amd64-v4.tar.gz` | 161,372,631字节，约154 MiB |
+| `v1-exact-images.tar.gz` | 2,287,621,024字节，约2.13 GiB |
+| `controller-managed-startup-image.tar.gz` | 95,798,408字节，约91 MiB |
+
+在**准备部署的新机器**上下载（仅三个压缩包就需约2.37 GiB，下载目录至少预留3 GiB；解压、Docker镜像和浏览器数据还需额外空间）：
+
+```bash
+mkdir -p ~/browser-platform-packages
+cd ~/browser-platform-packages
+scp -P 22 \
+  root@141.11.120.93:/srv/r6ax-v1-release-20261003/browser-platform-1.0-linux-amd64-v4.tar.gz \
+  root@141.11.120.93:/srv/r6ax-v1-release-20261003/v1-exact-images.tar.gz \
+  root@141.11.120.93:/srv/r6ax-v1-release-20261003/controller-managed-startup-image.tar.gz \
+  .
+```
+
+SSH密码在终端提示中输入，不写入命令。如果直接在这台交付机器上部署，三个文件已在上述目录，无需再下载：先 `cd /srv/r6ax-v1-release-20261003`，按下面步骤校验。该路径是交付材料目录，不是安装目标 `root`。
+
+开发主机仅保留程序包和控制器更新包，目录为 `/home/sshUser/code/browser-platform/infra/sealskin/runtime/r6ax-v1-release-20261003/`；基础镜像包不在开发主机。下载后逐项比对[发行记录](releases/v1.0.md)的SHA-256，再解压或导入。
 
 ```bash
 # 输出须与发行记录中的可信SHA-256逐一比对，再解压程序包并导入镜像。

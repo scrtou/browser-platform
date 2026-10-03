@@ -1,5 +1,7 @@
 # 验收索引
 
+[R6BB 发布包获取](r6bb-release-downloads-2026-10-03.md)：PASS；独立机SSH、三包位置/大小/完整摘要与下载说明核对通过，不包含整机安装。
+
 [R6BA 部署配置与端口](r6ba-deployment-config-2026-10-03.md)：源码/文档及本机隔离验证PASS，28项安装器、3项Go回归与实际CLI验证通过；整机安装/跨用户/TLS复测未完成。
 
 [R6AZ 默认空浏览器示例](r6az-empty-config-example-2026-10-03.md)：PASS；两份示例实际加载、18项已有回归及文档检查通过，修复范围为主分支示例/说明。

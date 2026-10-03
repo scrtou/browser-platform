@@ -1,5 +1,7 @@
 # 文档导航
 
+[三个安装包的位置与获取命令](deployment-v1.md#三个包在哪里怎样取得)已补齐；[R6BB](work-items/R6BB-2026-10-03-release-downloads.md)核实独立机连通、三包大小和完整SHA-256，均匹配原发行记录。
+
 [安装部署指南](deployment-v1.md)已重写：端口用途/修改范围/文件对应、JSON配置与首次管理员账号密码。[R6BA](work-items/R6BA-2026-10-03-deployment-config.md)主分支实现及本机隔离验证已收尾；新增入口整机复测尚未完成。
 
 [R6AZ 默认配置旧浏览器清理](work-items/R6AZ-2026-10-03-empty-config-example.md)已收尾：移除组件示例的personal/work导入种子，补齐空目录/账号初始化说明；18项已有回归与两份示例实际加载通过。主分支修正，无程序部署。
