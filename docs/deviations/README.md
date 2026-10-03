@@ -241,3 +241,5 @@ R6AU维护偏差DEV-133至139现均已解决，完整恢复与生产验收见[R6
 - [DEV-158 新安装QA输入焦点](DEV-2026-10-03-158-fresh-qa-input-focus.md)：待验证，R6AX保留Camoufox历史未写入失败。
 
 - [DEV-159 发布镜像保留引用](DEV-2026-10-03-159-fresh-image-retention.md)：处理中，按ID冷导入镜像需要防止悬空清理。
+
+- [DEV-160 恢复QA地址自动补全](DEV-2026-10-03-160-qa-url-autocomplete.md)：QA修正待验证，独立标记核对当次重启保存。
