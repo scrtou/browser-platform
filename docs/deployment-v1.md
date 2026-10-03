@@ -45,38 +45,47 @@ flowchart LR
 
 ### 三个包在哪里、怎样取得
 
-三个包保存在独立交付机器 `141.11.120.93`，通过SSH端口22、root账号读取，目录为 `/srv/r6ax-v1-release-20261003/`。它们不在Git源码仓库中，也没有GitHub Release下载链接；以下是已获该机器访问权的部署者使用的获取方式。
+安装材料通过 [GitHub Release v1.0](https://github.com/scrtou/browser-platform/releases/tag/v1.0) 下载，无需SSH或原独立机器。大文件作为Release附件保存，不进入Git提交；`git clone` 只取得源码。
 
 | 文件 | 大小 |
 | --- | --- |
-| `browser-platform-1.0-linux-amd64-v4.tar.gz` | 161,372,631字节，约154 MiB |
-| `v1-exact-images.tar.gz` | 2,287,621,024字节，约2.13 GiB |
-| `controller-managed-startup-image.tar.gz` | 95,798,408字节，约91 MiB |
+| `browser-platform-1.0-linux-amd64-v4.tar.gz`（程序包） | 161,372,631字节，约154 MiB |
+| `v1-exact-images.tar.gz.part-01`（基础镜像第一卷） | 1,992,294,400字节，1900 MiB |
+| `v1-exact-images.tar.gz.part-02`（基础镜像第二卷） | 295,326,624字节，约282 MiB |
+| `controller-managed-startup-image.tar.gz`（控制器更新包） | 95,798,408字节，约91 MiB |
+| `SHA256SUMS` | 三个原包和两个分卷的SHA-256清单 |
 
-在**准备部署的新机器**上下载（仅三个压缩包就需约2.37 GiB，下载目录至少预留3 GiB；解压、Docker镜像和浏览器数据还需额外空间）：
+基础镜像原包为2,287,621,024字节，超过GitHub单附件小于2 GiB的限制，因此拆成两卷，合并后与原包完全一致。**必须下载四个数据附件及校验清单**；GitHub自动提供的Source code压缩包不能代替它们。
+
+在准备部署的新机器执行。保留分卷并合并时，下载目录至少预留5 GiB；解压、Docker镜像和浏览器数据另需空间。下载或校验失败时先解决错误，不继续安装：
 
 ```bash
 mkdir -p ~/browser-platform-packages
 cd ~/browser-platform-packages
-scp -P 22 \
-  root@141.11.120.93:/srv/r6ax-v1-release-20261003/browser-platform-1.0-linux-amd64-v4.tar.gz \
-  root@141.11.120.93:/srv/r6ax-v1-release-20261003/v1-exact-images.tar.gz \
-  root@141.11.120.93:/srv/r6ax-v1-release-20261003/controller-managed-startup-image.tar.gz \
-  .
+(
+  set -eu
+  release_url=https://github.com/scrtou/browser-platform/releases/download/v1.0
+  for file in browser-platform-1.0-linux-amd64-v4.tar.gz \
+    v1-exact-images.tar.gz.part-01 v1-exact-images.tar.gz.part-02 \
+    controller-managed-startup-image.tar.gz SHA256SUMS; do
+    curl --fail --location --retry 3 --output "$file" "$release_url/$file"
+  done
+  sha256sum --ignore-missing -c SHA256SUMS
+  cat v1-exact-images.tar.gz.part-01 v1-exact-images.tar.gz.part-02 > v1-exact-images.tar.gz
+  sha256sum -c SHA256SUMS
+)
 ```
 
-SSH密码在终端提示中输入，不写入命令。如果直接在这台交付机器上部署，三个文件已在上述目录，无需再下载：先 `cd /srv/r6ax-v1-release-20261003`，按下面步骤校验。该路径是交付材料目录，不是安装目标 `root`。
-
-开发主机仅保留程序包和控制器更新包，目录为 `/home/sshUser/code/browser-platform/infra/sealskin/runtime/r6ax-v1-release-20261003/`；基础镜像包不在开发主机。下载后逐项比对[发行记录](releases/v1.0.md)的SHA-256，再解压或导入。
+最后一次校验须有五项 `OK`；完整原包摘要也列于[发行记录](releases/v1.0.md)。确认全部通过后解压、导入：
 
 ```bash
-# 输出须与发行记录中的可信SHA-256逐一比对，再解压程序包并导入镜像。
-sha256sum browser-platform-1.0-linux-amd64-v4.tar.gz v1-exact-images.tar.gz controller-managed-startup-image.tar.gz
 # 确保 /opt/browser-platform-1.0 尚不存在，再解压已核验的程序包。
 sudo tar -xzf browser-platform-1.0-linux-amd64-v4.tar.gz -C /opt
 sudo docker load --input v1-exact-images.tar.gz
 sudo docker load --input controller-managed-startup-image.tar.gz
 ```
+
+历史交付来源为独立机 `/srv/r6ax-v1-release-20261003/`，现安装取包无需访问它。本次发布只迁移公开安装材料；真实业务备份仍按原运维记录保管。
 
 程序包解压后，例如放在 `/opt/browser-platform-1.0`，必须包含 `release-manifest.json`、`bin/`、`deployment/inputs.json`、控制器、runner、内置产物和运行依赖。安装密码文件放在发布目录之外。安装器选择七个精确镜像ID，不用可变tag代替；基础包中的旧控制器不参与新安装，实际使用更新包里的新控制器。安装器为这些镜像建立保留标签，避免被当成悬空镜像清理。
 

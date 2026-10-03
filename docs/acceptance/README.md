@@ -1,5 +1,7 @@
 # 验收索引
 
+[R6BC GitHub发布安装包](r6bc-github-release-assets-2026-10-03.md)：PASS；五附件公开发布、GitHub摘要、无认证完整回读及分卷还原摘要通过。安装取包不依赖独立机器，整机/灾备验证不在本项范围。
+
 [R6BB 发布包获取](r6bb-release-downloads-2026-10-03.md)：PASS；独立机SSH、三包位置/大小/完整摘要与下载说明核对通过，不包含整机安装。
 
 [R6BA 部署配置与端口](r6ba-deployment-config-2026-10-03.md)：源码/文档及本机隔离验证PASS，28项安装器、3项Go回归与实际CLI验证通过；整机安装/跨用户/TLS复测未完成。
