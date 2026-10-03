@@ -7,6 +7,7 @@ for diagnosis. Web administrators are initialized separately using profile-accou
 import argparse
 from datetime import datetime, timedelta, timezone
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
@@ -16,6 +17,7 @@ import re
 import shutil
 import socket
 import stat
+import ssl
 import subprocess
 import sys
 import time
@@ -234,6 +236,8 @@ def install(args):
             'proxy_template':dict(inputs['proxy_template'],owner='platform'),'direct_template':dict(inputs['direct_template'],owner='platform'),
             'access':{'users_file':str(root/'access/entry-users.json'),'session_upstream_url':f'https://127.0.0.1:{args.backend_port}','session_ca_file':str(root/'access/session-ca.pem'),'session_tls_name':session.hostname,'session_seconds':1800,'ticket_seconds':30},
             'limits':{'storage_path':str(root/'storage')},'profiles':[]}
+        write(root / 'profiles.json', {'version':1,'revision':1,'browsers':[]})
+        write(root / 'access/entry-users.json', {'version':3,'users':[],'setup_required':True})
         write(root / 'adapter-config.json', cfg)
         caddy = (root/'release/deployment/Caddyfile.template').read_text().replace('ENTRY_ORIGIN',args.entry_origin).replace('SESSION_ORIGIN',args.session_origin).replace('ADAPTER_UPSTREAM',f'127.0.0.1:{args.adapter_port}')
         tls_config = f'bind 127.0.0.1\n    tls {root}/access/front-tls/cert.pem {root}/access/front-tls/key.pem' if args.private_tls else ''
@@ -249,7 +253,8 @@ def install(args):
         run(['runuser','-u',args.user,'--','caddy','validate','--config',root/'Caddyfile','--adapter','caddyfile'])
         run(['systemctl','daemon-reload'])
         run(['systemctl','enable','--now',*[p.name for p in units.values()]])
-        result = {'result':'INSTALLED','root':str(root),'services':[p.name for p in units.values()],
+        wait_ready(args, root)
+        result = {'result':'INSTALLED','ready_verified':True,'root':str(root),'services':[p.name for p in units.values()],
                   'web_admin_initialized':False,'entry_origin':args.entry_origin,'session_origin':args.session_origin,
                   'release_manifest_sha256':digest(root/'release/release-manifest.json')}
         write(root / 'installation.json', result)
@@ -259,6 +264,33 @@ def install(args):
         raise
     finally:
         log.close()
+
+
+def wait_ready(args, root, timeout=180):
+    """A started process is insufficient: require API readiness and verified TLS."""
+    host = urlsplit(args.entry_origin)
+    context = ssl.create_default_context(cafile=str(root/'access/front-tls/cert.pem') if args.private_tls else None)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            conn = http.client.HTTPConnection('127.0.0.1', args.adapter_port, timeout=5)
+            try:
+                conn.request('GET','/readyz',headers={'Host':host.netloc})
+                response=conn.getresponse();response.read()
+                if response.status != 200:raise OSError('ADAPTER_NOT_READY')
+            finally:conn.close()
+            conn = http.client.HTTPSConnection(host.hostname,host.port or 443,context=context,timeout=5)
+            try:
+                conn.sock = context.wrap_socket(socket.create_connection(('127.0.0.1',host.port or 443),timeout=5),server_hostname=host.hostname)
+                conn.request('GET','/auth/login',headers={'Host':host.netloc})
+                response=conn.getresponse();body=response.read(1024*1024).decode('utf-8')
+                if response.status != 200 or '平台尚未初始化' not in body or '<form method="post" action="/auth/login">' in body:
+                    raise OSError('INITIALIZATION_PAGE_NOT_READY')
+            finally:conn.close()
+            return
+        except (OSError, http.client.HTTPException):
+            time.sleep(1)
+    raise ValueError('INSTALLATION_READINESS_TIMEOUT')
 
 
 def parser():

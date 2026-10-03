@@ -29,3 +29,5 @@
 首次独立安装失败已记录 [DEV-153](../deviations/DEV-2026-10-03-153-fresh-controller-uid-binding.md)：容器运行UID与控制器默认UID不一致，须同步两组环境设置后用新根重新安装，不覆盖失败证据。
 
 第二次新安装已通过控制器启动/新身份创建，但root调用只读镜像校验触发写入，见 [DEV-154](../deviations/DEV-2026-10-03-154-root-builtin-verification.md)；修复执行身份后用第三个新根继续。
+
+第三次服务启动回执不代表就绪，Adapter缺少显式空业务目录；账号表也必须预建v3初始化状态，见 [DEV-155](../deviations/DEV-2026-10-03-155-explicit-empty-install-state.md)。最终新安装需增加真实就绪/HTTPS初始化页门槛，保留原错误回执。

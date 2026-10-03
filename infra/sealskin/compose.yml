@@ -1,21 +1,44 @@
-# Component reference only: use ../deployment/install.py for a complete new installation.
-# This historical standalone Compose lacks the required credential/Session tmpfs mounts.
+# Controller component reference. For a complete new installation use
+# ../deployment/install.py; it generates an instance-specific Compose file,
+# initializes private state/keys and verifies the HTTPS initialization page.
 services:
   sealskin:
     image: "${SEALSKIN_CONTROLLER_IMAGE:?use the verified release controller image}"
-    container_name: sealskin
     environment:
-      PUID: "${PUID:-1000}"
-      PGID: "${PGID:-1000}"
-      SEALSKIN_PUID: "${PUID:-1000}"
-      SEALSKIN_PGID: "${PGID:-1000}"
+      PUID: "${PUID:?dedicated service UID required}"
+      PGID: "${PGID:?dedicated service GID required}"
+      SEALSKIN_PUID: "${PUID:?dedicated service UID required}"
+      SEALSKIN_PGID: "${PGID:?dedicated service GID required}"
       TZ: "${TZ:-Etc/UTC}"
-      HOST_URL: "${SEALSKIN_HOST_URL:-mysession.azhen.de}"
+      HOST_URL: "${SEALSKIN_HOST_URL:?Session DNS name required}"
     volumes:
-      - ./config:/config
-      - ./storage:/storage
+      - type: bind
+        source: "${BP_INSTANCE_ROOT:?initialized private root required}/config"
+        target: /config
+        bind: {create_host_path: false}
+      - type: bind
+        source: "${BP_INSTANCE_ROOT:?initialized private root required}/storage"
+        target: /storage
+        bind: {create_host_path: false}
+      - type: bind
+        source: "${BP_INSTANCE_ROOT:?initialized private root required}/secrets"
+        target: /run/browser-platform-key
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: "${BP_CREDENTIAL_TMPFS:?private tmpfs directory required}"
+        target: /run/browser-platform-secrets
+        bind: {create_host_path: false}
+      - type: bind
+        source: "${BP_SESSION_TMPFS:?private tmpfs directory required}"
+        target: /run/browser-platform-session-secrets
+        bind: {create_host_path: false}
+      - /proc/1/net/fib_trie:/run/browser-platform-host/ipv4-fib-trie:ro
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
-      - "127.0.0.1:8443:8443"
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${BP_BACKEND_PORT:-18443}:8443"
+      - "127.0.0.1:${BP_API_PORT:-18000}:8000"
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
     restart: unless-stopped

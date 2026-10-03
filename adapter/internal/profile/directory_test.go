@@ -109,7 +109,7 @@ func TestDisabledBrowserRefusesLaunchAndReuseButKeepsLifecycle(t *testing.T) {
 	if err := service.CheckDisplaySession(context.Background(), "personal", binding.SessionID); err != nil {
 		t.Fatalf("running display must survive disabling: %v", err)
 	}
-	if report, err := service.Health(context.Background(), "personal", HealthOptions{}); err != nil || report.Overall != OverallHealthy {
+	if report, err := service.Health(context.Background(), "personal", HealthOptions{}); err != nil || report.Overall != OverallDegraded || check(t, report, "egress").Code != "EGRESS_NOT_CONFIGURED" {
 		t.Fatalf("health of a disabled running browser: %+v %v", report, err)
 	}
 	result, err := service.Stop(context.Background(), "personal")
@@ -136,7 +136,7 @@ func TestDirectoryRejectsUnsafeFilesAndStaticServicesStayReadOnly(t *testing.T) 
 		"trailing":  `{"version":1,"revision":1,"browsers":[{"id":"personal","application_id":"a","home_name":"h","start_url":"https://e.com","revision":1,"updated_at":"2026-09-17T00:00:00Z"}]} {}`,
 		"unknown":   `{"version":1,"revision":1,"browsers":[{"id":"personal","application_id":"a","home_name":"h","start_url":"https://e.com","revision":1,"updated_at":"2026-09-17T00:00:00Z","secret":"x"}]}`,
 		"duplicate": `{"version":1,"revision":1,"browsers":[{"id":"a","application_id":"a","home_name":"h","start_url":"https://e.com","revision":1,"updated_at":"2026-09-17T00:00:00Z"},{"id":"a","application_id":"a","home_name":"h2","start_url":"https://e.com","revision":1,"updated_at":"2026-09-17T00:00:00Z"}]}`,
-		"empty":     `{"version":1,"revision":1,"browsers":[]}`,
+		"null":      `{"version":1,"revision":1,"browsers":null}`,
 		"version":   `{"version":2,"revision":1,"browsers":[]}`,
 	} {
 		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {

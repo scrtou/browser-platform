@@ -1,5 +1,7 @@
 # 设计偏差记录
 
+- [DEV-155 显式空状态与安装就绪](DEV-2026-10-03-155-explicit-empty-install-state.md)：处理中，缺失业务目录/账号表不能充当初始化状态；安装回执需等待真实就绪。
+
 - [DEV-154 root内置镜像校验](DEV-2026-10-03-154-root-builtin-verification.md)：处理中，安装器需以目标非root用户执行只读校验，原失败保留。
 
 - [DEV-153 全新控制器UID绑定](DEV-2026-10-03-153-fresh-controller-uid-binding.md)：处理中，非1000系统用户需要同步配置两组UID/GID；保留首次安装失败。
