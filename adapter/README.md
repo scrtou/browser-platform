@@ -356,3 +356,5 @@ R6AA参考截图UI已限定部署：登录/认证、首页与管理页面统一�
 新 Adapter `8fb90eb2…` 已通过旧 Work 和三引擎 30 个真实显示场景；生产 Home、会话、Worker 与配置保持。回退旧 Adapter 前须通过新版本正常重置非零百分比并核对新增字段已消失，不能覆盖旧目录。新 Mac/Trilium 精确硬件组合未据此补造验证。详见 [验收](../infra/sealskin/r6ar-display-persistence-acceptance-2026-10-02.md)。
 
 开机对账以当前持久化浏览器目录为准（排除已删除记录），不再只看配置文件的导入种子。每个浏览器独立保留恢复预算，单项失败不阻塞其他项。完整且归属已核对的休眠代次通过原有Relay→Guard→探测→Worker顺序恢复；DIRECT的预期Guard停止不会遮住该恢复入口。健康异常本身不改为healthy，存活Worker的Guard故障继续阻断，入口仍须经过生命周期归属/网络检查。
+
+R6AX恢复候选：开机对账只对已确认休眠恢复的`ErrResumeFailed`在原逐浏览器195秒预算内最多续试三次，间隔两秒；每次重新检查归属和停止意图，复用持久化恢复键。其他错误不自动重试，取消立即终止，Guard原就绪门槛保持。实际发布范围见[DEV-163](../docs/deviations/DEV-2026-10-03-163-startup-resume-retry.md)。

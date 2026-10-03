@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -22,7 +23,7 @@ func reconcileAtStartup(ctx context.Context, profiles startupProfiles, logger *s
 			return
 		}
 		recoverCtx, cancel := context.WithTimeout(ctx, sealskin.LongOperationTimeout+15*time.Second)
-		result, err := profiles.Reconcile(recoverCtx, id)
+		result, err := reconcileStartupProfile(recoverCtx, profiles, id, 2*time.Second)
 		cancel()
 		if err != nil {
 			logger.Warn("profile still requires recovery", "profile", id, "error", err)
@@ -30,4 +31,29 @@ func reconcileAtStartup(ctx context.Context, profiles startupProfiles, logger *s
 			logger.Info("profile runtime reconciled", "profile", id, "status", result.Status)
 		}
 	}
+}
+
+func reconcileStartupProfile(ctx context.Context, profiles startupProfiles, id string, retryDelay time.Duration) (profile.LifecycleResult, error) {
+	var result profile.LifecycleResult
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
+		result, err = profiles.Reconcile(ctx, id)
+		if !errors.Is(err, profile.ErrResumeFailed) || attempt == 2 {
+			return result, err
+		}
+		// Reconcile rechecks ownership and any intervening stop intent. Resume
+		// keeps the persisted idempotency key and never creates a Worker.
+		// Keep the same context: retries must not renew the recovery budget.
+		timer := time.NewTimer(retryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return result, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return result, err
 }

@@ -1,5 +1,7 @@
 # 设计偏差记录
 
+- [DEV-163 开机恢复续试](DEV-2026-10-03-163-startup-resume-retry.md)：处理中，Guard本次就绪晚于单次检查；在原预算内对已确认休眠恢复失败做有界对账重试，不放宽Guard安全门槛。
+
 - [DEV-162 Camoufox初始化耗时](DEV-2026-10-03-162-camoufox-startup-latency.md)：处理中，整机重启后再次复现内部60秒预算截断；按既有180秒请求范围修复就绪截止点，冷启动重新验证。
 
 - [DEV-157 长启动HTTPS响应头预算](DEV-2026-10-03-157-long-start-tls-header-timeout.md)：处理中；共享30秒Transport截断180秒启动，需独立长请求Transport及TLS回归。

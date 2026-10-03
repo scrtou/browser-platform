@@ -77,3 +77,72 @@ func TestStartupUsesPersistedDirectoryAndContinuesAfterFailure(t *testing.T) {
 		t.Fatal("shutdown started another recovery")
 	}
 }
+
+type retryStartup struct {
+	contexts []context.Context
+	errors   []error
+	statuses []state.Status
+	onCall   func()
+}
+
+func (r *retryStartup) ProfileIDs() []string { return []string{"dynamic"} }
+func (r *retryStartup) Reconcile(ctx context.Context, id string) (profile.LifecycleResult, error) {
+	i := len(r.contexts)
+	r.contexts = append(r.contexts, ctx)
+	if r.onCall != nil {
+		r.onCall()
+	}
+	return profile.LifecycleResult{ProfileID: id, Status: r.statuses[i]}, r.errors[i]
+}
+
+func TestStartupResumeRetryKeepsBudgetAndStopsOnTerminalResult(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		errors   []error
+		statuses []state.Status
+	}{
+		{"late guard readiness", []error{profile.ErrResumeFailed, nil}, []state.Status{state.StatusUnknown, state.StatusRunning}},
+		{"permanent resume failure", []error{profile.ErrResumeFailed, profile.ErrResumeFailed, profile.ErrResumeFailed}, []state.Status{state.StatusUnknown, state.StatusUnknown, state.StatusUnknown}},
+		{"unknown ownership", []error{profile.ErrOwnershipUnknown}, []state.Status{state.StatusUnknown}},
+		{"stop intent wins", []error{profile.ErrResumeFailed, nil}, []state.Status{state.StatusUnknown, state.StatusStopped}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			r := &retryStartup{errors: tc.errors, statuses: tc.statuses}
+			result, err := reconcileStartupProfile(ctx, r, "dynamic", 0)
+			if len(r.contexts) != len(tc.errors) || !errors.Is(err, tc.errors[len(tc.errors)-1]) || result.Status != tc.statuses[len(tc.statuses)-1] {
+				t.Fatalf("wrong recovery result: calls=%d result=%+v error=%v", len(r.contexts), result, err)
+			}
+			for _, used := range r.contexts {
+				if used != ctx {
+					t.Fatal("retry reset the original recovery context")
+				}
+			}
+		})
+	}
+}
+
+func TestStartupResumeRetryHonorsCancellationAndExpiry(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	r := &retryStartup{errors: []error{profile.ErrResumeFailed}, statuses: []state.Status{state.StatusUnknown}, onCall: cancel}
+	_, err := reconcileStartupProfile(ctx, r, "dynamic", time.Hour)
+	if !errors.Is(err, context.Canceled) || len(r.contexts) != 1 {
+		t.Fatalf("cancellation started another attempt: calls=%d error=%v", len(r.contexts), err)
+	}
+	expired, stop := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer stop()
+	r = &retryStartup{}
+	_, err = reconcileStartupProfile(expired, r, "dynamic", 0)
+	if !errors.Is(err, context.DeadlineExceeded) || len(r.contexts) != 0 {
+		t.Fatal("expired recovery started work")
+	}
+}
+
+func TestStartupContinuesAnInterruptedResume(t *testing.T) {
+	r := &retryStartup{errors: []error{profile.ErrResumeFailed, nil}, statuses: []state.Status{state.StatusUnknown, state.StatusRunning}}
+	reconcileAtStartup(context.Background(), r, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if len(r.contexts) != 2 || r.contexts[0] != r.contexts[1] || r.contexts[0].Err() != context.Canceled {
+		t.Fatal("startup did not complete the original bounded recovery")
+	}
+}
