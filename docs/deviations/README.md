@@ -1,5 +1,9 @@
 # 设计偏差记录
 
+[DEV-147 固定Camoufox桌面证据](DEV-2026-10-02-147-fixed-camoufox-desktop-evidence.md)：处理中；固定组合保留无头完整报告，补齐同产物的正常桌面完整验收。
+
+[DEV-146 内置包关联校验](DEV-2026-10-02-146-builtin-package-binding.md)：处理中；R6AW安装候选需要逐项核对来源、报告、设备缓存和兼容关系。
+
 [DEV-145 客户端DPR与尺寸截断](DEV-2026-10-02-145-client-dpr-resolution-clamp.md)：修复中；R6AW确认实际JS初连逐轴截断/resize重复DPR，按原尺寸契约修复三引擎镜像。
 
 [DEV-144 BiDi初始文档就绪](DEV-2026-10-02-144-bidi-initial-document-readiness.md)：处理中；R6AW端口先于初始文档就绪，补有界轮询/记录且保留完整观察门槛。

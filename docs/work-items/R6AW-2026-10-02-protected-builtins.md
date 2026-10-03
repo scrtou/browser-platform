@@ -39,3 +39,5 @@ DEV-143对照已证明同一产物的独立客户端可通过原动态输入场�
 最大尺寸失败已确认实际JS缺陷，另记[DEV-145](../deviations/DEV-2026-10-02-145-client-dpr-resolution-clamp.md)，按原契约修复三引擎薄层镜像；实际JS旧代码8项复现、新代码12项场景通过。候选v4现189文件；本地已构建新镜像，异机导入及新完整矩阵待执行。`package-builtins.py`/`prepare-builtin-install.py`已准备，需等待真实24项报告后验证导出、篡改拒绝与安装，不把工具存在写成部署完成。
 
 v4精确候选源码与目标表已提交`review/r6aw-viewport`：`52e8ef4213fbde551b7452831b3836a81b9135fd`。该提交继承首版候选，明确矩阵仍待验收/未部署；二进制及私有证据按manifest留存，不把组件审阅分支当作1.0发行版。
+
+2026-10-03增量：安装器代码核对新增[DEV-146](../deviations/DEV-2026-10-02-146-builtin-package-binding.md)，导出/安装共用校验已补来源、设备缓存、镜像目标、显示和兼容关系；真实包的正向/篡改/冲突/重复运行验证仍待矩阵完成。固定Camoufox原accepted仅含无头完整验收，另记[DEV-147](../deviations/DEV-2026-10-02-147-fixed-camoufox-desktop-evidence.md)，四个同产物的完整桌面补验已排入本机固定矩阵之后，额外报告成为内置包必需材料。限定部署脚本已准备，尚未执行。
