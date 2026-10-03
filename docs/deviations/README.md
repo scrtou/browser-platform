@@ -1,5 +1,7 @@
 # 设计偏差记录
 
+- [DEV-150 Firefox首次存储探针超时](DEV-2026-10-03-150-firefox-storage-probe-timeout.md)：诊断中，保留零观察failed及原Home，独立核对存储阶段。
+
 - [DEV-149 QA与冷导入I/O竞争](DEV-2026-10-03-149-qa-shutdown-io-contention.md)：执行隔离修订待验证，原12秒关闭失败及随后正常收尾保留。
 
 [DEV-148 TW自动Chromix输入错序](DEV-2026-10-03-148-dynamic-input-order.md)：诊断中；精确文本变成resizecheck-，焦点/尺寸正确且无资源耗尽，保留失败并核对事件顺序。

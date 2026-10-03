@@ -47,3 +47,5 @@ US/TW/JP/CN四个受保护通用指纹，自动/DPR随系统缩放和1920×1080/
 私有证据：本机 infra/sealskin/runtime/r6aw-protected-builtins-20261002/，独立机 /srv/r6aw-protected-builtins-20261002/；实时检查点为前者的 live-matrix.json。此前薄镜像传输依赖异机已有精确基础层，不算冷导入；完整三镜像归档已保存在独立机（2,145,164,634字节）；初版校验器混淆OCI索引与配置摘要，修正后96个文件/93个OCI引用/77个Docker层摘要和关联检查通过；仍未宣称冷导入通过，且该归档对应v5。供应商自然动态漂移继续未测，静态代理恢复不替代该项。
 
 2026-10-03 02:00 UTC检查点：v6已9/24组合accepted、1/4固定Camoufox桌面补验通过，零新增失败。此前v5成功/失败记录保持。v6完整三镜像归档及逐blob/OCI引用检查已通过，独立空Docker存储冷导入正在执行；尚未部署。
+
+2026-10-03 02:34 UTC检查点：v6已13/24组合accepted、4/4固定Camoufox桌面补验通过。v6完整三镜像已从完整归档冷导入空Docker存储，三镜像内部键盘补丁及异机原停止容器保持检查通过。DEV-149独立关闭诊断通过但新完整Chromix任务仍排队；US自动Firefox首次存储探针超时另见[DEV-150](../../docs/deviations/DEV-2026-10-03-150-firefox-storage-probe-timeout.md)，零观察failed保留。本机JP/CN自动部分已启动。尚无24组合完成/部署结论。
