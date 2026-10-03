@@ -2,9 +2,7 @@
 """Prepare/apply the bounded R6AW release after full real-matrix verification."""
 import argparse
 import fcntl
-import hashlib
 import importlib.util
-import json
 import os
 from pathlib import Path
 import shlex
@@ -13,7 +11,6 @@ import subprocess
 import sys
 import urllib.request
 from urllib.parse import urlsplit
-from types import SimpleNamespace
 
 PROJECT=Path(__file__).resolve().parents[2]
 spec=importlib.util.spec_from_file_location('bounded_release',PROJECT/'infra/camoufox/deploy-engine-neutral-templates.py')
@@ -49,7 +46,7 @@ def main():
         b.idle(spool)
         release.mkdir(mode=0o700)
         shutil.copytree(root/'runner-source',release/'runner-source',ignore=shutil.ignore_patterns('__pycache__','.build','*.pyc'))
-        for name in ['builtin_bundle.py','package-builtins.py','prepare-builtin-install.py','check-fixed-camoufox-desktop.py','deploy-builtins.py']:
+        for name in ['builtin_bundle.py','package-builtins.py','prepare-builtin-install.py','check-fixed-camoufox-desktop.py','check-builtin-package.py','assemble-builtin-qa.py','deploy-builtins.py']:
             shutil.copy2(PROJECT/'infra/environment-engines'/name,release/'runner-source/infra/environment-engines'/name)
         shutil.copy2(root/'native-targets.json',release/'native-targets.json')
         original=b.UNIT.read_text();command=shlex.split(next(v[10:] for v in original.splitlines() if v.startswith('ExecStart=')))
@@ -77,8 +74,13 @@ def main():
         print('PREPARED R6AW release; live files unchanged');return
     if (root/'deployment.json').exists():raise ValueError('RELEASE_ALREADY_APPLIED')
     inputs=b.read(root/'deployment-inputs.json')
-    if b.read(root/'package-validation.json').get('result')!='PASS':raise ValueError('PACKAGE_VERIFICATION_REQUIRED')
-    if b.read(root/'installation-validation.json').get('result')!='PASS':raise ValueError('INSTALLATION_VERIFICATION_REQUIRED')
+    package_check=b.read(root/'package-validation.json');install_check=b.read(root/'installation-validation.json')
+    if (package_check.get('result')!='PASS' or package_check.get('bundle_manifest_sha256')!=inputs['bundle']
+            or package_check.get('actual_combinations')!=24):raise ValueError('PACKAGE_VERIFICATION_REQUIRED')
+    if (install_check.get('result')!='PASS' or install_check.get('visible_protected_combinations')!=24
+            or install_check.get('candidate_environment_catalog_sha256')!=b.sha(install/'environment-catalog.json')
+            or install_check.get('candidate_template_catalog_sha256')!=b.sha(install/'template-catalog.json')):
+        raise ValueError('INSTALLATION_VERIFICATION_REQUIRED')
     if b.files(release)!=inputs['release'] or b.sha(binary)!=inputs['binary'] or b.sha(bundle/'manifest.json')!=inputs['bundle']:
         raise ValueError('RELEASE_MATERIAL_CHANGED')
     def preserved():

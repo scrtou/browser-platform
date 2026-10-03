@@ -21,8 +21,8 @@ from urllib.parse import urlsplit
 
 ROOT=Path(__file__).resolve().parents[1]/'camoufox'
 sys.path.insert(0,str(ROOT))
-from template_sources import raw_json,sha,BUILTIN_FINGERPRINTS,TARGETS
-from native_jobs import definition,runtime_spec,accepted
+from template_sources import raw_json,sha
+from native_jobs import definition,runtime_spec
 
 
 def write(path,value):
