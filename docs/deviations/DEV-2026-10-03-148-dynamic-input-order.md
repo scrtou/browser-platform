@@ -1,6 +1,6 @@
 # DEV-148 · TW自动Chromix输入字符顺序错误
 
-状态：诊断中。关联[R6AW](../work-items/R6AW-2026-10-02-protected-builtins.md)。
+状态：运行时修复及真实故障对照通过；新镜像完整矩阵待验收。关联[R6AW](../work-items/R6AW-2026-10-02-protected-builtins.md)。
 
 矩阵v5的TW自动Chromix任务在首次1280×800/DPR1客户端输入失败：发送一次resize-check，远端实际值为resizecheck-。输入框焦点和document.hasFocus均正确，显示尺寸正确；客户端内存峰值约360MiB、无OOM，CPU仅发生552微秒节流，不能直接归因于此前资源不足。浏览器已正常关闭，原报告、Home、冻结种子与客户端截图/资源记录保留。
 

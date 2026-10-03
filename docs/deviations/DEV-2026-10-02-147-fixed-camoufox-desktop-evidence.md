@@ -1,6 +1,6 @@
 # DEV-147 · 固定Camoufox组合缺少同产物桌面验收
 
-状态：四份桌面补验已通过；真实包关联验证待R6AW整体验收。关联[R6AW](../work-items/R6AW-2026-10-02-protected-builtins.md)。
+状态：v5四份桌面补验已通过；DEV-148修订v6镜像后须重新补验，真实包关联待R6AW整体验收。关联[R6AW](../work-items/R6AW-2026-10-02-protected-builtins.md)。
 
 代码和首份实际报告核对发现，固定Camoufox沿历史Camoufox验收器执行完整产物拒绝、两Home各十次重建、存储和离线恢复，使用无头浏览器；自动Camoufox及原生引擎执行正常桌面验收器。固定Camoufox的accepted报告不能单独证明本次要求的正常桌面、显示认证和真实输入。
 

@@ -15,6 +15,7 @@ def main():
     p.add_argument('--qa',type=Path,required=True)
     p.add_argument('--runner',type=Path,required=True)
     p.add_argument('--client-browsers',type=Path,required=True)
+    p.add_argument('--environment-id',action='append',help='Accepted fixed artifacts in this QA part; package still requires all four')
     a=p.parse_args();os.umask(0o077)
     qa=a.qa.resolve();runner=a.runner.resolve()
     if 'runtime' not in qa.parts or 'r6aw-protected-builtins-20261002' not in qa.parts:
@@ -22,11 +23,18 @@ def main():
     sys.path.insert(0,str(runner.parent))
     spec=importlib.util.spec_from_file_location('builtin_desktop_runner',runner)
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-    with (qa/'jobs/.lock').open('a+b') as lock:
+    # Accepted fixed artifacts are immutable; the supplement writes a separate
+    # report/Home root. A dedicated lock avoids blocking unrelated queued jobs.
+    with (qa/'.desktop-acceptance.lock').open('a+b') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX)
         catalog=json.loads((qa/'environment-catalog.json').read_bytes())
         rows=[v for v in catalog['artifacts'] if v['browser_engine']=='camoufox' and v['screen']=='1920x1080@1']
-        if len(rows)!=4:raise ValueError('BUILTIN_FIXED_CAMOUFOX_FOUR_REQUIRED')
+        if a.environment_id:
+            selected=set(a.environment_id)
+            if len(selected)!=len(a.environment_id):raise ValueError('BUILTIN_DESKTOP_DUPLICATE_SELECTION')
+            rows=[v for v in rows if v['id'] in selected]
+            if {v['id'] for v in rows}!=selected:raise ValueError('BUILTIN_DESKTOP_SELECTION_MISSING')
+        elif len(rows)!=4:raise ValueError('BUILTIN_FIXED_CAMOUFOX_FOUR_REQUIRED')
         for row in rows:
             status=json.loads((qa/'jobs/status'/(row['job_id']+'.json')).read_bytes())
             if status['status']!='accepted':raise ValueError('BUILTIN_JOB_NOT_ACCEPTED')
@@ -50,6 +58,6 @@ def main():
                     or value.get('displayAuthentication') is not True):
                 raise ValueError('BUILTIN_DESKTOP_ACCEPTANCE_FAILED')
             print('PASS fixed Camoufox desktop '+row['id'],flush=True)
-    print('PASS four fixed Camoufox full desktop reports',flush=True)
+    print(f'PASS {len(rows)} fixed Camoufox full desktop reports',flush=True)
 
 if __name__=='__main__':main()
