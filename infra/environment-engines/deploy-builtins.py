@@ -30,25 +30,28 @@ def check_manifest(root,manifest):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root',type=Path,required=True);parser.add_argument('--apply',action='store_true')
+    parser.add_argument('--candidate',type=Path,help='Frozen source candidate within the R6AW evidence root')
     args=parser.parse_args();os.umask(0o077);root=args.root.resolve()
     if root.name!='r6aw-protected-builtins-20261002' or 'runtime' not in root.parts:raise ValueError('RELEASE_SCOPE')
+    candidate=args.candidate.resolve() if args.candidate else root
+    if not candidate.is_relative_to(root):raise ValueError('RELEASE_CANDIDATE_SCOPE')
     config=PROJECT/'infra/sealskin/adapter-config.json';cfg=b.read(config)
     def path(value):
         p=Path(value);return p if p.is_absolute() else config.parent/p
     spool=path(cfg['environment_job_spool']);ec=path(cfg['environment_catalog']);tc=path(cfg['template_catalog'])
     protected=[config,path(cfg['profile_directory']),path(cfg['state_file']),path(cfg['access']['users_file']),path(cfg['network_profile_catalog'])]
     bundle=root/'builtin-package';verify_bundle(bundle)
-    binary=root/'profile-adapter';check_manifest(root,b.read(root/'candidate-manifest.json'))
+    binary=candidate/'profile-adapter';check_manifest(candidate,b.read(candidate/'candidate-manifest.json'))
     release=root/'release';install=release/'installed';unit=release/b.UNIT.name
     if not args.apply:
         if (root/'deployment-inputs.json').exists():raise ValueError('RELEASE_ALREADY_PREPARED')
         if b.sha(b.BINARY)!=BASELINE:raise ValueError('RELEASE_BASELINE_CHANGED')
         b.idle(spool)
         release.mkdir(mode=0o700)
-        shutil.copytree(root/'runner-source',release/'runner-source',ignore=shutil.ignore_patterns('__pycache__','.build','*.pyc'))
+        shutil.copytree(candidate/'runner-source',release/'runner-source',ignore=shutil.ignore_patterns('__pycache__','.build','*.pyc'))
         for name in ['builtin_bundle.py','package-builtins.py','prepare-builtin-install.py','check-fixed-camoufox-desktop.py','check-builtin-package.py','assemble-builtin-qa.py','deploy-builtins.py']:
             shutil.copy2(PROJECT/'infra/environment-engines'/name,release/'runner-source/infra/environment-engines'/name)
-        shutil.copy2(root/'native-targets.json',release/'native-targets.json')
+        shutil.copy2(candidate/'native-targets.json',release/'native-targets.json')
         original=b.UNIT.read_text();command=shlex.split(next(v[10:] for v in original.splitlines() if v.startswith('ExecStart=')))
         command[1]=str(release/'runner-source/infra/camoufox/environment-job.py')
         command[command.index('--native-targets')+1]=str(release/'native-targets.json')
@@ -70,10 +73,13 @@ def main():
                 if not dest.exists():additions[rel]=b.sha(source)
         b.write(root/'deployment-inputs.json',{'files':{str(p):b.sha(p) for p in protected+[ec,tc,b.BINARY,b.UNIT]},
             'spool':snapshot(spool),'additions':additions,'release':b.files(release),'bundle':b.sha(bundle/'manifest.json'),
-            'binary':b.sha(binary),'containers':b.production_containers()})
+            'binary':b.sha(binary),'containers':b.production_containers(),
+            'candidate_manifest_sha256':b.sha(candidate/'candidate-manifest.json')})
         print('PREPARED R6AW release; live files unchanged');return
     if (root/'deployment.json').exists():raise ValueError('RELEASE_ALREADY_APPLIED')
     inputs=b.read(root/'deployment-inputs.json')
+    if b.sha(candidate/'candidate-manifest.json')!=inputs['candidate_manifest_sha256']:
+        raise ValueError('RELEASE_CANDIDATE_CHANGED')
     package_check=b.read(root/'package-validation.json');install_check=b.read(root/'installation-validation.json')
     if (package_check.get('result')!='PASS' or package_check.get('bundle_manifest_sha256')!=inputs['bundle']
             or package_check.get('actual_combinations')!=24):raise ValueError('PACKAGE_VERIFICATION_REQUIRED')

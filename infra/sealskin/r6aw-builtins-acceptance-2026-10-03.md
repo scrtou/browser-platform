@@ -16,6 +16,16 @@ US/TW/JP/CN四个受保护通用指纹，自动/DPR随系统缩放和1920×1080/
 
 12份来源/引擎设备缓存（16文件）先由正常生成器冻结，两机校验同一清单后复用。缓存生成不等于accepted。独立Debian12机器承担12个自动组合，本机独立QA承担12个固定组合；受测Worker保持1.5CPU/1536MiB，自动显示的合成客户端另用2CPU/3GiB、1GiB临时目录。
 
+## v6键盘运行时修订（验收中）
+
+2026-10-03 01:24 UTC：DEV-148已在真实浏览器故障注入中复现；有界等待/终止回收修复及6项进程检查、固定上游方法对照通过。三引擎修订镜像和195文件v6候选已两机核对，源码提交review/r6aw-matrix-v6的6bffe240452d8b0e1016ee7844d016cb702bdc92。新矩阵已启动固定部分，自动部分待真实客户端延迟对照通过后启动。v5的16项accepted及4份桌面报告仅保留为旧镜像证据，不能计入新镜像的24项。尚未部署。
+
+| 引擎 | v6精确镜像 |
+| --- | --- |
+| camoufox-linux-v152 | sha256:be475a9fbe6cfc9c1768c95ebd8f8d83da22b05297498abb7c82f70e6ceea2c1 |
+| chromix-linux-154 | sha256:cf0e51426b6f59769af7486f9e09340387ed69b3ccc33d5a47c792280bdcc730 |
+| firefox-linux-155 | sha256:d9c8c8737dc19f110eac9b7b3676faf01eac2a6925ae3c5aa27f696ad83fca2e |
+
 ## 当前证据
 
 2026-10-03 01:10 UTC：16/24原完整报告accepted（固定12项、自动4项），固定Camoufox的4份正常桌面补验全部通过。TW自动Chromix保留1份输入乱序failed，自动驱动已停止；见DEV-148。尚无24组合完成结论。
@@ -34,4 +44,4 @@ US/TW/JP/CN四个受保护通用指纹，自动/DPR随系统缩放和1920×1080/
 
 相关偏差：[DEV-142](../../docs/deviations/DEV-2026-10-02-142-remote-qa-runtime-user.md)、[143](../../docs/deviations/DEV-2026-10-02-143-remote-reconnect-input.md)、[144](../../docs/deviations/DEV-2026-10-02-144-bidi-initial-document-readiness.md)、[145](../../docs/deviations/DEV-2026-10-02-145-client-dpr-resolution-clamp.md)、[146](../../docs/deviations/DEV-2026-10-02-146-builtin-package-binding.md)、[147](../../docs/deviations/DEV-2026-10-02-147-fixed-camoufox-desktop-evidence.md)、[148](../../docs/deviations/DEV-2026-10-03-148-dynamic-input-order.md)。
 
-私有证据：本机 infra/sealskin/runtime/r6aw-protected-builtins-20261002/，独立机 /srv/r6aw-protected-builtins-20261002/；实时检查点为前者的 live-matrix.json。此前薄镜像传输依赖异机已有精确基础层，不算冷导入；完整三镜像归档已保存在独立机（2,145,164,634字节）；初版校验器混淆OCI索引与配置摘要，正在修正，未宣称冷导入通过。供应商自然动态漂移继续未测，静态代理恢复不替代该项。
+私有证据：本机 infra/sealskin/runtime/r6aw-protected-builtins-20261002/，独立机 /srv/r6aw-protected-builtins-20261002/；实时检查点为前者的 live-matrix.json。此前薄镜像传输依赖异机已有精确基础层，不算冷导入；完整三镜像归档已保存在独立机（2,145,164,634字节）；初版校验器混淆OCI索引与配置摘要，修正后96个文件/93个OCI引用/77个Docker层摘要和关联检查通过；仍未宣称冷导入通过，且该归档对应v5。供应商自然动态漂移继续未测，静态代理恢复不替代该项。
