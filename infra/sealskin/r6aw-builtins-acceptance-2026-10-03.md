@@ -45,3 +45,5 @@ US/TW/JP/CN四个受保护通用指纹，自动/DPR随系统缩放和1920×1080/
 相关偏差：[DEV-142](../../docs/deviations/DEV-2026-10-02-142-remote-qa-runtime-user.md)、[143](../../docs/deviations/DEV-2026-10-02-143-remote-reconnect-input.md)、[144](../../docs/deviations/DEV-2026-10-02-144-bidi-initial-document-readiness.md)、[145](../../docs/deviations/DEV-2026-10-02-145-client-dpr-resolution-clamp.md)、[146](../../docs/deviations/DEV-2026-10-02-146-builtin-package-binding.md)、[147](../../docs/deviations/DEV-2026-10-02-147-fixed-camoufox-desktop-evidence.md)、[148](../../docs/deviations/DEV-2026-10-03-148-dynamic-input-order.md)。
 
 私有证据：本机 infra/sealskin/runtime/r6aw-protected-builtins-20261002/，独立机 /srv/r6aw-protected-builtins-20261002/；实时检查点为前者的 live-matrix.json。此前薄镜像传输依赖异机已有精确基础层，不算冷导入；完整三镜像归档已保存在独立机（2,145,164,634字节）；初版校验器混淆OCI索引与配置摘要，修正后96个文件/93个OCI引用/77个Docker层摘要和关联检查通过；仍未宣称冷导入通过，且该归档对应v5。供应商自然动态漂移继续未测，静态代理恢复不替代该项。
+
+2026-10-03 02:00 UTC检查点：v6已9/24组合accepted、1/4固定Camoufox桌面补验通过，零新增失败。此前v5成功/失败记录保持。v6完整三镜像归档及逐blob/OCI引用检查已通过，独立空Docker存储冷导入正在执行；尚未部署。
