@@ -239,3 +239,5 @@ R6AU维护偏差DEV-133至139现均已解决，完整恢复与生产验收见[R6
 - [DEV-122：列表管理弹窗渐进增强与焦点](DEV-2026-10-02-122-management-list-dialog.md) · R6AC已修复部署。
 
 - [DEV-158 新安装QA输入焦点](DEV-2026-10-03-158-fresh-qa-input-focus.md)：待验证，R6AX保留Camoufox历史未写入失败。
+
+- [DEV-159 发布镜像保留引用](DEV-2026-10-03-159-fresh-image-retention.md)：处理中，按ID冷导入镜像需要防止悬空清理。

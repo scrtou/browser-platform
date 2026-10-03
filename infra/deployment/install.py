@@ -68,6 +68,31 @@ def verify_tree(root):
     return manifest
 
 
+def retain_images(records, name, run):
+    """Keep ID-loaded release images out of dangling-image garbage collection.
+
+    Runtime configuration still uses exact IDs. Never replace a foreign tag.
+    Preflight all tags before adding any references, retaining partial failures.
+    """
+    refs = {}
+    for record in records:
+        image = record['id']
+        if not re.fullmatch(r'sha256:[a-f0-9]{64}', image):
+            raise ValueError('IMAGE_ID_INVALID')
+        tag = 'browser-platform-retained/' + name + ':sha256-' + image[7:]
+        existing = subprocess.check_output(
+            ['docker', 'image', 'ls', '--no-trunc', '--quiet', tag], text=True).split()
+        if existing and set(existing) != {image}:
+            raise ValueError('IMAGE_RETENTION_TAG_CONFLICT')
+        refs[tag] = image
+    for tag, image in refs.items():
+        run(['docker', 'image', 'tag', image, tag])
+        actual = json.loads(subprocess.check_output(['docker', 'image', 'inspect', tag]))[0]
+        if actual['Id'] != image:
+            raise ValueError('IMAGE_RETENTION_VERIFY_FAILED')
+    return refs
+
+
 def origin(value):
     p = urlsplit(value)
     if (p.scheme != 'https' or p.username is not None or p.password is not None
@@ -169,6 +194,7 @@ def install(args):
         subprocess.run([str(x) for x in argv], stdout=log, stderr=subprocess.STDOUT, check=True, timeout=timeout)
     try:
         write(root / 'install-request.json', {k: str(v) if isinstance(v, Path) else v for k,v in vars(args).items()})
+        write(root / 'image-retention.json', retain_images(inputs['images'], args.name, run))
         run(['useradd', '--system', '--user-group', '--home-dir', root, '--no-create-home', '--shell', '/usr/sbin/nologin', '--groups', 'docker', args.user])
         account = pwd.getpwnam(args.user)
         shutil.copytree(args.release, root / 'release')

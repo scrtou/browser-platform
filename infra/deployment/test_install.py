@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 spec = importlib.util.spec_from_file_location('installer', Path(__file__).with_name('install.py'))
 installer = importlib.util.module_from_spec(spec)
@@ -79,5 +79,32 @@ class AdmissionTests(unittest.TestCase):
         m['files']['../outside']=m['files'].pop('deployment/inputs.json')
         (self.release/'release-manifest.json').write_text(json.dumps(m))
         with self.assertRaises(ValueError):installer.verify_tree(self.release)
+
+class ImageRetentionTests(unittest.TestCase):
+    def test_retain_all_exact_images_and_accept_same_id(self):
+        ids = ['sha256:' + c * 64 for c in 'ab']
+        run = Mock()
+        responses = ['', ids[1] + '\n', *[json.dumps([{'Id': i}]) for i in ids]]
+        with patch.object(installer.subprocess, 'check_output', side_effect=responses):
+            refs = installer.retain_images([{'id': i} for i in ids], 'bp-test', run)
+        self.assertEqual(set(refs.values()), set(ids))
+        self.assertEqual(run.call_count, 2)
+        for call in run.call_args_list:
+            argv = call.args[0]
+            self.assertEqual(argv[:3], ['docker', 'image', 'tag'])
+            self.assertEqual(refs[argv[4]], argv[3])
+
+    def test_conflict_preflight_never_mutates_any_tag(self):
+        run = Mock()
+        with patch.object(installer.subprocess, 'check_output', side_effect=['', 'sha256:' + 'c' * 64]):
+            with self.assertRaisesRegex(ValueError, 'IMAGE_RETENTION_TAG_CONFLICT'):
+                installer.retain_images([{'id': 'sha256:' + c * 64} for c in 'ab'], 'bp-test', run)
+        run.assert_not_called()
+
+    def test_mismatched_tag_readback_fails_installation(self):
+        with patch.object(installer.subprocess, 'check_output', side_effect=['', '[{"Id":"wrong"}]']):
+            with self.assertRaisesRegex(ValueError, 'IMAGE_RETENTION_VERIFY_FAILED'):
+                installer.retain_images([{'id': 'sha256:' + 'a' * 64}], 'bp-test', Mock())
+
 
 if __name__=='__main__':unittest.main()
