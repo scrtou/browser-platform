@@ -1,5 +1,7 @@
 # 设计偏差记录
 
+- [DEV-152 1.0遗留维护入口](DEV-2026-10-03-152-v1-source-maintenance-hooks.md)：处理中，工作区已清理但旧部署仍含临时入口，1.0须重新构建和验证。
+
 - [DEV-151 QA产物目录关联](DEV-2026-10-03-151-qa-artifact-directory-binding.md)：已完成R6AW最终24组合、适用补证/包校验及部署；原失败保留。
 
 - [DEV-150 Firefox首次存储探针超时](DEV-2026-10-03-150-firefox-storage-probe-timeout.md)：QA分配修订及本机两项原门槛完整验收通过；异机首次建库超时限制和failed保留。

@@ -1,2 +1,11 @@
 # Local machine access material; never commit credentials.
 /sshkey
+
+# Reproducible caches and local build output.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# The live browser directory contains private history; use deployment examples.
+/infra/sealskin/profiles.json
