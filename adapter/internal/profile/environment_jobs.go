@@ -36,6 +36,9 @@ var (
 // 46.2 that the current Camoufox adapter can honour. Everything else in the
 // generated specification is fixed by the server.
 type EnvironmentJobRequest struct {
+	DisplayMode  string
+	Generation   *GenerationTarget
+	Templates    *TemplateSourceRef
 	Locale       string
 	Languages    []string
 	Timezone     string
@@ -63,17 +66,21 @@ type environmentSpec struct {
 }
 
 type environmentSize struct {
+	Mode              string   `json:"mode,omitempty"`
+	DPRMode           string   `json:"dprMode,omitempty"`
 	Width             int      `json:"width"`
 	Height            int      `json:"height"`
 	DeviceScaleFactor *float64 `json:"deviceScaleFactor,omitempty"`
 }
 
 type environmentJobRequestFile struct {
-	Version     int             `json:"version"`
-	JobID       string          `json:"job_id"`
-	Actor       string          `json:"actor"`
-	RequestedAt string          `json:"requested_at"`
-	Spec        environmentSpec `json:"spec"`
+	Generation  *GenerationTarget  `json:"generation,omitempty"`
+	Templates   *TemplateSourceRef `json:"templates,omitempty"`
+	Version     int                `json:"version"`
+	JobID       string             `json:"job_id"`
+	Actor       string             `json:"actor"`
+	RequestedAt string             `json:"requested_at"`
+	Spec        environmentSpec    `json:"spec"`
 }
 
 type environmentJobStatusFile struct {
@@ -98,25 +105,28 @@ type environmentJobStatusFile struct {
 // generated device values: only the requested high-level fields, the runner's
 // stable codes and the digests of a published result.
 type EnvironmentJobSummary struct {
-	ID               string    `json:"id"`
-	EnvironmentID    string    `json:"environment_id"`
-	Actor            string    `json:"actor"`
-	RequestedAt      string    `json:"requested_at"`
-	Locale           string    `json:"locale"`
-	Languages        []string  `json:"languages"`
-	Timezone         string    `json:"timezone"`
-	Screen           string    `json:"screen"`
-	Window           string    `json:"window"`
-	Status           string    `json:"status"`
-	Phase            string    `json:"phase,omitempty"`
-	Code             string    `json:"code,omitempty"`
-	Message          string    `json:"message,omitempty"`
-	UpdatedAt        string    `json:"updated_at,omitempty"`
-	FinishedAt       string    `json:"finished_at,omitempty"`
-	Attempts         int       `json:"attempts,omitempty"`
-	ArtifactSHA256   string    `json:"artifact_sha256,omitempty"`
-	AcceptanceSHA256 string    `json:"acceptance_sha256,omitempty"`
-	requestedAt      time.Time // for ordering only
+	Generation            *GenerationTarget `json:"generation,omitempty"`
+	FingerprintTemplateID string            `json:"fingerprint_template_id,omitempty"`
+	DisplayPresetID       string            `json:"display_preset_id,omitempty"`
+	ID                    string            `json:"id"`
+	EnvironmentID         string            `json:"environment_id"`
+	Actor                 string            `json:"actor"`
+	RequestedAt           string            `json:"requested_at"`
+	Locale                string            `json:"locale"`
+	Languages             []string          `json:"languages"`
+	Timezone              string            `json:"timezone"`
+	Screen                string            `json:"screen"`
+	Window                string            `json:"window"`
+	Status                string            `json:"status"`
+	Phase                 string            `json:"phase,omitempty"`
+	Code                  string            `json:"code,omitempty"`
+	Message               string            `json:"message,omitempty"`
+	UpdatedAt             string            `json:"updated_at,omitempty"`
+	FinishedAt            string            `json:"finished_at,omitempty"`
+	Attempts              int               `json:"attempts,omitempty"`
+	ArtifactSHA256        string            `json:"artifact_sha256,omitempty"`
+	AcceptanceSHA256      string            `json:"acceptance_sha256,omitempty"`
+	requestedAt           time.Time         // for ordering only
 }
 
 // WithEnvironmentJobs enables custom fingerprint jobs through a private spool
@@ -152,7 +162,14 @@ func validateEnvironmentJob(request EnvironmentJobRequest) (environmentSpec, err
 	if request.ScreenWidth < 640 || request.ScreenWidth > 3840 || request.ScreenHeight < 480 || request.ScreenHeight > 2160 {
 		return fail("screen must be between 640x480 and 3840x2160")
 	}
-	if request.DPR != 1 {
+	auto := request.DisplayMode == "auto"
+	if request.DisplayMode != "" && request.DisplayMode != "fixed" && !auto {
+		return fail("unsupported display mode")
+	}
+	if auto && (request.Generation == nil || request.Templates == nil || request.Templates.DisplayID != builtinDisplayID || request.ScreenWidth != 1280 || request.ScreenHeight != 720 || request.DPR != 0) {
+		return fail("invalid built-in automatic display")
+	}
+	if !auto && request.DPR != 1 {
 		// The verified adapter only covers X11 at DPR 1; refusing keeps the
 		// capability matrix honest instead of publishing an unverified field.
 		return fail("UNSUPPORTED_CAPABILITY: deviceScaleFactor must be 1")
@@ -164,12 +181,25 @@ func validateEnvironmentJob(request EnvironmentJobRequest) (environmentSpec, err
 		return fail("window must fit the screen and be at least 640x480")
 	}
 	dpr := 1.0
+	webrtcPolicy, webrtcCapability := "disabled", "webrtc-disabled"
+	if request.Generation != nil && request.Generation.Engine == "chromix" {
+		webrtcPolicy, webrtcCapability = "proxy-only", "webrtc-proxy-only"
+	}
+	screen := environmentSize{Width: request.ScreenWidth, Height: request.ScreenHeight, DeviceScaleFactor: &dpr}
+	capabilities := []string{"locale", "languages", "timezone", "fixed-screen", "fixed-dpr", "frozen-device-config", webrtcCapability, "proxy-only"}
+	if auto {
+		screen.DeviceScaleFactor = nil
+		screen.Mode = "auto"
+		screen.DPRMode = "system"
+		capabilities[3] = "auto-screen"
+		capabilities[4] = "system-dpr"
+	}
 	return environmentSpec{
 		Revision: 1, OSFamily: "linux", Locale: request.Locale, Languages: append([]string(nil), request.Languages...), Timezone: request.Timezone,
-		Screen:       environmentSize{Width: request.ScreenWidth, Height: request.ScreenHeight, DeviceScaleFactor: &dpr},
+		Screen:       screen,
 		Window:       environmentSize{Width: request.WindowWidth, Height: request.WindowHeight},
-		WebRTCPolicy: "disabled", GeolocationPolicy: "disabled",
-		RequiredCapabilities: []string{"locale", "languages", "timezone", "fixed-screen", "fixed-dpr", "frozen-device-config", "webrtc-disabled", "proxy-only"},
+		WebRTCPolicy: webrtcPolicy, GeolocationPolicy: "disabled",
+		RequiredCapabilities: capabilities,
 	}, nil
 }
 
@@ -202,6 +232,23 @@ func (s *Service) CreateEnvironmentJob(ctx context.Context, actor string, reques
 	if err != nil {
 		return EnvironmentJobSummary{}, err
 	}
+	sourceLock := s.profileLock("__template_sources")
+	sourceLock.Lock()
+	defer sourceLock.Unlock()
+	if request.Templates != nil {
+		for kind, id := range map[string]string{"fingerprints": request.Templates.FingerprintID, "displays": request.Templates.DisplayID} {
+			deleted, err := s.dataDeleted(kind, id)
+			if err != nil {
+				return EnvironmentJobSummary{}, err
+			}
+			if deleted {
+				return EnvironmentJobSummary{}, ErrDataDeleted
+			}
+		}
+	}
+	lock := s.profileLock("__environment_jobs")
+	lock.Lock()
+	defer lock.Unlock()
 	jobs, err := s.EnvironmentJobs()
 	if err != nil {
 		return EnvironmentJobSummary{}, err
@@ -221,46 +268,54 @@ func (s *Service) CreateEnvironmentJob(ctx context.Context, actor string, reques
 	}
 	jobID := "job-" + random[:16]
 	spec.ID = "env-custom-" + random[:16]
-	file := environmentJobRequestFile{Version: environmentJobRequestVersion, JobID: jobID, Actor: actor, RequestedAt: s.now().UTC().Format(time.RFC3339Nano), Spec: spec}
-	encoded, err := json.Marshal(file)
-	if err != nil {
-		return EnvironmentJobSummary{}, err
+	version := environmentJobRequestVersion
+	if request.Templates != nil {
+		version = 2
 	}
+	if request.Generation != nil {
+		targets, err := s.generationTargets(ctx)
+		if err != nil {
+			return EnvironmentJobSummary{}, err
+		}
+		valid := false
+		for _, target := range targets {
+			if target == *request.Generation {
+				valid = true
+			}
+		}
+		if request.Templates == nil || !valid {
+			return EnvironmentJobSummary{}, ErrEnvironmentJobInvalid
+		}
+		version = 3
+	}
+	file := environmentJobRequestFile{Generation: request.Generation, Templates: request.Templates, Version: version, JobID: jobID, Actor: actor, RequestedAt: s.now().UTC().Format(time.RFC3339Nano), Spec: spec}
 	queue := filepath.Join(s.jobSpool, "queue")
-	if err := os.MkdirAll(queue, 0o700); err != nil {
+	if err := os.MkdirAll(queue, 0700); err != nil {
 		return EnvironmentJobSummary{}, err
 	}
-	path := filepath.Join(queue, jobID+".json")
-	handle, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return EnvironmentJobSummary{}, fmt.Errorf("enqueue environment job: %w", err)
+	info, err := os.Lstat(queue)
+	if err != nil || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
+		return EnvironmentJobSummary{}, ErrEnvironmentJobsUnavailable
 	}
-	if _, err := handle.Write(append(encoded, '\n')); err != nil {
-		handle.Close()
-		os.Remove(path)
+	if err := writeNewTemplate(filepath.Join(queue, jobID+".json"), file); err != nil {
 		return EnvironmentJobSummary{}, err
-	}
-	if err := handle.Sync(); err != nil {
-		handle.Close()
-		os.Remove(path)
-		return EnvironmentJobSummary{}, err
-	}
-	if err := handle.Close(); err != nil {
-		os.Remove(path)
-		return EnvironmentJobSummary{}, err
-	}
-	if dir, err := os.Open(queue); err == nil {
-		_ = dir.Sync()
-		dir.Close()
 	}
 	return summarizeEnvironmentJob(file, nil), nil
 }
 
 func summarizeEnvironmentJob(request environmentJobRequestFile, status *environmentJobStatusFile) EnvironmentJobSummary {
-	summary := EnvironmentJobSummary{ID: request.JobID, EnvironmentID: request.Spec.ID, Actor: request.Actor, RequestedAt: request.RequestedAt,
+	summary := EnvironmentJobSummary{Generation: request.Generation, ID: request.JobID, EnvironmentID: request.Spec.ID, Actor: request.Actor, RequestedAt: request.RequestedAt,
 		Locale: request.Spec.Locale, Languages: append([]string(nil), request.Spec.Languages...), Timezone: request.Spec.Timezone,
 		Screen: fmt.Sprintf("%dx%d@1", request.Spec.Screen.Width, request.Spec.Screen.Height),
 		Window: fmt.Sprintf("%dx%d", request.Spec.Window.Width, request.Spec.Window.Height), Status: "queued"}
+	if request.Spec.Screen.Mode == "auto" {
+		summary.Screen = "auto@system"
+		summary.Window = "auto"
+	}
+	if request.Templates != nil {
+		summary.FingerprintTemplateID = request.Templates.FingerprintID
+		summary.DisplayPresetID = request.Templates.DisplayID
+	}
 	summary.requestedAt, _ = time.Parse(time.RFC3339Nano, request.RequestedAt)
 	if status != nil {
 		summary.Status, summary.Phase, summary.Code, summary.Message = status.Status, status.Phase, status.Code, status.Message
@@ -314,8 +369,15 @@ func (s *Service) EnvironmentJobs() ([]EnvironmentJobSummary, error) {
 		if !jobIDForm.MatchString(name) || entry.Name() == name {
 			continue
 		}
+		deleted, err := s.dataDeleted("jobs", name)
+		if err != nil {
+			return nil, err
+		}
+		if deleted {
+			continue
+		}
 		var request environmentJobRequestFile
-		if err := readPrivateJSON(filepath.Join(s.jobSpool, "queue", entry.Name()), 64<<10, &request); err != nil || request.Version != environmentJobRequestVersion || request.JobID != name {
+		if err := readPrivateJSON(filepath.Join(s.jobSpool, "queue", entry.Name()), 64<<10, &request); err != nil || (request.Version != environmentJobRequestVersion && request.Version != 2 && request.Version != 3) || request.JobID != name {
 			continue
 		}
 		var status *environmentJobStatusFile

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -89,8 +90,8 @@ func TestManagementListOnlyContainsGrantedProfilesAndNoCapabilities(t *testing.T
 	if !strings.Contains(body, `action="/manage/browsers/personal"`) || !strings.Contains(body, `name="revision" value="3"`) || !strings.Contains(body, `value="https://start.example/"`) || !strings.Contains(body, "安全关闭") {
 		t.Fatalf("page lacks the management forms: %s", body)
 	}
-	if strings.Contains(body, "<script") || !strings.Contains(page.Header().Get("Content-Security-Policy"), "default-src 'none'") || page.Header().Get("Cache-Control") != "no-store" {
-		t.Fatalf("page must be script-free and uncacheable: %v", page.Header())
+	if !strings.Contains(body, "<script nonce=") || !strings.Contains(page.Header().Get("Content-Security-Policy"), "script-src 'nonce-") || page.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("page must use nonce scripts and be uncacheable: %v", page.Header())
 	}
 	if strings.Contains(body, "camoufox-work") || strings.Contains(body, "/browser/work/") || strings.Contains(body, "retired") || strings.Contains(body, strings.Repeat("b", 64)) {
 		t.Fatalf("page exposed ungranted Profiles or a full digest: %s", body)
@@ -140,10 +141,18 @@ type fakeBrowserManager struct {
 	deleteID      string
 	deleteActor   string
 	deleteKey     string
+	templateApply []string
+	templateRoll  []int
+	templateErr   error
+	records       []profile.Record
 }
 
 func (f *fakeBrowserManager) ManagementCapabilities() profile.ManagementCapabilities {
 	return f.capabilities
+}
+
+func (f *fakeBrowserManager) Records() []profile.Record {
+	return append([]profile.Record(nil), f.records...)
 }
 
 func (f *fakeBrowserManager) CreateBrowser(_ context.Context, request profile.CreateBrowserRequest, actor, key string) (profile.Record, error) {
@@ -158,6 +167,26 @@ func (f *fakeBrowserManager) DeleteBrowser(_ context.Context, id, actor, key str
 
 func (f *fakeBrowserManager) EnvironmentArtifacts(context.Context) ([]profile.EnvironmentArtifactSummary, error) {
 	return []profile.EnvironmentArtifactSummary{{ID: "env-r9", SHA256: strings.Repeat("a", 64), Source: "frozen"}}, nil
+}
+
+func (f *fakeBrowserManager) CompatibleTemplates(context.Context) ([]profile.CompatibleTemplateSummary, error) {
+	return []profile.CompatibleTemplateSummary{{BrowserTemplateID: "camoufox-linux", BrowserTemplateRevision: 1, BrowserLabel: "Camoufox", Engine: "camoufox", EnvironmentArtifactID: "env-r9", EnvironmentRevision: 1, DisplayTemplateID: "fixed-1920", DisplayTemplateRevision: 1, DisplayLabel: "固定指纹 1920×1080", DisplayServer: "x11", Transport: "selkies", Screen: "1920x1080@1", Scaling: "fixed", AllowNewBrowsers: true}}, nil
+}
+
+func (f *fakeBrowserManager) ApplyBrowserTemplate(_ context.Context, id string, revision int, browser, artifact, display, actor, key string) (profile.Record, error) {
+	f.templateApply = append(f.templateApply, strings.Join([]string{id, strconv.Itoa(revision), browser, artifact, display, actor, key}, "/"))
+	if f.templateErr != nil {
+		return profile.Record{}, f.templateErr
+	}
+	return profile.Record{Definition: profile.Definition{ID: id, BrowserTemplateID: browser, BrowserTemplateRevision: 1, EnvironmentArtifactID: artifact, EnvironmentTemplateRevision: 1, DisplayTemplateID: display, DisplayTemplateRevision: 1}, Revision: revision + 2, Status: profile.RecordReady}, nil
+}
+
+func (f *fakeBrowserManager) RollbackBrowserTemplate(_ context.Context, id string, revision, target int, actor, key string) (profile.Record, error) {
+	f.templateRoll = append(f.templateRoll, target)
+	if f.templateErr != nil {
+		return profile.Record{}, f.templateErr
+	}
+	return profile.Record{Definition: profile.Definition{ID: id, BrowserTemplateID: "camoufox-linux", BrowserTemplateRevision: 1, EnvironmentArtifactID: "env-r9", EnvironmentTemplateRevision: 1, DisplayTemplateID: "fixed-1920", DisplayTemplateRevision: 1}, Revision: revision + 2, Status: profile.RecordReady}, nil
 }
 
 type fakeProxyDrafts struct {
@@ -237,7 +266,7 @@ func TestManagementProxyDraftFormsNeverEchoCredentials(t *testing.T) {
 	page = httptest.NewRecorder()
 	server.ServeHTTP(page, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/?notice=draft_created", nil), "root", grants))
 	body := page.Body.String()
-	if !strings.Contains(body, "草稿 socks5://proxy.example.net:1080") || !strings.Contains(body, `name="draft_id" value="draft-1"`) || strings.Contains(body, "draft-secret-sentinel") || strings.Contains(body, "proxy_apply") {
+	if !strings.Contains(body, "草稿 socks5://proxy.example.net:1080") || !strings.Contains(body, `name="draft_id" value="draft-1"`) || strings.Contains(body, "draft-secret-sentinel") || strings.Contains(body, `value="proxy_apply"`) {
 		t.Fatalf("page with pending draft: %s", body)
 	}
 	response = httptest.NewRecorder()
@@ -332,7 +361,7 @@ func TestManagementEnvironmentJobsFormListAndCatalogSelect(t *testing.T) {
 	page := httptest.NewRecorder()
 	server.ServeHTTP(page, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/", nil), "root", grants))
 	body := page.Body.String()
-	for _, want := range []string{`<select name="environment_artifact_id"`, `env-custom-0123456789abcdef · en-US · America/New_York · 1920x1080@1 · custom`, "指纹作业"} {
+	for _, want := range []string{`<select name="environment_artifact_id"`, "暂无已验收的指纹组合", "指纹数据"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("page lacks %q: %s", want, body)
 		}
@@ -350,7 +379,7 @@ func TestManagementEnvironmentJobsFormListAndCatalogSelect(t *testing.T) {
 	}
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, manageForm(url.Values{"locale": {"en-US"}, "languages": {" en-US, en "}, "timezone": {"America/New_York"}, "screen_width": {"1920"}, "screen_height": {"1080"}, "dpr": {"1"}, "window_width": {"1600"}, "window_height": {"900"}}, "root", grants, "https://adapter.example/manage/environment-jobs"))
-	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/manage/?tab=jobs&notice=job_created" || len(profiles.requests) != 1 || profiles.actors[0] != "root" {
+	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/manage/?tab=fingerprint-data&section=combinations&notice=job_created" || len(profiles.requests) != 1 || profiles.actors[0] != "root" {
 		t.Fatalf("create: %d %s requests=%+v", response.Code, response.Header().Get("Location"), profiles.requests)
 	}
 	got := profiles.requests[0]
@@ -365,13 +394,13 @@ func TestManagementEnvironmentJobsFormListAndCatalogSelect(t *testing.T) {
 	profiles.createErr = profile.ErrEnvironmentJobInvalid
 	response = httptest.NewRecorder()
 	server.ServeHTTP(response, manageForm(url.Values{"locale": {"x"}, "languages": {"x"}, "timezone": {"UTC"}, "screen_width": {"abc"}, "screen_height": {"1080"}, "dpr": {"1"}}, "root", grants, "https://adapter.example/manage/environment-jobs"))
-	if response.Header().Get("Location") != "/manage/?tab=jobs&notice=job_invalid" || profiles.requests[2].ScreenWidth != -1 {
+	if response.Header().Get("Location") != "/manage/?tab=fingerprint-data&section=combinations&notice=job_invalid" || profiles.requests[2].ScreenWidth != -1 {
 		t.Fatalf("invalid: %s %+v", response.Header().Get("Location"), profiles.requests[2])
 	}
 	profiles.createErr = profile.ErrEnvironmentJobsBusy
 	response = httptest.NewRecorder()
 	server.ServeHTTP(response, manageForm(url.Values{"locale": {"en-US"}, "languages": {"en-US"}, "timezone": {"UTC"}, "screen_width": {"1920"}, "screen_height": {"1080"}, "dpr": {"1"}}, "root", grants, "https://adapter.example/manage/environment-jobs"))
-	if response.Header().Get("Location") != "/manage/?tab=jobs&notice=job_busy" {
+	if response.Header().Get("Location") != "/manage/?tab=fingerprint-data&section=combinations&notice=job_busy" {
 		t.Fatalf("busy: %s", response.Header().Get("Location"))
 	}
 	list := httptest.NewRecorder()
@@ -399,12 +428,12 @@ func TestManagementEnvironmentJobsFormListAndCatalogSelect(t *testing.T) {
 
 func TestManagementCreatesDeletesAndListsFixedArtifacts(t *testing.T) {
 	base := &fakeProfiles{environments: map[string]profile.EnvironmentSummary{"personal": sampleSummary("personal")}, stopResult: profile.LifecycleResult{Status: state.StatusStopped}}
-	profiles := &fakeBrowserManager{fakeProfiles: base, capabilities: profile.ManagementCapabilities{CreateDelete: true}}
+	profiles := &fakeBrowserManager{fakeProfiles: base, capabilities: profile.ManagementCapabilities{CreateDelete: true, TemplateCatalog: true}}
 	server := New(profiles, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})
 	grants := []access.Grant{{Profile: "personal", Capabilities: []string{"view", "manage", "stop"}}}
 	created := httptest.NewRecorder()
 	server.ServeHTTP(created, manageForm(url.Values{
-		"label": {"新浏览器"}, "start_url": {"https://start.example/"}, "environment_artifact_id": {"env-r9"},
+		"label": {"新浏览器"}, "start_url": {"https://start.example/"}, "browser_template_id": {"camoufox-linux"}, "environment_artifact_id": {"env-r9"},
 		"network_mode": {"direct"}, "network_policy_id": {"direct-r1"}, "network_policy_sha256": {strings.Repeat("c", 64)},
 		"idempotency_key": {"create-1"},
 	}, "root", grants, "https://adapter.example/manage/browsers"))
@@ -420,6 +449,195 @@ func TestManagementCreatesDeletesAndListsFixedArtifacts(t *testing.T) {
 	server.ServeHTTP(catalog, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/environments/catalog", nil), "root", grants))
 	if catalog.Code != http.StatusOK || !strings.Contains(catalog.Body.String(), `"id":"env-r9"`) || strings.Contains(catalog.Body.String(), "image") {
 		t.Fatalf("catalog: %d %s", catalog.Code, catalog.Body.String())
+	}
+}
+
+func TestManagementCreateBrowserUsesAcceptedHighLevelSelections(t *testing.T) {
+	base := &fakeProfiles{environments: map[string]profile.EnvironmentSummary{"personal": sampleSummary("personal")}}
+	manager := &fakeBrowserManager{fakeProfiles: base, capabilities: profile.ManagementCapabilities{
+		CreateDelete: true, TemplateCatalog: true, NetworkProfiles: true, ManagedDirect: true,
+	}}
+	profiles := &fakeNetworkProfiles{fakeBrowserManager: manager, profiles: []profile.NetworkProfileRevisionSummary{
+		{ID: "public", Label: "无认证代理", Revision: 2, Status: profile.NetworkRevisionAccepted, Protocol: "socks5", Auth: "none", Host: "proxy.public.example", Port: 1080},
+		{ID: "private", Label: "认证代理", Revision: 4, Status: profile.NetworkRevisionAccepted, Protocol: "socks5", Auth: "username_password", Host: "proxy.private.example", Port: 1080, AllowedProfiles: []string{"personal"}},
+	}}
+	server := New(profiles, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})
+	grants := []access.Grant{{Profile: "personal", Capabilities: []string{"view", "manage"}}}
+
+	page := httptest.NewRecorder()
+	server.ServeHTTP(page, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/", nil), "root", grants))
+	body := page.Body.String()
+	for _, want := range []string{
+		`name="browser_template_id"`, `name="environment_artifact_id"`, `value="camoufox-linux"`, `value="env-r9"`, `data-display="固定指纹 1920×1080"`,
+		`name="network_selection"`, `value="direct"`, `value="proxy|public|2"`, `value="proxy|private|4"`,
+		`name="action" value="network_select"`, `id="network-selection-personal"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("managed browser form missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, `id="cb-network-policy-id"`) || strings.Contains(body, `id="cb-network-policy-sha"`) {
+		t.Fatalf("create form exposed unauthorized/raw policy selection: %s", body)
+	}
+
+	direct := httptest.NewRecorder()
+	server.ServeHTTP(direct, manageForm(url.Values{
+		"label": {"新浏览器"}, "start_url": {"https://start.example/"}, "idempotency_key": {"create-managed-direct"},
+		"browser_template_id": {"camoufox-linux"}, "environment_artifact_id": {"env-r9"}, "network_selection": {"direct"},
+	}, "root", grants, "https://adapter.example/manage/browsers"))
+	if direct.Code != http.StatusSeeOther || manager.createRequest.BrowserTemplateID != "camoufox-linux" ||
+		manager.createRequest.EnvironmentArtifactID != "env-r9" || manager.createRequest.DisplayTemplateID != "fixed-1920" ||
+		manager.createRequest.NetworkMode != "direct" || manager.createRequest.NetworkPolicyID != "" || manager.createRequest.NetworkPolicySHA256 != "" {
+		t.Fatalf("managed DIRECT create request: status=%d request=%+v", direct.Code, manager.createRequest)
+	}
+
+	proxy := httptest.NewRecorder()
+	server.ServeHTTP(proxy, manageForm(url.Values{
+		"label": {"代理浏览器"}, "start_url": {"https://start.example/"}, "idempotency_key": {"create-managed-proxy"},
+		"browser_template_id": {"camoufox-linux"}, "environment_artifact_id": {"env-r9"}, "network_selection": {"proxy|private|4"},
+	}, "root", grants, "https://adapter.example/manage/browsers"))
+	if proxy.Code != http.StatusSeeOther || manager.createRequest.NetworkMode != "proxy_required" ||
+		manager.createRequest.NetworkProfileID != "private" || manager.createRequest.NetworkProfileRevision != 4 ||
+		manager.createRequest.NetworkPolicyID != "" || manager.createRequest.NetworkPolicySHA256 != "" {
+		t.Fatalf("managed proxy create request: status=%d request=%+v", proxy.Code, manager.createRequest)
+	}
+
+	manager.createKey = ""
+	raw := httptest.NewRecorder()
+	server.ServeHTTP(raw, manageForm(url.Values{
+		"label": {"坏请求"}, "start_url": {"https://start.example/"}, "idempotency_key": {"raw-policy"},
+		"browser_template_id": {"camoufox-linux"}, "environment_artifact_id": {"env-r9"}, "network_selection": {"direct"},
+		"network_policy_id": {"client-policy"}, "network_policy_sha256": {strings.Repeat("a", 64)},
+	}, "root", grants, "https://adapter.example/manage/browsers"))
+	if raw.Header().Get("Location") != "/manage/?notice=invalid" || manager.createKey != "" {
+		t.Fatalf("raw policy fields reached managed create: location=%q key=%q request=%+v", raw.Header().Get("Location"), manager.createKey, manager.createRequest)
+	}
+}
+
+func TestManagementListsOnlyValidatedTemplateCombinationsWhenEnabled(t *testing.T) {
+	base := &fakeProfiles{environments: map[string]profile.EnvironmentSummary{"personal": sampleSummary("personal")}}
+	profiles := &fakeBrowserManager{fakeProfiles: base, capabilities: profile.ManagementCapabilities{TemplateCatalog: true}}
+	server := New(profiles, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})
+	grants := []access.Grant{{Profile: "personal", Capabilities: []string{"view", "manage"}}}
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/templates", nil), "root", grants))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"browser_template_id":"camoufox-linux"`) || !strings.Contains(response.Body.String(), `"display_template_id":"fixed-1920"`) || strings.Contains(response.Body.String(), "user_agent") {
+		t.Fatalf("template catalog: %d %s", response.Code, response.Body.String())
+	}
+	profiles.capabilities.TemplateCatalog = false
+	hidden := httptest.NewRecorder()
+	server.ServeHTTP(hidden, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/templates", nil), "root", grants))
+	if hidden.Code != http.StatusNotFound {
+		t.Fatalf("disabled template catalog exposed: %d", hidden.Code)
+	}
+}
+
+func TestManagementTemplateApplyAndRollbackRequireManagedCapability(t *testing.T) {
+	base := &fakeProfiles{environments: map[string]profile.EnvironmentSummary{"personal": sampleSummary("personal")}}
+	profiles := &fakeBrowserManager{fakeProfiles: base, capabilities: profile.ManagementCapabilities{TemplateCatalog: true}}
+	server := New(profiles, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})
+	grants := []access.Grant{{Profile: "personal", Capabilities: []string{"view", "manage"}}}
+	target := "https://adapter.example/manage/browsers/personal/template"
+
+	apply := httptest.NewRecorder()
+	server.ServeHTTP(apply, manageForm(url.Values{
+		"action": {"apply"}, "browser_revision": {"3"}, "browser_template_id": {"camoufox-linux"},
+		"environment_artifact_id": {"env-r9"}, "display_template_id": {"fixed-1920"}, "idempotency_key": {"template-1"},
+	}, "root", grants, target))
+	if apply.Code != http.StatusOK || len(profiles.templateApply) != 1 || profiles.templateApply[0] != "personal/3/camoufox-linux/env-r9/fixed-1920/root/template-1" || !strings.Contains(apply.Body.String(), `"revision":5`) {
+		t.Fatalf("template apply: %d %s calls=%v", apply.Code, apply.Body.String(), profiles.templateApply)
+	}
+
+	rollback := httptest.NewRecorder()
+	server.ServeHTTP(rollback, manageForm(url.Values{
+		"action": {"rollback"}, "browser_revision": {"5"}, "target_revision": {"3"}, "idempotency_key": {"template-rb"},
+	}, "root", grants, target))
+	if rollback.Code != http.StatusOK || len(profiles.templateRoll) != 1 || profiles.templateRoll[0] != 3 || !strings.Contains(rollback.Body.String(), `"revision":7`) {
+		t.Fatalf("template rollback: %d %s calls=%v", rollback.Code, rollback.Body.String(), profiles.templateRoll)
+	}
+
+	profiles.templateErr = profile.ErrBrowserBusy
+	busy := httptest.NewRecorder()
+	server.ServeHTTP(busy, manageForm(url.Values{
+		"action": {"apply"}, "browser_revision": {"7"}, "browser_template_id": {"camoufox-linux"},
+		"environment_artifact_id": {"env-r9"}, "display_template_id": {"fixed-1920"}, "idempotency_key": {"template-busy"},
+	}, "root", grants, target))
+	if busy.Code != http.StatusConflict {
+		t.Fatalf("busy template apply status=%d body=%s", busy.Code, busy.Body.String())
+	}
+
+	profiles.capabilities.TemplateCatalog = false
+	hidden := httptest.NewRecorder()
+	server.ServeHTTP(hidden, manageForm(url.Values{"action": {"apply"}, "browser_revision": {"7"}, "idempotency_key": {"x"}}, "root", grants, target))
+	if hidden.Code != http.StatusNotFound {
+		t.Fatalf("disabled template mutation exposed: %d", hidden.Code)
+	}
+}
+
+func TestManagementTemplatePageUsesAcceptedCombinationAndHistoryPRG(t *testing.T) {
+	summary := sampleSummary("personal")
+	summary.Revision = 5
+	base := &fakeProfiles{environments: map[string]profile.EnvironmentSummary{"personal": summary}}
+	manager := &fakeBrowserManager{fakeProfiles: base, capabilities: profile.ManagementCapabilities{TemplateCatalog: true}}
+	manager.records = []profile.Record{{
+		Definition: profile.Definition{ID: "personal", BrowserTemplateID: "camoufox-linux", EnvironmentArtifactID: "env-r9", DisplayTemplateID: "fixed-1920"},
+		Revision:   5, Status: profile.RecordReady, TemplateHistory: []profile.TemplateRevisionSnapshot{{
+			ProfileRevision: 3, Binding: profile.TemplateBinding{BrowserTemplateID: "camoufox-linux", EnvironmentArtifactID: "env-old", DisplayTemplateID: "fixed-old"},
+		}},
+	}}
+	server := New(manager, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})
+	grants := []access.Grant{{Profile: "personal", Capabilities: []string{"view", "manage"}}}
+
+	page := httptest.NewRecorder()
+	server.ServeHTTP(page, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/", nil), "root", grants))
+	body := page.Body.String()
+	for _, want := range []string{"浏览器 / 指纹 / 显示模板（停止后应用）", `name="browser_template_id"`, `name="environment_artifact_id"`, `name="display_template_id"`, `value="camoufox-linux"`, `value="env-r9"`, `value="fixed-1920"`, "可回退历史", `name="target_revision" value="3"`, "camoufox-linux · env-old · fixed-old"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("template page missing %q: %s", want, body)
+		}
+	}
+
+	apply := httptest.NewRecorder()
+	server.ServeHTTP(apply, manageForm(url.Values{
+		"return_to": {"browsers"}, "action": {"apply"}, "browser_revision": {"5"},
+		"browser_template_id": {"camoufox-linux"}, "environment_artifact_id": {"env-r9"}, "display_template_id": {"fixed-1920"}, "idempotency_key": {"ui-template-apply"},
+	}, "root", grants, "https://adapter.example/manage/browsers/personal/template"))
+	if apply.Code != http.StatusSeeOther || apply.Header().Get("Location") != "/manage/?notice=template_applied" || len(manager.templateApply) != 1 || manager.templateApply[0] != "personal/5/camoufox-linux/env-r9/fixed-1920/root/ui-template-apply" {
+		t.Fatalf("template UI apply: code=%d location=%q calls=%v", apply.Code, apply.Header().Get("Location"), manager.templateApply)
+	}
+
+	rollback := httptest.NewRecorder()
+	server.ServeHTTP(rollback, manageForm(url.Values{
+		"return_to": {"browsers"}, "action": {"rollback"}, "browser_revision": {"5"}, "target_revision": {"3"}, "idempotency_key": {"ui-template-rollback"},
+	}, "root", grants, "https://adapter.example/manage/browsers/personal/template"))
+	if rollback.Code != http.StatusSeeOther || rollback.Header().Get("Location") != "/manage/?notice=template_rolled_back" || len(manager.templateRoll) != 1 || manager.templateRoll[0] != 3 {
+		t.Fatalf("template UI rollback: code=%d location=%q calls=%v", rollback.Code, rollback.Header().Get("Location"), manager.templateRoll)
+	}
+}
+
+type fakeEmptyTemplateCatalog struct{ *fakeNetworkProfiles }
+
+func (f *fakeEmptyTemplateCatalog) CompatibleTemplates(context.Context) ([]profile.CompatibleTemplateSummary, error) {
+	return nil, nil
+}
+
+func TestManagementCreateFailsClosedWithoutAcceptedCatalogChoices(t *testing.T) {
+	base := &fakeProfiles{environments: map[string]profile.EnvironmentSummary{"personal": sampleSummary("personal")}}
+	manager := &fakeEmptyTemplateCatalog{&fakeNetworkProfiles{fakeBrowserManager: &fakeBrowserManager{fakeProfiles: base, capabilities: profile.ManagementCapabilities{CreateDelete: true, TemplateCatalog: true, NetworkProfiles: true}}}}
+	server := New(manager, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})
+	grants := []access.Grant{{Profile: "personal", Capabilities: []string{"view", "manage"}}}
+	page := httptest.NewRecorder()
+	server.ServeHTTP(page, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/", nil), "root", grants))
+	body := page.Body.String()
+	for _, expected := range []string{"暂无已验收的指纹组合", "当前没有可供新浏览器使用的受管理网络配置", "disabled>新增浏览器"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("create form did not fail closed without catalog choices: missing %q", expected)
+		}
+	}
+	for _, forbidden := range []string{`id="cb-env-artifact"`, `id="cb-display-template"`, `name="network_policy_id"`, `name="network_policy_sha256"`} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("catalog-enabled form exposed legacy input %q", forbidden)
+		}
 	}
 }
 
@@ -541,6 +759,159 @@ type fakeFullManagementService struct {
 	jobsErr error
 }
 
+type fakeNetworkProfiles struct {
+	*fakeBrowserManager
+	profiles       []profile.NetworkProfileRevisionSummary
+	lastCreate     profile.NetworkProfileDraftRequest
+	lastActor      string
+	lastProbe      string
+	lastMutation   string
+	lastBind       string
+	operationError error
+}
+
+func (f *fakeNetworkProfiles) NetworkProfiles() ([]profile.NetworkProfileRevisionSummary, error) {
+	return append([]profile.NetworkProfileRevisionSummary(nil), f.profiles...), f.operationError
+}
+
+func (f *fakeNetworkProfiles) CreateNetworkProfileDraft(_ context.Context, actor string, request profile.NetworkProfileDraftRequest) (profile.NetworkProfileRevisionSummary, error) {
+	f.lastCreate, f.lastActor = request, actor
+	if f.operationError != nil {
+		return profile.NetworkProfileRevisionSummary{}, f.operationError
+	}
+	return profile.NetworkProfileRevisionSummary{ID: request.ID, Label: request.Label, Revision: 1, Status: profile.NetworkRevisionPending,
+		Protocol: request.Protocol, Auth: request.Auth, Host: request.Host, Port: request.Port, DraftID: "draft-catalog-1"}, nil
+}
+
+func (f *fakeNetworkProfiles) ProbeNetworkProfileDraft(_ context.Context, id, draftID, actor string) (profile.NetworkProfileRevisionSummary, error) {
+	f.lastProbe, f.lastActor = id+"/"+draftID, actor
+	return profile.NetworkProfileRevisionSummary{ID: id, Revision: 1, Status: profile.NetworkRevisionAccepted}, f.operationError
+}
+
+func (f *fakeNetworkProfiles) DisableNetworkProfile(id string, revision int, actor, key string) (profile.NetworkProfileRevisionSummary, error) {
+	f.lastMutation, f.lastActor = "disable/"+id+"/"+strconv.Itoa(revision)+"/"+key, actor
+	return profile.NetworkProfileRevisionSummary{ID: id, Revision: revision, Status: profile.NetworkRevisionDisabled}, f.operationError
+}
+
+func (f *fakeNetworkProfiles) RevokeNetworkProfile(_ context.Context, id string, revision int, actor, key string) (profile.NetworkProfileRevisionSummary, error) {
+	f.lastMutation, f.lastActor = "revoke/"+id+"/"+strconv.Itoa(revision)+"/"+key, actor
+	return profile.NetworkProfileRevisionSummary{ID: id, Revision: revision, Status: profile.NetworkRevisionRevoked}, f.operationError
+}
+
+func (f *fakeNetworkProfiles) BindNetworkProfile(_ context.Context, browserID string, browserRevision int, networkID string, networkRevision int, actor, key string) (profile.Record, error) {
+	f.lastBind, f.lastActor = strings.Join([]string{browserID, strconv.Itoa(browserRevision), networkID, strconv.Itoa(networkRevision), key}, "/"), actor
+	return profile.Record{Definition: profile.Definition{ID: browserID, NetworkProfileID: networkID, NetworkProfileRevision: networkRevision}, Revision: browserRevision + 1}, f.operationError
+}
+
+func TestNetworkProfileManagementAPIIsCapabilityGatedAndRedacted(t *testing.T) {
+	base := &fakeProfiles{environments: map[string]profile.EnvironmentSummary{"personal": sampleSummary("personal")}}
+	profiles := &fakeNetworkProfiles{fakeBrowserManager: &fakeBrowserManager{fakeProfiles: base,
+		capabilities: profile.ManagementCapabilities{CreateDelete: true, ProxyDrafts: true, NetworkProfiles: true}},
+		profiles: []profile.NetworkProfileRevisionSummary{{ID: "corp", Label: "公司代理", Revision: 1, Status: profile.NetworkRevisionAccepted,
+			Protocol: "socks5", Auth: "username_password", Host: "proxy.example.net", Port: 1080, References: 1}}}
+	server := New(profiles, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})
+	grants := []access.Grant{{Profile: "personal", Capabilities: []string{"view", "manage"}}}
+
+	list := httptest.NewRecorder()
+	server.ServeHTTP(list, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/network-profiles", nil), "root", grants))
+	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), `"id":"corp"`) || strings.Contains(list.Body.String(), "secret://") {
+		t.Fatalf("network profile list: %d %s", list.Code, list.Body.String())
+	}
+	values := url.Values{"action": {"create"}, "id": {"corp"}, "label": {"公司代理"}, "idempotency_key": {"create-corp-2"},
+		"protocol": {"socks5"}, "auth": {"username_password"}, "host": {"proxy.example.net"}, "port": {"1080"},
+		"username": {"sensitive-user"}, "password": {"sensitive-password"}}
+	created := httptest.NewRecorder()
+	server.ServeHTTP(created, manageForm(values, "root", grants, "https://adapter.example/manage/network-profiles"))
+	if created.Code != http.StatusCreated || profiles.lastCreate.Password != "sensitive-password" || profiles.lastCreate.IdempotencyKey != "create-corp-2" ||
+		strings.Contains(created.Body.String(), "sensitive") {
+		t.Fatalf("network profile create: %d %s request=%+v", created.Code, created.Body.String(), profiles.lastCreate)
+	}
+
+	profiles.capabilities.NetworkProfiles = false
+	hidden := httptest.NewRecorder()
+	server.ServeHTTP(hidden, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/network-profiles", nil), "root", grants))
+	if hidden.Code != http.StatusNotFound {
+		t.Fatalf("disabled network API was advertised: %d", hidden.Code)
+	}
+}
+
+func TestManagementNetworkTabIsCapabilityGatedRedactedAndUsesExistingAPI(t *testing.T) {
+	base := &fakeProfiles{environments: map[string]profile.EnvironmentSummary{"personal": sampleSummary("personal")}}
+	probeAt := time.Date(2026, 9, 23, 9, 30, 0, 0, time.UTC)
+	profiles := &fakeNetworkProfiles{fakeBrowserManager: &fakeBrowserManager{fakeProfiles: base,
+		capabilities: profile.ManagementCapabilities{CreateDelete: true, ProxyDrafts: true, NetworkProfiles: true}},
+		profiles: []profile.NetworkProfileRevisionSummary{
+			{ID: "corp", Label: "公司代理", Revision: 3, Status: profile.NetworkRevisionAccepted, Protocol: "socks5", Auth: "username_password", Host: "proxy.secret.example.net", Port: 1080, ProbeCode: "PROXY_PROBE_OK", ProbeAt: &probeAt, References: 2},
+			{ID: "lab", Label: "实验代理", Revision: 2, Status: profile.NetworkRevisionDisabled, Protocol: "https", Auth: "basic", Host: "203.0.113.77", Port: 8443, References: 0},
+		}}
+	server := New(profiles, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})
+	grants := []access.Grant{{Profile: "personal", Capabilities: []string{"view", "manage"}}}
+
+	page := httptest.NewRecorder()
+	server.ServeHTTP(page, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/?tab=network", nil), "root", grants))
+	if page.Code != http.StatusOK {
+		t.Fatalf("network tab: %d %s", page.Code, page.Body.String())
+	}
+	body := page.Body.String()
+	for _, want := range []string{
+		`href="/manage/?tab=network" class="tab-item active" aria-current="page"`,
+		`<section class="section-network"`, `action="/manage/network-profiles"`, `name="return_to" value="network"`,
+		"公司代理", "corp · r3", "socks5 · username_password", "p….example.net:1080", "PROXY_PROBE_OK", "2026-09-23T09:30:00Z", "2 个浏览器",
+		"实验代理", "203.0.x.x:8443", `name="action" value="revoke"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("network tab missing %q: %s", want, body)
+		}
+	}
+	for _, forbidden := range []string{"proxy.secret.example.net", "203.0.113.77", "secret://"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("network tab exposed %q: %s", forbidden, body)
+		}
+	}
+	if strings.Contains(body, `<section class="section-browsers"`) || strings.Contains(body, `<section class="section-jobs"`) || strings.Contains(body, `<section class="section-accounts"`) {
+		t.Fatal("network tab rendered an inactive pane")
+	}
+
+	values := url.Values{"action": {"create"}, "return_to": {"network"}, "id": {"new-proxy"}, "label": {"新代理"},
+		"idempotency_key": {"create-new-proxy"}, "protocol": {"socks5"}, "auth": {"username_password"},
+		"host": {"proxy.example.net"}, "port": {"1080"}, "username": {"private-user"}, "password": {"private-password"}}
+	created := httptest.NewRecorder()
+	server.ServeHTTP(created, manageForm(values, "root", grants, "https://adapter.example/manage/network-profiles"))
+	if created.Code != http.StatusSeeOther || created.Header().Get("Location") != "/manage/?tab=network&notice=network_profile_created" || profiles.lastCreate.Password != "private-password" {
+		t.Fatalf("network UI create: %d %q request=%+v", created.Code, created.Header().Get("Location"), profiles.lastCreate)
+	}
+	if strings.Contains(created.Body.String(), "private-password") || strings.Contains(created.Body.String(), "private-user") {
+		t.Fatal("network UI redirect echoed credentials")
+	}
+
+	profiles.capabilities.NetworkProfiles = false
+	hidden := httptest.NewRecorder()
+	server.ServeHTTP(hidden, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/?tab=network", nil), "root", grants))
+	if hidden.Code != http.StatusOK || strings.Contains(hidden.Body.String(), `href="/manage/?tab=network"`) || !strings.Contains(hidden.Body.String(), `<section class="section-browsers"`) {
+		t.Fatalf("disabled network tab did not safely fall back: %d %s", hidden.Code, hidden.Body.String())
+	}
+}
+
+func TestNetworkProfileBindRequiresManageGrantAndCarriesIdempotency(t *testing.T) {
+	base := &fakeProfiles{environments: map[string]profile.EnvironmentSummary{"personal": sampleSummary("personal")}}
+	profiles := &fakeNetworkProfiles{fakeBrowserManager: &fakeBrowserManager{fakeProfiles: base,
+		capabilities: profile.ManagementCapabilities{CreateDelete: true, ProxyDrafts: true, NetworkProfiles: true}}}
+	server := New(profiles, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{})
+	target := "https://adapter.example/manage/browsers/personal/network-profile"
+	values := url.Values{"browser_revision": {"3"}, "network_profile_id": {"corp"}, "network_revision": {"2"}, "idempotency_key": {"bind-corp-2"}}
+
+	forbidden := httptest.NewRecorder()
+	server.ServeHTTP(forbidden, manageForm(values, "root", []access.Grant{{Profile: "personal", Capabilities: []string{"view"}}}, target))
+	if forbidden.Code != http.StatusForbidden || profiles.lastBind != "" {
+		t.Fatalf("view-only bind: %d %q", forbidden.Code, profiles.lastBind)
+	}
+	bound := httptest.NewRecorder()
+	server.ServeHTTP(bound, manageForm(values, "root", []access.Grant{{Profile: "personal", Capabilities: []string{"manage"}}}, target))
+	if bound.Code != http.StatusOK || profiles.lastBind != "personal/3/corp/2/bind-corp-2" || !strings.Contains(bound.Body.String(), `"network_profile_id":"corp"`) {
+		t.Fatalf("bind: %d %s call=%q", bound.Code, bound.Body.String(), profiles.lastBind)
+	}
+}
+
 func (f *fakeFullManagementService) CreateEnvironmentJob(_ context.Context, _ string, _ profile.EnvironmentJobRequest) (profile.EnvironmentJobSummary, error) {
 	return profile.EnvironmentJobSummary{}, nil
 }
@@ -582,9 +953,9 @@ func TestManagementRedesignedUIStructureAndContracts(t *testing.T) {
 		t.Fatal("notice feedback region with role=status is missing")
 	}
 
-	// 4. Browser cards instead of 9-column desktop table
-	if !strings.Contains(body, "browser-card") {
-		t.Fatal("browser card structure missing")
+	// 4. Compact browser list with progressive management details
+	if !strings.Contains(body, `class="management-table browser-management-table"`) || !strings.Contains(body, `class="record-details"`) {
+		t.Fatal("browser list or management details missing")
 	}
 
 	// 5. Explicit visible labels
@@ -618,7 +989,7 @@ func TestManagementRedesignedUIStructureAndContracts(t *testing.T) {
 
 	jobsPage := httptest.NewRecorder()
 	server.ServeHTTP(jobsPage, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/?tab=jobs", nil), "root", grants))
-	if !strings.Contains(jobsPage.Body.String(), `action="/manage/environment-jobs"`) {
+	if !strings.Contains(jobsPage.Body.String(), `action="/manage/template-combinations"`) {
 		t.Fatal("jobs tab missing environment-jobs action")
 	}
 
@@ -660,18 +1031,18 @@ func TestManagementTabsNavigationFallbackReauthAndRedirects(t *testing.T) {
 			t.Fatalf("expected 200, got %d", rec.Code)
 		}
 		body := rec.Body.String()
-		if !strings.Contains(body, `<nav class="nav-tabs" aria-label="管理功能">`) {
+		if !strings.Contains(body, `<nav class="nav-tabs sidebar-nav" aria-label="工作区导航">`) {
 			t.Fatal("missing nav-tabs landmark")
 		}
 		if !strings.Contains(body, `href="/manage/?tab=browsers" class="tab-item active" aria-current="page"`) {
 			t.Fatal("browsers tab missing active aria-current on default")
 		}
-		if strings.Contains(body, `href="/manage/?tab=jobs" class="tab-item active"`) || strings.Contains(body, `href="/manage/?tab=accounts" class="tab-item active"`) {
+		if strings.Contains(body, `href="/manage/?tab=fingerprint-data" class="tab-item active"`) || strings.Contains(body, `href="/manage/?tab=accounts" class="tab-item active"`) {
 			t.Fatal("non-active tab marked active")
 		}
 		// Accessible navigation: NO fake ARIA tabs widget roles
 		for _, fakeARIA := range []string{`role="tablist"`, `role="tab"`, `role="tabpanel"`} {
-			if strings.Contains(body, fakeARIA) {
+			if strings.Contains(body[strings.Index(body, "<nav "):strings.Index(body, "</nav>")], fakeARIA) {
 				t.Fatalf("found fake ARIA role %q", fakeARIA)
 			}
 		}
@@ -696,7 +1067,7 @@ func TestManagementTabsNavigationFallbackReauthAndRedirects(t *testing.T) {
 			t.Fatalf("expected 200, got %d", rec.Code)
 		}
 		body := rec.Body.String()
-		if !strings.Contains(body, `href="/manage/?tab=jobs" class="tab-item active" aria-current="page"`) {
+		if !strings.Contains(body, `href="/manage/?tab=fingerprint-data" class="tab-item active" aria-current="page"`) {
 			t.Fatal("jobs tab missing active aria-current")
 		}
 		if !strings.Contains(body, `<section class="section-jobs"`) {
@@ -705,7 +1076,7 @@ func TestManagementTabsNavigationFallbackReauthAndRedirects(t *testing.T) {
 		if strings.Contains(body, `<section class="section-browsers"`) || strings.Contains(body, `<section class="section-accounts"`) {
 			t.Fatal("inactive sections rendered on jobs tab")
 		}
-		if !strings.Contains(body, `href="/auth/reauth?next=%2Fmanage%2F%3Ftab%3Djobs"`) {
+		if !strings.Contains(body, `href="/auth/reauth?next=%2Fmanage%2F%3Ftab%3Dfingerprint-data%26section%3Dcombinations"`) {
 			t.Fatal("jobs tab missing top bar confirm-password link returning to jobs")
 		}
 	}
@@ -765,7 +1136,7 @@ func TestManagementTabsNavigationFallbackReauthAndRedirects(t *testing.T) {
 			t.Fatalf("expected 200, got %d", rec.Code)
 		}
 		body := rec.Body.String()
-		if strings.Contains(body, `href="/manage/?tab=jobs"`) {
+		if strings.Contains(body, `href="/manage/?tab=fingerprint-data"`) {
 			t.Fatal("unavailable jobs tab link rendered in nav")
 		}
 		if !strings.Contains(body, `href="/manage/?tab=browsers" class="tab-item active" aria-current="page"`) {
@@ -783,7 +1154,7 @@ func TestManagementTabsNavigationFallbackReauthAndRedirects(t *testing.T) {
 		rec := httptest.NewRecorder()
 		server.ServeHTTP(rec, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/?tab=jobs", nil), "root", grants))
 		body := rec.Body.String()
-		if rec.Code != http.StatusOK || !strings.Contains(body, `<section class="section-browsers"`) || strings.Contains(body, `href="/manage/?tab=jobs"`) || strings.Contains(body, "private-job-spool-detail") {
+		if rec.Code != http.StatusOK || !strings.Contains(body, `<section class="section-browsers"`) || strings.Contains(body, `href="/manage/?tab=fingerprint-data"`) || strings.Contains(body, "private-job-spool-detail") {
 			t.Fatal("failed jobs listing did not safely fall back to browsers")
 		}
 		profiles.jobsErr = nil
@@ -797,18 +1168,18 @@ func TestManagementTabsNavigationFallbackReauthAndRedirects(t *testing.T) {
 			t.Fatalf("browser action redirect: %d %s", rec.Code, rec.Header().Get("Location"))
 		}
 	}
-	// 6b. Job action redirects to /manage/?tab=jobs&notice=...
+	// 6b. Job action redirects to /manage/?tab=fingerprints&notice=...
 	{
 		rec := httptest.NewRecorder()
 		server.ServeHTTP(rec, manageForm(url.Values{"locale": {"en-US"}, "languages": {"en-US"}, "timezone": {"UTC"}, "screen_width": {"1920"}, "screen_height": {"1080"}, "dpr": {"1"}}, "root", grants, "https://adapter.example/manage/environment-jobs"))
-		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/manage/?tab=jobs&notice=job_created" {
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/manage/?tab=fingerprint-data&section=combinations&notice=job_created" {
 			t.Fatalf("job action redirect: %d %s", rec.Code, rec.Header().Get("Location"))
 		}
 	}
 	// 6c. Notice preservation on landing: tab=jobs with notice renders notice and jobs pane
 	{
 		rec := httptest.NewRecorder()
-		server.ServeHTTP(rec, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/?tab=jobs&notice=job_created", nil), "root", grants))
+		server.ServeHTTP(rec, withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/?tab=fingerprint-data&section=combinations&notice=job_created", nil), "root", grants))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)
 		}
@@ -820,4 +1191,68 @@ func TestManagementTabsNavigationFallbackReauthAndRedirects(t *testing.T) {
 			t.Fatal("wrong pane on jobs tab with notice")
 		}
 	}
+}
+
+func TestManagementUIRedesignContracts(t *testing.T) {
+	server := linkedCreateServer(linkedCreateFixture())
+	grants := []access.Grant{
+		{Profile: "personal", Capabilities: []string{"view", "manage"}},
+	}
+
+	// 1. Browsers Tab contracts
+	req := withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/?tab=browsers", nil), "root", grants)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	// Verify sidebar & branding
+	for _, expected := range []string{"app-sidebar", "sidebar-brand", "浏览器工作区", "nav-tabs", "tab-item", "online-indicator", "sidebar-shortcuts"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("page missing sidebar layout element %q", expected)
+		}
+	}
+
+	// Verify metric statistics grid
+	for _, expected := range []string{"stats-grid", "stat-card", "总环境数", "运行中", "健康正常", "待处理 / 需关注"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("page missing metric card element %q", expected)
+		}
+	}
+
+	// Verify progressive modal dialog contract
+	for _, expected := range []string{"dialog class=\"modal-dialog progressive-modal create-browser-panel\"", "dialog-close-btn", "dialog-actions", "dialog-cancel-btn"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("page missing progressive dialog element %q", expected)
+		}
+	}
+
+	// Verify responsive rules
+	for _, expected := range []string{"@media (max-width: 1099px)", "@media (max-width: 768px)"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("page missing responsive breakpoint %q", expected)
+		}
+	}
+
+	// Verify zero external assets
+	if strings.Contains(body, "src=\"http://") || strings.Contains(body, "https://fonts.") || strings.Contains(body, "https://cdnjs.") {
+		t.Fatal("page must not depend on external fonts or CDN assets")
+	}
+
+	// 3. Accounts Tab contracts
+	accReq := withGrants(httptest.NewRequest(http.MethodGet, "https://adapter.example/manage/?tab=accounts", nil), "root", grants)
+	accRec := httptest.NewRecorder()
+	server.ServeHTTP(accRec, accReq)
+	if accRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", accRec.Code)
+	}
+	accBody := accRec.Body.String()
+	for _, expected := range []string{"stats-grid", "总账号数", "正常启用", "管理员", "已禁用", "create-account-dialog"} {
+		if !strings.Contains(accBody, expected) {
+			t.Fatalf("accounts tab missing element %q", expected)
+		}
+	}
+
 }

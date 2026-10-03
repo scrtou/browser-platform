@@ -153,6 +153,30 @@ func TestExitedBrowserIsUnhealthyWithBlockingRecoveryAndNoRelaunch(t *testing.T)
 	}
 }
 
+func TestExitedManagedTemplateBrowserRequiresLifecycleRecovery(t *testing.T) {
+	service, _, fake, _ := newHealthService(t)
+	service.directory.mu.Lock()
+	record := service.directory.records["personal"]
+	record.BrowserTemplateID = "camoufox-linux-v152"
+	service.directory.records["personal"] = record
+	service.directory.mu.Unlock()
+	fake.observeHook = func(health *sealskin.HomeHealth) { health.Workers[0].Processes.BrowserMain = 0 }
+
+	report, err := service.Health(context.Background(), "personal", HealthOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := strings.Join(report.Recovery.Steps, " ")
+	if report.Overall != OverallUnhealthy || report.Recovery == nil || !report.Recovery.Blocking ||
+		report.Recovery.Code != "BROWSER_EXITED" || !strings.Contains(steps, "安全关闭") ||
+		!strings.Contains(steps, "固定入口") || strings.Contains(steps, "右键") {
+		t.Fatalf("managed recovery=%+v", report.Recovery)
+	}
+	if fake.launches != 1 || fake.stopCalls != 0 {
+		t.Fatal("health reporting must remain read-only")
+	}
+}
+
 func TestDisplayAndWorkerFailuresAreDistinguished(t *testing.T) {
 	cases := map[string]struct {
 		hook     func(*sealskin.HomeHealth)

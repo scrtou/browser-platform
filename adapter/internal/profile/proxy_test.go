@@ -50,6 +50,44 @@ func TestProxyTemplateValidation(t *testing.T) {
 	}
 }
 
+func TestManagedDirectSwitchRequiresStoppedZeroResourceRuntime(t *testing.T) {
+	admin := &managementAdmin{}
+	service, fake, record := createdBrowser(t, admin)
+	service.directTemplate = &DirectTemplate{
+		Owner: "profile-adapter", ApprovedResolverID: "cloudflare-r7e", ApprovedResolverIP: "1.1.1.1",
+		RelayImage: "sha256:" + strings.Repeat("1", 64), ProbeImage: "sha256:" + strings.Repeat("2", 64), ProbeURL: "https://probe.example/",
+	}
+	plan, err := service.IssueLaunchPlan(context.Background(), "alice", record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.snapshot.HomeName = record.HomeName
+	fake.snapshot.BrowserShutdownVersion, fake.snapshot.SessionAuthVersion, fake.snapshot.NetworkRuntimeVersion = 1, 1, 1
+	if _, err := service.EnsureWithLaunchPlan(context.Background(), "alice", record.ID, plan.Token); err != nil {
+		t.Fatal(err)
+	}
+	appendBefore, stopBefore := admin.appendCalls, fake.stopCalls
+	if _, err := service.SetBrowserManagedDirect(context.Background(), record.ID, record.Revision, "root", "managed-direct-running"); !errors.Is(err, ErrBrowserBusy) {
+		t.Fatalf("running managed DIRECT switch: %v", err)
+	}
+	if admin.appendCalls != appendBefore || fake.stopCalls != stopBefore {
+		t.Fatalf("running managed DIRECT had side effects: appends=%d->%d stops=%d->%d", appendBefore, admin.appendCalls, stopBefore, fake.stopCalls)
+	}
+	if result, err := service.Stop(context.Background(), record.ID); err != nil || result.Status != "stopped" {
+		t.Fatalf("explicit stop: %+v %v", result, err)
+	}
+	fake.snapshot = emptyRuntime()
+	fake.snapshot.HomeName = record.HomeName
+	updated, err := service.SetBrowserManagedDirect(context.Background(), record.ID, record.Revision, "root", "managed-direct-stopped")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.NetworkMode != "direct" || updated.NetworkPolicyID == "" || updated.NetworkPolicySHA256 == "" ||
+		admin.appendCalls != appendBefore+1 || admin.lastAppend.Policy["mode"] != "direct" || admin.lastAppend.Policy["approved_resolver_ip"] != "1.1.1.1" {
+		t.Fatalf("managed DIRECT result=%+v append=%+v calls=%d", updated, admin.lastAppend, admin.appendCalls)
+	}
+}
+
 func TestProxyDraftValidationRejectsBeforeAnyAdminCall(t *testing.T) {
 	admin := &managementAdmin{}
 	service, _, record := createdBrowser(t, admin)

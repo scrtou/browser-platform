@@ -119,6 +119,10 @@ class ArtifactTests(unittest.TestCase):
                         "homeReplay": {"homes": 2, "recreationsPerHome": 10, "observationsStable": True,
                                        "storageRestored": True, "offlineBackupRestore": "pass"}},
         }
+        auto = engine.automatic(self.artifact["spec"])
+        if auto:
+            complete.update(schemaVersion="browser-platform/native-acceptance/v1", recreationsPerHome=10,
+                            observations=[{} for _ in range(22)], offlineBackupRestore="pass", dynamicDisplay="pass")
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "acceptance.json"
             for name, change, expected in (
@@ -132,6 +136,10 @@ class ArtifactTests(unittest.TestCase):
             ):
                 report = copy.deepcopy(complete)
                 change(report)
+                if auto:
+                    if name == "short-run": report["recreationsPerHome"] = 1
+                    if name == "unstable": report["dynamicDisplay"] = "failed"
+                    if expected: expected = "ENVIRONMENT_ACCEPTANCE_INCOMPLETE"
                 raw = engine.encode(report)
                 path.write_bytes(raw)
                 with self.subTest(name=name), patch.dict(os.environ, {

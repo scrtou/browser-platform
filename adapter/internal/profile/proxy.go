@@ -35,6 +35,51 @@ type ProxyTemplate struct {
 	ProbeTimeoutSeconds int    `json:"probe_timeout_seconds,omitempty"`
 }
 
+// DirectTemplate fixes the operator-owned values needed to materialize an
+// immutable controlled-DIRECT policy for a browser. The resolver is explicit
+// and pinned; DIRECT never means attaching the Worker to a default bridge.
+type DirectTemplate struct {
+	Owner               string `json:"owner"`
+	ApprovedResolverID  string `json:"approved_resolver_id"`
+	ApprovedResolverIP  string `json:"approved_resolver_ip"`
+	RelayImage          string `json:"relay_image"`
+	ProbeImage          string `json:"probe_image"`
+	ProbeURL            string `json:"probe_url"`
+	ProbeTimeoutSeconds int    `json:"probe_timeout_seconds,omitempty"`
+}
+
+func (t DirectTemplate) timeout() int {
+	if t.ProbeTimeoutSeconds <= 0 {
+		return 10
+	}
+	return t.ProbeTimeoutSeconds
+}
+
+func (t DirectTemplate) Validate() error {
+	if !validPolicyName(t.Owner) {
+		return errors.New("direct_template.owner must be the SealSkin launch username")
+	}
+	if !validPolicyName(t.ApprovedResolverID) || len(t.ApprovedResolverID) > 63 {
+		return errors.New("direct_template.approved_resolver_id is invalid")
+	}
+	ip := net.ParseIP(t.ApprovedResolverIP)
+	if ip == nil || ip.To4() == nil || ip.String() != t.ApprovedResolverIP || ip.IsLoopback() || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return errors.New("direct_template.approved_resolver_ip must be a canonical non-local IPv4 address")
+	}
+	for name, image := range map[string]string{"relay_image": t.RelayImage, "probe_image": t.ProbeImage} {
+		if !strings.HasPrefix(image, "sha256:") || !validDigest(strings.TrimPrefix(image, "sha256:")) {
+			return fmt.Errorf("direct_template.%s must be a complete sha256: image digest", name)
+		}
+	}
+	if !strings.HasPrefix(t.ProbeURL, "https://") || len(t.ProbeURL) > 2048 || strings.ContainsAny(t.ProbeURL, " @\t\n") {
+		return errors.New("direct_template.probe_url must be an HTTPS URL without credentials")
+	}
+	if t.ProbeTimeoutSeconds < 0 || t.ProbeTimeoutSeconds > 20 {
+		return errors.New("direct_template.probe_timeout_seconds must be between 1 and 20")
+	}
+	return nil
+}
+
 func (t ProxyTemplate) timeout() int {
 	if t.ProbeTimeoutSeconds <= 0 {
 		return 10
@@ -338,10 +383,33 @@ func (s *Service) ProbeProxyDraft(ctx context.Context, profileID, draftID string
 // Applying a proxy/DIRECT selection must never stop a browser implicitly:
 // operators use the explicit Stop action first, then retry the apply.
 func (s *Service) requireStoppedRuntime(ctx context.Context, profileID string) error {
-	result, err := s.Inspect(ctx, profileID)
+	lock := s.profileLock(profileID)
+	lock.Lock()
+	defer lock.Unlock()
+	return s.requireStoppedRuntimeLocked(ctx, profileID)
+}
+
+// requireStoppedRuntimeLocked is used by network mutations that keep the
+// lifecycle lock until the application and directory point at the same new
+// revision. Without that continuous lock, Ensure could start a generation in
+// the gap after a read-only Inspect.
+func (s *Service) requireStoppedRuntimeLocked(ctx context.Context, profileID string) error {
+	definition, ok := s.directory.get(profileID)
+	if !ok {
+		return ErrProfileNotFound
+	}
+	binding, found, err := s.store.Get(profileID)
 	if err != nil {
 		return err
 	}
+	if err := checkDefinition(definition, binding); err != nil {
+		return err
+	}
+	snapshot, err := s.inspectRuntime(ctx, definition.HomeName)
+	if err != nil {
+		return err
+	}
+	result := lifecycleResult(profileID, binding, found, snapshot)
 	if result.Status != state.StatusStopped || result.Records != 0 || result.Workers != 0 || result.Resources != 0 {
 		return ErrBrowserBusy
 	}
@@ -359,6 +427,9 @@ func (s *Service) ApplyProxyDraft(ctx context.Context, profileID string, expecte
 	if actor == "" || idempotencyKey == "" || len(idempotencyKey) > 128 {
 		return Record{}, errors.New("applying a proxy draft requires an actor and durable idempotency key")
 	}
+	lock := s.profileLock(profileID)
+	lock.Lock()
+	defer lock.Unlock()
 	record, err := s.managedRecord(profileID)
 	if err != nil {
 		return Record{}, err
@@ -373,7 +444,7 @@ func (s *Service) ApplyProxyDraft(ctx context.Context, profileID string, expecte
 	if draft.summary.ProbeStatus != "passed" {
 		return Record{}, ErrProxyDraftNotProbed
 	}
-	if err := s.requireStoppedRuntime(ctx, profileID); err != nil {
+	if err := s.requireStoppedRuntimeLocked(ctx, profileID); err != nil {
 		return Record{}, err
 	}
 	policyID := fmt.Sprintf("%s-proxy-r%d", profileID, draft.summary.SecretVersion)
@@ -414,6 +485,9 @@ func (s *Service) SetBrowserDirect(ctx context.Context, profileID string, expect
 	if !validNetworkReference(policyID, policySHA256) {
 		return Record{}, ErrManagedPolicyRequired
 	}
+	lock := s.profileLock(profileID)
+	lock.Lock()
+	defer lock.Unlock()
 	record, err := s.managedRecord(profileID)
 	if err != nil {
 		return Record{}, err
@@ -421,10 +495,52 @@ func (s *Service) SetBrowserDirect(ctx context.Context, profileID string, expect
 	if record.Revision != expectedRevision {
 		return Record{}, ErrRevisionMismatch
 	}
-	if err := s.requireStoppedRuntime(ctx, profileID); err != nil {
+	if err := s.requireStoppedRuntimeLocked(ctx, profileID); err != nil {
 		return Record{}, err
 	}
 	updated, err := s.switchNetwork(ctx, record, NetworkBinding{Mode: "direct", PolicyID: policyID, PolicySHA256: policySHA256}, actor, idempotencyKey, 0)
+	if err != nil {
+		return Record{}, err
+	}
+	s.dropProxyDraft(profileID)
+	return updated, nil
+}
+
+// SetBrowserManagedDirect materializes a fresh controlled-DIRECT policy for a
+// stopped browser. The caller selects only the high-level DIRECT mode.
+func (s *Service) SetBrowserManagedDirect(ctx context.Context, profileID string, expectedRevision int, actor, idempotencyKey string) (Record, error) {
+	if s.admin == nil || s.directTemplate == nil {
+		return Record{}, ErrManagedPolicyRequired
+	}
+	actor, idempotencyKey = strings.TrimSpace(actor), strings.TrimSpace(idempotencyKey)
+	if actor == "" || idempotencyKey == "" || len(idempotencyKey) > 128 {
+		return Record{}, errors.New("switching to managed DIRECT requires an actor and durable idempotency key")
+	}
+	lock := s.profileLock(profileID)
+	lock.Lock()
+	defer lock.Unlock()
+	record, err := s.managedRecord(profileID)
+	if err != nil {
+		return Record{}, err
+	}
+	if record.Revision != expectedRevision {
+		return Record{}, ErrRevisionMismatch
+	}
+	if err := s.requireStoppedRuntimeLocked(ctx, profileID); err != nil {
+		return Record{}, err
+	}
+	policyID := networkPolicyRevisionID(profileID, "direct", expectedRevision+1)
+	policy := map[string]any{
+		"username": s.directTemplate.Owner, "profile_id": record.ID, "home_name": record.HomeName, "application_id": record.ApplicationID,
+		"mode": "direct", "approved_resolver_id": s.directTemplate.ApprovedResolverID, "approved_resolver_ip": s.directTemplate.ApprovedResolverIP,
+		"relay_image": s.directTemplate.RelayImage, "probe_image": s.directTemplate.ProbeImage,
+		"upstream_host": "", "upstream_port": 0, "probe_url": s.directTemplate.ProbeURL, "probe_timeout_seconds": s.directTemplate.timeout(),
+	}
+	appended, err := s.admin.AppendNetworkPolicy(ctx, sealskin.NetworkPolicyAppendRequest{PolicyID: policyID, Policy: policy}, idempotencyKey+"-policy")
+	if err != nil {
+		return Record{}, fmt.Errorf("append managed DIRECT policy: %w", err)
+	}
+	updated, err := s.switchNetwork(ctx, record, NetworkBinding{Mode: "direct", PolicyID: appended.PolicyID, PolicySHA256: appended.PolicySHA256}, actor, idempotencyKey, 0)
 	if err != nil {
 		return Record{}, err
 	}

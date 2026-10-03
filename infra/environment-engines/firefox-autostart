@@ -1,0 +1,2 @@
+#!/bin/sh
+exec python3 /usr/local/lib/browser-platform/firefox-launcher.py launch "${SEALSKIN_URL:-about:blank}"

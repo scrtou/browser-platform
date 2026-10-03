@@ -1,0 +1,7 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+COPY fonts.lock.json /opt/chromix/fonts.lock.json
+COPY fonts.conf.template /opt/chromix/fonts/fonts.conf.template
+COPY launcher.py /usr/local/lib/browser-platform/chromix-launcher.py
+RUN python3 -c "import runpy; runpy.run_path('/usr/local/lib/browser-platform/chromix-launcher.py')['verify_fonts']()"
+LABEL io.browser-platform.chromix-font-revision="cjk-r2"

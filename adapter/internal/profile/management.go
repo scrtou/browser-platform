@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -144,6 +145,35 @@ func (s *Service) CreateBrowser(ctx context.Context, request CreateBrowserReques
 	if strings.TrimSpace(actor) == "" || idempotencyKey == "" || len(idempotencyKey) > 128 {
 		return Record{}, errors.New("browser creation requires an actor and durable idempotency key")
 	}
+	idDigest := sha256.Sum256([]byte(actor + "\x00" + idempotencyKey))
+	id := "browser-" + hex.EncodeToString(idDigest[:])[:12]
+	appID := "app-" + id[8:]
+	homeName := id + "-home"
+	// Reserve the request before any policy/credential/Home side effect. The
+	// digest survives restart and includes fields not represented by the final
+	// resolved template (so even ignored-field changes cannot widen a retry).
+	s.createMu.Lock()
+	defer s.createMu.Unlock()
+	selectionLock := s.profileLock("__template_selections")
+	selectionLock.Lock()
+	defer selectionLock.Unlock()
+	requestBytes, err := json.Marshal(request)
+	if err != nil {
+		return Record{}, err
+	}
+	requestDigest := sha256.Sum256(requestBytes)
+	requestSHA := hex.EncodeToString(requestDigest[:])
+	if existing, exists := s.directory.record(id); exists {
+		if existing.CreationRequestSHA256 != requestSHA {
+			return Record{}, ErrRevisionMismatch
+		}
+		if existing.Status == RecordReady {
+			return existing, nil
+		}
+		if existing.Status != RecordCreating {
+			return Record{}, ErrRevisionMismatch
+		}
+	}
 	artifactID := strings.TrimSpace(request.EnvironmentArtifactID)
 	artifact, err := s.catalog.Accepted(ctx, artifactID)
 	if err != nil {
@@ -152,45 +182,69 @@ func (s *Service) CreateBrowser(ctx context.Context, request CreateBrowserReques
 	if artifact.ID != artifactID || !validAcceptedArtifact(artifact) {
 		return Record{}, ErrArtifactUnavailable
 	}
+	var templateBinding *TemplateBinding
+	if s.templateCatalog != nil {
+		browserTemplateID := strings.TrimSpace(request.BrowserTemplateID)
+		displayTemplateID := strings.TrimSpace(request.DisplayTemplateID)
+		allowed, allowErr := s.templateAllowsNewBrowser(ctx, browserTemplateID, artifactID, displayTemplateID)
+		if allowErr != nil {
+			return Record{}, allowErr
+		}
+		if !allowed {
+			return Record{}, ErrTemplateCatalogUnavailable
+		}
+		binding, resolvedArtifact, resolveErr := s.resolveTemplateBinding(ctx, browserTemplateID, artifactID, displayTemplateID)
+		if resolveErr != nil {
+			return Record{}, resolveErr
+		}
+		artifact = resolvedArtifact
+		templateBinding = &binding
+	}
 	mode := strings.TrimSpace(request.NetworkMode)
 	if mode != "direct" && mode != "proxy_required" {
 		return Record{}, ErrInvalidNetworkMode
 	}
-	if !validNetworkReference(request.NetworkPolicyID, request.NetworkPolicySHA256) {
-		return Record{}, ErrManagedPolicyRequired
+	if err := s.validateInitialNetworkSelection(request); err != nil {
+		return Record{}, err
 	}
-	idDigest := sha256.Sum256([]byte(actor + "\x00" + idempotencyKey))
-	id := "browser-" + hex.EncodeToString(idDigest[:])[:12]
-	appID := "app-" + id[8:]
-	homeName := id + "-home"
 	definition := Definition{ID: id, Label: strings.TrimSpace(request.Label), ApplicationID: appID, HomeName: homeName,
 		StartURL: strings.TrimSpace(request.StartURL), Language: request.Language, Timezone: request.Timezone, WaylandMode: request.WaylandMode,
 		NetworkMode: mode, NetworkPolicyID: request.NetworkPolicyID, NetworkPolicySHA256: request.NetworkPolicySHA256,
+		NetworkProfileID: request.NetworkProfileID, NetworkProfileRevision: request.NetworkProfileRevision,
 		EnvironmentArtifactID: artifact.ID, EnvironmentArtifactSHA256: artifact.SHA256, EnvironmentSource: artifact.Source,
 		RequiredRuntimeCapabilities: cloneCapabilities(artifact.RequiredRuntimeCapabilities)}
+	if templateBinding != nil {
+		definition = definitionWithTemplateBinding(definition, *templateBinding)
+	}
 	if err := validateDefinition(definition); err != nil {
 		return Record{}, err
 	}
-	record := Record{Definition: definition, Revision: 1, UpdatedAt: s.now().UTC(), UpdatedBy: actor, Status: RecordCreating}
+	// Validate the application before reserving an intent or granting credentials.
+	if _, err := applicationForBrowser(artifact, definition); err != nil {
+		return Record{}, err
+	}
+	record := Record{Definition: definition, Revision: 1, UpdatedAt: s.now().UTC(), UpdatedBy: actor, Status: RecordCreating, CreationRequestSHA256: requestSHA}
 	if existing, exists := s.directory.record(id); exists {
-		if existing.Status == RecordReady && sameCreatedBrowser(existing.Definition, definition) {
-			return existing, nil
-		}
-		if existing.Status != RecordCreating || !sameCreatedBrowser(existing.Definition, definition) {
-			return Record{}, ErrRevisionMismatch
-		}
 		record = existing
 	} else if err := s.directory.add(record); err != nil {
 		return Record{}, err
 	}
-	app, err := applicationForBrowser(artifact, definition)
+	networkBinding, err := s.initialNetworkBinding(ctx, id, appID, homeName, request, actor, idempotencyKey, requestSHA)
+	if err != nil {
+		return record, err
+	}
+	record, err = s.directory.setCreatingNetwork(id, requestSHA, networkBinding)
+	if err != nil {
+		return Record{}, err
+	}
+	app, err := applicationForBrowser(artifact, record.Definition)
 	if err != nil {
 		return record, err
 	}
 	if err := s.ensureHome(ctx, homeName); err != nil {
 		return record, fmt.Errorf("create browser Home: %w", err)
 	}
-	if err := s.admin.InstallApp(ctx, app, "install-"+idempotencyKey); err != nil {
+	if err := s.admin.InstallApp(ctx, app, "install-"+id); err != nil {
 		return record, fmt.Errorf("install browser application: %w", err)
 	}
 	ready, err := s.directory.status(id, RecordReady, actor)
@@ -200,11 +254,94 @@ func (s *Service) CreateBrowser(ctx context.Context, request CreateBrowserReques
 	return ready, nil
 }
 
-func sameCreatedBrowser(left, right Definition) bool {
-	return left.ID == right.ID && left.Label == right.Label && left.ApplicationID == right.ApplicationID && left.HomeName == right.HomeName &&
-		left.StartURL == right.StartURL && left.NetworkMode == right.NetworkMode && left.NetworkPolicyID == right.NetworkPolicyID &&
-		left.NetworkPolicySHA256 == right.NetworkPolicySHA256 && left.EnvironmentArtifactID == right.EnvironmentArtifactID &&
-		left.EnvironmentArtifactSHA256 == right.EnvironmentArtifactSHA256 && left.EnvironmentSource == right.EnvironmentSource
+func (s *Service) initialNetworkBinding(ctx context.Context, browserID, appID, homeName string, request CreateBrowserRequest, actor, idempotencyKey, requestSHA string) (NetworkBinding, error) {
+	mode := strings.TrimSpace(request.NetworkMode)
+	managedSelection := s.networkProfiles != nil || s.directTemplate != nil
+	if managedSelection && (strings.TrimSpace(request.NetworkPolicyID) != "" || strings.TrimSpace(request.NetworkPolicySHA256) != "") {
+		return NetworkBinding{}, ErrManagedPolicyRequired
+	}
+	if !managedSelection {
+		if !validNetworkReference(request.NetworkPolicyID, request.NetworkPolicySHA256) {
+			return NetworkBinding{}, ErrManagedPolicyRequired
+		}
+		return NetworkBinding{Mode: mode, PolicyID: request.NetworkPolicyID, PolicySHA256: request.NetworkPolicySHA256}, nil
+	}
+	switch mode {
+	case "direct":
+		if s.directTemplate == nil {
+			return NetworkBinding{}, ErrManagedPolicyRequired
+		}
+		policyID := networkPolicyRevisionID(browserID, "direct", 1)
+		policy := map[string]any{
+			"username": s.directTemplate.Owner, "profile_id": browserID, "home_name": homeName, "application_id": appID,
+			"mode": "direct", "approved_resolver_id": s.directTemplate.ApprovedResolverID, "approved_resolver_ip": s.directTemplate.ApprovedResolverIP,
+			"relay_image": s.directTemplate.RelayImage, "probe_image": s.directTemplate.ProbeImage,
+			"upstream_host": "", "upstream_port": 0, "probe_url": s.directTemplate.ProbeURL, "probe_timeout_seconds": s.directTemplate.timeout(),
+		}
+		appended, err := s.admin.AppendNetworkPolicy(ctx, sealskin.NetworkPolicyAppendRequest{PolicyID: policyID, Policy: policy}, "create-policy-"+browserID)
+		if err != nil {
+			return NetworkBinding{}, fmt.Errorf("append browser DIRECT policy: %w", err)
+		}
+		return NetworkBinding{Mode: "direct", PolicyID: appended.PolicyID, PolicySHA256: appended.PolicySHA256}, nil
+	case "proxy_required":
+		if s.networkProfiles == nil || s.proxyTemplate == nil || strings.TrimSpace(request.NetworkProfileID) == "" || request.NetworkProfileRevision < 1 {
+			return NetworkBinding{}, ErrNetworkProfileNotAccepted
+		}
+		s.networkProfilesMu.Lock()
+		defer s.networkProfilesMu.Unlock()
+		profileRecord, revision, err := s.networkProfiles.getRevision(strings.TrimSpace(request.NetworkProfileID), request.NetworkProfileRevision)
+		if err != nil {
+			return NetworkBinding{}, err
+		}
+		if revision.Status != NetworkRevisionAccepted {
+			return NetworkBinding{}, ErrNetworkProfileNotAccepted
+		}
+		if revision.Auth != "none" {
+			authorizer, ok := s.admin.(interface {
+				AuthorizeProxySecret(context.Context, sealskin.ProxySecretAuthorizationRequest, string) error
+			})
+			if !ok {
+				return NetworkBinding{}, ErrAdminUnavailable
+			}
+			grant := sealskin.SecretGrant{Owner: s.proxyTemplate.Owner, Profile: browserID, Home: homeName, App: appID}
+			err := authorizer.AuthorizeProxySecret(ctx, sealskin.ProxySecretAuthorizationRequest{UsernameSecretRef: revision.UsernameSecretRef,
+				PasswordSecretRef: revision.PasswordSecretRef, Grant: grant, RequestSHA256: requestSHA}, "create-grant-"+browserID)
+			if err != nil {
+				return NetworkBinding{}, fmt.Errorf("authorize browser proxy: %w", err)
+			}
+			if !contains(revision.AllowedProfiles, browserID) {
+				revision, err = s.networkProfiles.mutate(profileRecord.ID, revision.Revision, actor, "", "authorize-create:"+browserID, func(r *networkProfileRevisionRecord) error {
+					r.AllowedProfiles = append(r.AllowedProfiles, browserID)
+					return nil
+				})
+				if err != nil {
+					return NetworkBinding{}, err
+				}
+			}
+		}
+		policyID := networkPolicyRevisionID(browserID, profileRecord.ID, revision.Revision)
+		policy := map[string]any{
+			"username": s.proxyTemplate.Owner, "profile_id": browserID, "home_name": homeName, "application_id": appID,
+			"mode": "proxy_required", "relay_image": s.proxyTemplate.RelayImage, "probe_image": s.proxyTemplate.ProbeImage,
+			"upstream_host": revision.Host, "upstream_port": revision.Port, "upstream_protocol": revision.Protocol, "upstream_auth": revision.Auth,
+			"probe_url": s.proxyTemplate.ProbeURL, "probe_timeout_seconds": s.proxyTemplate.timeout(),
+		}
+		if revision.Auth != "none" {
+			policy["username_secret_ref"], policy["password_secret_ref"] = revision.UsernameSecretRef, revision.PasswordSecretRef
+		}
+		appended, err := s.admin.AppendNetworkPolicy(ctx, sealskin.NetworkPolicyAppendRequest{PolicyID: policyID, Policy: policy, UpstreamTLSCAPEM: revision.UpstreamCAPEM}, "create-policy-"+browserID)
+		if err != nil {
+			return NetworkBinding{}, fmt.Errorf("append browser proxy policy: %w", err)
+		}
+		return NetworkBinding{
+			Mode: "proxy_required", PolicyID: appended.PolicyID, PolicySHA256: appended.PolicySHA256,
+			NetworkProfileID: profileRecord.ID, NetworkProfileRevision: revision.Revision, NetworkBindingKey: idempotencyKey,
+			ProxyUpstream:          revision.Protocol + "://" + revision.Host + ":" + strconv.Itoa(revision.Port),
+			ProxyUsernameSecretRef: revision.UsernameSecretRef, ProxyPasswordSecretRef: revision.PasswordSecretRef,
+		}, nil
+	default:
+		return NetworkBinding{}, ErrInvalidNetworkMode
+	}
 }
 
 func (s *Service) DeleteBrowser(ctx context.Context, profileID, actor, idempotencyKey string) error {
@@ -225,6 +362,9 @@ func (s *Service) DeleteBrowser(ctx context.Context, profileID, actor, idempoten
 	}
 	if record.Status == RecordCreating {
 		return ErrBrowserCreating
+	}
+	if record.Status == RecordMigrating {
+		return ErrLegacyMigration
 	}
 	if record.Status != RecordDeleting {
 		result, err := s.Stop(ctx, profileID)
@@ -248,8 +388,14 @@ func (s *Service) DeleteBrowser(ctx context.Context, profileID, actor, idempoten
 	archiveName := "archive-" + prefix + "-" + record.UpdatedAt.UTC().Format("20060102T150405Z") + "-" + hex.EncodeToString(digest[:])[:8]
 	// The deterministic archive name is stable for retries and carries no
 	// credentials or Session material.
+	archiveArtifactID := record.EnvironmentArtifactID
+	if archiveArtifactID == "" && record.BrowserTemplateID == "" && record.DisplayTemplateID == "" {
+		// Old definitions predate the environment catalog. This reserved archive
+		// marker preserves that absence; it never names an accepted artifact.
+		archiveArtifactID = "legacy-unrecorded"
+	}
 	archive := sealskin.ArchiveHomeRequest{ArchiveName: archiveName, ProfileID: record.ID, ProfileRevision: record.Revision,
-		ApplicationID: record.ApplicationID, EnvironmentArtifactID: record.EnvironmentArtifactID, Actor: actor}
+		ApplicationID: record.ApplicationID, EnvironmentArtifactID: archiveArtifactID, Actor: actor}
 	if err := s.homeArchiver.ArchiveHomeDirectory(ctx, record.HomeName, archive, idempotencyKey+"-home"); err != nil {
 		return fmt.Errorf("archive browser Home: %w", err)
 	}
@@ -386,4 +532,35 @@ func (c *FileEnvironmentCatalog) read() (fileEnvironmentCatalog, error) {
 		return fileEnvironmentCatalog{}, ErrArtifactUnavailable
 	}
 	return catalog, nil
+}
+
+// Read-only validation precedes the durable intent and all external writes.
+func (s *Service) validateInitialNetworkSelection(request CreateBrowserRequest) error {
+	managed := s.networkProfiles != nil || s.directTemplate != nil
+	if managed && (request.NetworkPolicyID != "" || request.NetworkPolicySHA256 != "") {
+		return ErrManagedPolicyRequired
+	}
+	if !managed {
+		if !validNetworkReference(request.NetworkPolicyID, request.NetworkPolicySHA256) {
+			return ErrManagedPolicyRequired
+		}
+		return nil
+	}
+	if request.NetworkMode == "direct" {
+		if s.directTemplate == nil || request.NetworkProfileID != "" || request.NetworkProfileRevision != 0 {
+			return ErrManagedPolicyRequired
+		}
+		return nil
+	}
+	if s.networkProfiles == nil || s.proxyTemplate == nil {
+		return ErrNetworkProfileNotAccepted
+	}
+	_, revision, err := s.networkProfiles.getRevision(request.NetworkProfileID, request.NetworkProfileRevision)
+	if err != nil {
+		return err
+	}
+	if revision.Status != NetworkRevisionAccepted {
+		return ErrNetworkProfileNotAccepted
+	}
+	return nil
 }

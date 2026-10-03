@@ -1,0 +1,8 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+ARG INPUT_SHA256
+COPY environment.py /usr/local/lib/browser-platform/environment.py
+COPY display_config.py /usr/local/lib/browser-platform/display_config.py
+COPY install-resolution-limit.py /tmp/install-resolution-limit.py
+RUN python3 /tmp/install-resolution-limit.py && rm /tmp/install-resolution-limit.py
+LABEL io.browser-platform.browser-engine="camoufox" io.browser-platform.custom-generation="1" io.browser-platform.custom-input-sha256="${INPUT_SHA256}"

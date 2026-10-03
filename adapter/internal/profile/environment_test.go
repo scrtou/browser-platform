@@ -36,7 +36,7 @@ func TestEnvironmentSummaryIsReadOnlyAndCarriesCachedEvidence(t *testing.T) {
 	if err != nil || !summary.Observed || summary.Health == nil {
 		t.Fatalf("cached report not surfaced: %+v err=%v", summary, err)
 	}
-	if summary.Health.Overall != OverallHealthy || summary.Health.Stale || summary.Health.Environment == nil || summary.Health.Environment.ID != "env-test-r1" ||
+	if summary.Health.Overall != OverallDegraded || summary.Health.Code != "EGRESS_NOT_CONFIGURED" || summary.Health.Stale || summary.Health.Environment == nil || summary.Health.Environment.ID != "env-test-r1" ||
 		summary.Health.CheckedAt != *now || summary.Health.ExpiresAt.Sub(summary.Health.CheckedAt) != HealthTTL {
 		t.Fatalf("health evidence: %+v", summary.Health)
 	}
@@ -125,6 +125,62 @@ func TestEnvironmentSummaryWithoutLifecycleOrBindingIsUnobserved(t *testing.T) {
 	cancel()
 	if _, err := service.Environment(cancelled, "personal"); err == nil {
 		t.Fatal("cancelled context produced a summary")
+	}
+}
+
+func TestEnvironmentSummaryResolvesCurrentProxyNameWithoutRuntimeCalls(t *testing.T) {
+	service, fake := managedHealthService(t)
+	catalog := &networkProfileCatalog{profiles: map[string]networkProfileRecord{
+		"office": {ID: "office", Label: "办公代理 <测试>", Revisions: []networkProfileRevisionRecord{
+			{Revision: 1, Status: NetworkRevisionDisabled, UsernameSecretRef: "secret://office/username/1"},
+			{Revision: 2, Status: NetworkRevisionAccepted},
+		}},
+		"backup": {ID: "backup", Label: "备用代理", Revisions: []networkProfileRevisionRecord{
+			{Revision: 1, Status: NetworkRevisionAccepted},
+		}},
+	}}
+	for _, tc := range []struct {
+		name, mode, id, want string
+		revision             int
+		withoutCatalog       bool
+	}{
+		{name: "bound disabled revision", mode: "proxy_required", id: "office", revision: 1, want: "办公代理 <测试>"},
+		{name: "changed binding", mode: "proxy_required", id: "backup", revision: 1, want: "备用代理"},
+		{name: "unknown revision", mode: "proxy_required", id: "office", revision: 3},
+		{name: "missing proxy", mode: "proxy_required", id: "missing", revision: 1},
+		{name: "unbound proxy", mode: "proxy_required"},
+		{name: "catalog unavailable", mode: "proxy_required", id: "office", revision: 1, withoutCatalog: true},
+		{name: "direct ignores stale name", mode: "direct", id: "office", revision: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			service.networkProfiles = catalog
+			if tc.withoutCatalog {
+				service.networkProfiles = nil
+			}
+			service.directory.mu.Lock()
+			record := service.directory.records["personal"]
+			record.NetworkMode, record.NetworkProfileID, record.NetworkProfileRevision = tc.mode, tc.id, tc.revision
+			service.directory.records["personal"] = record
+			service.directory.mu.Unlock()
+			binding, _, _ := service.store.Get("personal")
+			beforeCatalog := mustJSON(t, catalog.profiles)
+			observes, launches, resumes, stops := fake.observeCalls, fake.launches, fake.resumeCalls, fake.stopCalls
+			summary, err := service.Environment(context.Background(), "personal")
+			if err != nil || summary.NetworkProfileLabel != tc.want {
+				t.Fatalf("proxy name = %q, want %q; err=%v", summary.NetworkProfileLabel, tc.want, err)
+			}
+			if strings.Contains(mustJSON(t, summary), "secret://") {
+				t.Fatal("proxy lookup exposed credential references")
+			}
+			afterBinding, _, _ := service.store.Get("personal")
+			afterRecord, _ := service.record("personal")
+			if mustJSON(t, binding) != mustJSON(t, afterBinding) || mustJSON(t, record) != mustJSON(t, afterRecord) || beforeCatalog != mustJSON(t, catalog.profiles) {
+				t.Fatal("proxy name lookup changed persistent state")
+			}
+			if fake.observeCalls != observes || fake.launches != launches || fake.resumeCalls != resumes || fake.stopCalls != stops {
+				t.Fatal("proxy name lookup reached the runtime")
+			}
+		})
 	}
 }
 

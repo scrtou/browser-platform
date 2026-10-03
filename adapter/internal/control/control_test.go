@@ -99,8 +99,51 @@ func TestControlDoesNotReturnBackendSecrets(t *testing.T) {
 	defer server.Close()
 	go server.Serve(listener) //nolint:errcheck
 	_, err = Command(context.Background(), path, "stop", "personal")
-	if err == nil || err.Error() != "control command returned HTTP 503: lifecycle operation could not be verified" {
+	var commandErr *CommandError
+	if err == nil || !errors.As(err, &commandErr) || commandErr.StatusCode != http.StatusServiceUnavailable ||
+		commandErr.Code != "LIFECYCLE_UNVERIFIED" || strings.Contains(err.Error(), "access_token") {
 		t.Fatalf("unexpected public error: %v", err)
+	}
+}
+
+func TestControlLifecycleErrorsUseStableCodes(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		status int
+		code   string
+	}{
+		{"not-found", profile.ErrProfileNotFound, http.StatusNotFound, "PROFILE_NOT_FOUND"},
+		{"ownership", profile.ErrOwnershipUnknown, http.StatusConflict, "RUNTIME_OWNERSHIP_REQUIRED"},
+		{"running", profile.ErrOperationRunning, http.StatusConflict, "PROFILE_OPERATION_RUNNING"},
+		{"stop", profile.ErrStopUnconfirmed, http.StatusServiceUnavailable, "STOP_UNCONFIRMED"},
+		{"disabled", profile.ErrLifecycleDisabled, http.StatusNotImplemented, "LIFECYCLE_DISABLED"},
+		{"not-dormant", profile.ErrNotDormant, http.StatusConflict, "PROFILE_NOT_DORMANT"},
+		{"resume", profile.ErrResumeFailed, http.StatusServiceUnavailable, "RESUME_NOT_READY"},
+		{"coherence", profile.ErrCoherenceBlocked, http.StatusServiceUnavailable, "COHERENCE_NOT_READY"},
+		{"capacity", profile.ErrCapacity, http.StatusServiceUnavailable, "CAPACITY_REJECTED"},
+		{"unknown", errors.New("backend-private-detail"), http.StatusServiceUnavailable, "LIFECYCLE_UNVERIFIED"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			Handler(&fakeService{err: tc.err}).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/profiles/personal/resume", nil))
+			var response reply
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if recorder.Code != tc.status || response.Code != tc.code || response.Error == "" || strings.Contains(recorder.Body.String(), "backend-private-detail") {
+				t.Fatalf("response=%+v status=%d", response, recorder.Code)
+			}
+		})
+	}
+}
+
+func TestLegacyLifecycleReplyClassification(t *testing.T) {
+	if got := legacyLifecycleErrorCode(http.StatusConflict, "profile runtime is not a dormant generation"); got != "PROFILE_NOT_DORMANT" {
+		t.Fatalf("legacy code=%q", got)
+	}
+	if got := legacyLifecycleErrorCode(http.StatusTeapot, "untrusted backend detail"); got != "LIFECYCLE_UNVERIFIED" {
+		t.Fatalf("unknown legacy code=%q", got)
 	}
 }
 

@@ -3,6 +3,7 @@ package access
 import (
 	"context"
 	"encoding/json"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -75,7 +76,7 @@ func TestManagementSurfaceIsAdminOnlyWithCSRFForms(t *testing.T) {
 		t.Fatalf("entry account POSTed to management: %d", response.Code)
 	}
 	index := request(f.handler, "GET", "https://entry.test/", nil, user)
-	if index.Code != 200 || strings.Contains(index.Body.String(), `href="/manage/"`) || !strings.Contains(index.Body.String(), `href="/auth/password"`) {
+	if index.Code != 200 || strings.Contains(index.Body.String(), `href="/manage/?tab=browsers"`) || !strings.Contains(index.Body.String(), `href="/auth/password"`) {
 		t.Fatalf("entry index: %d %s", index.Code, index.Body.String())
 	}
 	admin, csrf := f.login(t, "root")
@@ -103,8 +104,61 @@ func TestManagementSurfaceIsAdminOnlyWithCSRFForms(t *testing.T) {
 		t.Fatalf("admin form POST: %d", response.Code)
 	}
 	adminIndex := request(f.handler, "GET", "https://entry.test/", nil, admin)
-	if !strings.Contains(adminIndex.Body.String(), `href="/manage/"`) {
+	if !strings.Contains(adminIndex.Body.String(), `href="/manage/?tab=browsers"`) {
 		t.Fatal("admin index lost the management link")
+	}
+}
+
+func TestHomeWorkspaceUsesOnlyAuthorizedCachedSummaries(t *testing.T) {
+	f := newFixture(t)
+	var requested []string
+	f.g.homeProvider = func(_ context.Context, ids []string) []HomeCard {
+		requested = append([]string(nil), ids...)
+		cards := make([]HomeCard, 0, len(ids))
+		for _, id := range ids {
+			cards = append(cards, HomeCard{
+				ProfileID: id, Label: "个人浏览器", EntryPath: "/browser/" + id + "/",
+				Status: "running", Health: "degraded", HealthCode: "EGRESS_NOT_CONFIGURED", Network: "proxy_required", NetworkName: "公司代理 <测试>",
+				BrowserTemplate: "camoufox-linux", Fingerprint: "env-r7d", Display: "fixed-1920",
+				CheckedAt: "2026-09-23T00:30:00Z", Enabled: true, Available: true, Observed: true, NetworkIssue: true,
+			})
+		}
+		return cards
+	}
+	user, _ := f.login(t, "alice")
+	index := request(f.handler, "GET", "https://entry.test/", nil, user)
+	if index.Code != http.StatusOK || strings.Join(requested, ",") != "personal" {
+		t.Fatalf("home provider authorization: status=%d requested=%v", index.Code, requested)
+	}
+	body := index.Body.String()
+	for _, want := range []string{"浏览器工作区", "个人浏览器", "公司代理 &lt;测试&gt;", "可访问浏览器", "需要处理的网络问题", "EGRESS_NOT_CONFIGURED", "camoufox-linux", "env-r7d", "fixed-1920", `href="/browser/personal/"`, "@media(max-width:768px)"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("home workspace missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "/browser/work/") || strings.Contains(body, `href="/manage/?tab=browsers"`) {
+		t.Fatalf("entry account home exposed unauthorized/admin content: %s", body)
+	}
+	for _, forbidden := range []string{"personal-home", "network_policy_sha256", "secret://", "access_token", "session.test/"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("home workspace exposed internal value %q", forbidden)
+		}
+	}
+}
+
+func TestHomeWorkspaceRejectsProviderExtrasAndStaleHealthy(t *testing.T) {
+	f := newFixture(t)
+	f.g.homeProvider = func(_ context.Context, _ []string) []HomeCard {
+		return []HomeCard{
+			{ProfileID: "work", Label: "unauthorized", NetworkName: "private-proxy-name", EntryPath: "/browser/work/", Available: true},
+			{ProfileID: "personal", Label: "Personal", EntryPath: "/browser/personal/", Available: true, Observed: true, Stale: true, Health: "healthy", CheckedAt: "2026-09-20T00:00:00Z"},
+		}
+	}
+	user, _ := f.login(t, "alice")
+	response := request(f.handler, "GET", "https://entry.test/", nil, user)
+	body := response.Body.String()
+	if response.Code != http.StatusOK || strings.Contains(body, "unauthorized") || strings.Contains(body, "private-proxy-name") || strings.Contains(body, "/browser/work/") || strings.Contains(body, "healthy") || !strings.Contains(body, "未知（采样已过期）") {
+		t.Fatalf("home exposed provider extra or stale healthy: %d %s", response.Code, body)
 	}
 }
 
@@ -250,7 +304,7 @@ func TestReauthAndPasswordChange(t *testing.T) {
 	// Self-service password change keeps this login and revokes the others.
 	other, _ := f.login(t, "root")
 	form := url.Values{"csrf": {csrf}, "current": {testPassword}, "password": {"new-synthetic-password-9x"}, "confirm": {"new-synthetic-password-9x"}}
-	if response := request(f.handler, "POST", "https://entry.test/auth/password", url.Values{"csrf": {csrf}, "current": {testPassword}, "password": {"short"}, "confirm": {"short"}}, admin); response.Code != 400 {
+	if response := request(f.handler, "POST", "https://entry.test/auth/password", url.Values{"csrf": {csrf}, "current": {testPassword}, "password": {"abc"}, "confirm": {"abc"}}, admin); response.Code != 400 {
 		t.Fatalf("short password accepted: %d", response.Code)
 	}
 	if response := request(f.handler, "POST", "https://entry.test/auth/password", url.Values{"csrf": {csrf}, "current": {"wrong-password-value"}, "password": {"new-synthetic-password-9x"}, "confirm": {"new-synthetic-password-9x"}}, admin); response.Code != 401 {
@@ -284,5 +338,85 @@ func TestLogoutRevokesManagementAccess(t *testing.T) {
 	}
 	if response := request(f.handler, "GET", "https://entry.test/manage/environments", nil, admin); response.Code != 401 || *reached != 1 {
 		t.Fatalf("logged-out list: %d", response.Code)
+	}
+}
+
+func TestAccessUIRedesignContracts(t *testing.T) {
+	f, _ := manageFixture(t)
+	// 1. Login page visual elements & zero external dependencies
+	loginRes := request(f.handler, "GET", "https://entry.test/auth/login", nil)
+	if loginRes.Code != http.StatusOK {
+		t.Fatalf("login page status: %d", loginRes.Code)
+	}
+	loginBody := loginRes.Body.String()
+	for _, expected := range []string{"auth-card", "登录浏览器平台", "使用你的账号访问已分配的浏览器。", "账号", "密码", "btn-submit"} {
+		if !strings.Contains(loginBody, expected) {
+			t.Fatalf("login page missing visual element %q", expected)
+		}
+	}
+	if strings.Contains(loginBody, "http://") || strings.Contains(loginBody, "https://") || strings.Contains(loginBody, "<script") {
+		t.Fatal("login page must not contain external asset URLs or scripts")
+	}
+
+	// 2. Reauth page visual contracts
+	admin, _ := f.login(t, "root")
+	reauthRes := request(f.handler, "GET", "https://entry.test/auth/reauth", nil, admin)
+	if reauthRes.Code != http.StatusOK {
+		t.Fatalf("reauth page status: %d", reauthRes.Code)
+	}
+	reauthBody := reauthRes.Body.String()
+	for _, expected := range []string{"auth-card", "确认密码", "敏感操作需要在 5 分钟内重新输入密码。", "btn-submit"} {
+		if !strings.Contains(reauthBody, expected) {
+			t.Fatalf("reauth page missing visual element %q", expected)
+		}
+	}
+
+	// 3. Password change page visual contracts
+	pwdRes := request(f.handler, "GET", "https://entry.test/auth/password", nil, admin)
+	if pwdRes.Code != http.StatusOK {
+		t.Fatalf("password page status: %d", pwdRes.Code)
+	}
+	pwdBody := pwdRes.Body.String()
+	for _, expected := range []string{"auth-card", "修改密码", "当前密码", "新密码（4–256 字节）", "再次输入新密码", "btn-submit"} {
+		if !strings.Contains(pwdBody, expected) {
+			t.Fatalf("password page missing visual element %q", expected)
+		}
+	}
+
+	// 4. Index landing page sidebar & cards structure
+	indexRes := request(f.handler, "GET", "https://entry.test/", nil, admin)
+	if indexRes.Code != http.StatusOK {
+		t.Fatalf("index page status: %d", indexRes.Code)
+	}
+	indexBody := indexRes.Body.String()
+	for _, expected := range []string{"sidebar", "sidebar-brand", "浏览器工作区", "summary", "cards", "打开浏览器", "@media(max-width:768px)"} {
+		if !strings.Contains(indexBody, expected) {
+			t.Fatalf("index page missing visual structure %q", expected)
+		}
+	}
+}
+
+func TestHomeNonceChangesPerResponseAndAuthRemainsScriptFree(t *testing.T) {
+	f := newFixture(t)
+	user, _ := f.login(t, "alice")
+	var last string
+	for range 2 {
+		page := request(f.handler, "GET", "https://entry.test/", nil, user)
+		body := page.Body.String()
+		marker := `<script nonce="`
+		start := strings.Index(body, marker)
+		if start < 0 {
+			t.Fatal("home script missing")
+		}
+		nonce := html.UnescapeString(strings.Split(body[start+len(marker):], `"`)[0])
+		csp := page.Header().Get("Content-Security-Policy")
+		if len(nonce) < 24 || nonce == last || !strings.Contains(csp, "script-src 'nonce-"+nonce+"'") || strings.Contains(csp, "script-src 'unsafe-inline'") {
+			t.Fatal("home nonce contract")
+		}
+		last = nonce
+	}
+	auth := request(f.handler, "GET", "https://entry.test/auth/login", nil)
+	if strings.Contains(auth.Header().Get("Content-Security-Policy"), "script-src") || strings.Contains(auth.Body.String(), "<script") {
+		t.Fatal("auth CSP changed")
 	}
 }

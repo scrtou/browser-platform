@@ -1,6 +1,6 @@
 # R7C · 统一代理目录、Secret Store、探针与绑定
 
-状态：进行中。开始日期：2026-09-21。结束日期：未结束。
+状态：已收尾（候选未部署）。开始日期：2026-09-21。结束日期：2026-09-22。
 
 ## 目标与范围
 
@@ -20,9 +20,13 @@
 
 ## 实施与偏差
 
-第一批先处理绑定安全边界：把网络应用前置条件改为纯只读运行态检查；合法运行实例返回 busy/conflict，不调用 Stop，不修改 policy/application/directory。显式“安全关闭并应用”如后续提供，必须是独立确认动作。
+第一批先处理绑定安全边界：把网络应用前置条件改为纯只读运行态检查；合法运行实例返回 busy/conflict，不调用 Stop，不修改 policy/application/directory。最终实现进一步让检查与 policy/application/directory 变更全程持有同一 Profile 生命周期锁，避免空闲检查后被并发启动插入。显式“安全关闭并应用”如后续提供，必须是独立确认动作。
 
-R7C 后续继续建立 `network_profiles.json` 目录、accepted revision/refcount、停用/撤销与绑定 API；不会把旧 R6D 的 per-profile draft 直接冒充统一目录已完成。
+已建立独立 `network_profiles.json` version 1：0600、fsync、原子替换、严格解码，保存逻辑代理、不可变修订、状态、脱敏探针结果、授权集合与审计事件。引用计数从 Profile 目录真实绑定派生；引用中的修订不可撤销。凭据经既有控制器接口一次性进入 Secret Store，Adapter 目录只保存引用；失败/过期先撤销，accepted 修订才可绑定。浏览器绑定时按精确 Profile/Home/App 派生单独 NetworkPolicy，不复用错误身份。
+
+新增脱敏 JSON/表单管理 API，UI 仍归 R7E。认证型 Secret Store grants 在修订创建时冻结为当时 ready 浏览器；未来新浏览器需要新的代理修订，不能扩大旧不可变授权。无认证修订可用于后续浏览器。该限制会作为 R7D/R7E 下拉兼容过滤条件，不在 Adapter 保存明文凭据。
+
+最终收尾复核发现停用/撤销幂等键未进入服务层、绑定与撤销之间缺少共享串行边界，且创建/探测未执行 R7 方案要求的近期密码确认，已登记 [DEV-067](../deviations/DEV-2026-09-22-067-network-profile-mutation-boundaries.md) 并修复候选；重复/冲突/并发/真实网关回归与 2026-09-23 全量 Go test/vet、关键包 race 已补过。结论仍限未部署候选。
 
 ## 验收复核
 
@@ -30,19 +34,19 @@ R7C 后续继续建立 `network_profiles.json` 目录、accepted revision/refcou
 | --- | --- | --- | --- |
 | 普通代理应用对合法运行实例不得 Stop | `adapter/internal/profile/proxy.go` / `proxy_test.go` | 合法 running generation 调用 Apply，断言返回 busy 且 `stopCalls == 0`、policy/app mutation 为 0；固定 Go 1.27 容器 `go test ./internal/profile` 通过 | 第一批通过，未部署 |
 | 普通 DIRECT 应用对合法运行实例不得 Stop | 同上 | 代理 generation 运行时切 DIRECT，断言 busy 且 `stopCalls` 不增长；同一测试包通过 | 第一批通过，未部署 |
-| 统一代理目录与 immutable revision | 待新增目录/API | 目录持久化、原子写、引用计数、accepted/disabled/revoked 状态测试 | 未实现 |
-| Secret Store / 探针 / 撤销 / 绑定 | 复用 R6D 控制接口并重构为目录对象 | Go + 控制端隔离 QA | 未实现 |
+| 统一代理目录与 immutable revision | `profile/network_profiles.go`、`network_profile_catalog` | 0600/严格 JSON/原子写、重开、幂等版本、accepted/disabled/failed/revoked、真实绑定派生引用测试 | 通过，未部署 |
+| Secret Store / 探针 / 撤销 / 绑定 | 复用 R6D 控制接口；`GET/POST /manage/network-profiles`、`POST /manage/browsers/{id}/network-profile` | 导入只保留引用、失败/过期撤销、授权集合、per-browser policy、引用保护、API grant/脱敏测试；全量 test/vet/gofmt/race | 通过，未部署；真实代理协议与控制器能力沿用 R6D/R6F 证据 |
 
 ## 文档与收尾
 
-- [ ] 逐项回看原始任务、计划、设计和实际行为。
-- [ ] 完成本项必要验证，公开报告与私有证据范围明确。
-- [ ] 相关偏差已处理并复核；未完成项有明确状态。
-- [ ] 更新设计/规格/组件/用户或运维说明，或记录不适用原因。
-- [ ] 更新验收索引。
-- [ ] 更新开发进度与生效范围。
-- [ ] 更新开发计划的完成条件、剩余工作和下一项。
-- [ ] 核对 QA 清理、回滚材料、链接及工作区变更。
-- [ ] 更新本记录与工作项索引，确认是否允许开始下一项。
+- [x] 逐项回看原始任务、计划、设计和实际行为。
+- [x] 完成本项必要验证，公开报告与证据范围明确（[R7C 验收](../../infra/sealskin/r7c-network-profile-catalog-acceptance-2026-09-22.md)）。
+- [x] 相关偏差已处理并复核；DEV-062 完整修复，授权冻结边界已写入规格和验收。
+- [x] 更新设计/规格/组件说明；运维和客户端无生产变化。
+- [x] 更新验收索引。
+- [x] 更新开发进度与生效范围。
+- [x] 更新开发计划的完成条件、剩余工作和下一项。
+- [x] 核对 QA 清理、回滚材料、链接及工作区变更。（只用自动删除的测试容器和一次性工具链 volume；volume 已删除，未创建浏览器/网络/Home/凭据。）
+- [x] 更新本记录与工作项索引，确认下一项为 R7D。
 
-收尾结论：未收尾。当前从 DEV-062 的零 Stop 副作用修复开始；随后实现统一代理目录和绑定 API。本项未收尾前不开始 R7D。
+收尾结论：R7C Adapter 候选、管理 API、Secret Store/探针复用、绑定与全量自动化已完成，未部署生产。下一项可开始 R7D；R7E UI 和 R7F 发布边界不提前。

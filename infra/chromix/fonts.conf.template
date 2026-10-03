@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<fontconfig>
+  <dir>@FONTS_DIR@</dir>
+  <dir>/usr/share/fonts/opentype/noto</dir>
+  <cachedir>@CACHE_DIR@</cachedir>
+</fontconfig>

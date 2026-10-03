@@ -18,4 +18,11 @@ docker build \
 
 仅锁定 Firefox 配置还不构成 egress kill switch。静态基线限制 Worker 只接对应 `internal` 网络；受管理 Personal 进一步共享已安装 ACL 的 Guard 命名空间，阻止同网段管理端口访问。不能再加入默认 bridge 或其他具有公网路由的网络。存量会话的实际生效范围见 [开发进度](../../docs/progress.md#deployment)。
 
-生产 Work 使用另一份固定 LinuxServer Firefox/Wayland 镜像，不沿用本目录的 X11 环境产物。R4B 已在该精确旧镜像之上生成正常退出与显示认证候选，并通过控制器停止、s6 停止/resume、入口、错误材料和秘密边界验收；候选尚未替换生产 Work。版本与限制见 [正常退出层](../browser-runtime/README.md) 和 [R4B 阶段验收](../sealskin/target-client-migration-acceptance-2026-09-15.md)。
+生产 Work 使用另一份固定 LinuxServer Firefox/Wayland 镜像，不沿用本目录的 X11 环境产物。R4B 已在该精确旧镜像之上部署正常退出与显示认证层。R7B 发现该兼容镜像本身没有 Relay 锁定配置，因此由 [Work 受管理网络层](../work-firefox-managed/README.md) 以该精确镜像为父层、复用本目录两个权威 Firefox 配置文件生成候选；真实 DIRECT 页面、无绕过、网关故障和三类存储换代恢复已通过，但候选尚未绑定生产。版本与边界见 [R7B 验收](../sealskin/r7b-managed-work-egress-acceptance-2026-09-21.md)。
+
+
+R6R 新增原生 Firefox155.0.1 的通用模板生成，代码及固定桌面镜像在[environment-engines](../environment-engines/README.md)。它以 `firefox` 目标和独立 `.firefox` Home 登记，不迁移或替换本组件历史 Work/legacy 浏览器。
+
+R6R已限定部署并收尾，完整范围和未验证项见[三引擎验收](../sealskin/r6r-multi-engine-acceptance-2026-10-01.md)。
+
+R6S原生Firefox155自定义产物v3支持共享fixed/DPR1与auto/system，固定模式可用独立小窗口；自动模式按系统DPI返回DPR。此能力不改变原生设备特征，不迁移旧Work Home。见[多引擎组件](../environment-engines/README.md)。

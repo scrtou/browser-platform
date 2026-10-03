@@ -1,0 +1,11 @@
+[Unit]
+Description=Sample browser platform cached health every minute
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=60
+AccuracySec=5
+Unit=browser-platform-monitor.service
+
+[Install]
+WantedBy=timers.target

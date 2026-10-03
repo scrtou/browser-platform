@@ -4,5 +4,6 @@ ARG BASE_IMAGE_ID
 ARG DESKTOP_INPUT_SHA256
 COPY configure-desktop.py /usr/local/lib/browser-platform/configure-desktop.py
 RUN python3 /usr/local/lib/browser-platform/configure-desktop.py --existing-rule
+ENV HARDEN_OPENBOX=true
 LABEL io.browser-platform.worker-base="${BASE_IMAGE_ID}" \
       io.browser-platform.desktop-input-sha256="${DESKTOP_INPUT_SHA256}"

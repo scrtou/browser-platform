@@ -2,7 +2,7 @@
 
 日期：2026-09-19（UTC）
 
-本报告记录 R6F 已完成的隔离检查、管理面安全子集生产部署、现有环境 overlay 组合验证和当前未测项。R6F 尚未收尾；生产 Adapter、账号表和控制器镜像已更新，Personal/Work 的 Home、Session 和运行代次保持。详细日志、候选二进制摘要、部署前备份和运行态位于被 Git 忽略的 `runtime/r6f-release-combination-2026-09-19/`。
+本报告记录 R6F 的隔离检查、管理面安全子集生产部署、现有环境 overlay 组合验证，以及 2026-09-20 完成的生产 Home、回退和目标客户端补充验收。R6F 已于 2026-09-20 收尾；生产 Adapter、账号表和控制器镜像已更新，Personal/Work 的 Home、Session 和运行代次保持。详细日志、候选二进制摘要、部署前备份和运行态位于被 Git 忽略的 `runtime/r6f-release-combination-2026-09-19/`。
 
 ## 已完成的隔离检查
 
@@ -53,7 +53,7 @@
 - “安全关闭”返回 303，控制器确认 stopped、0 record / 0 Worker / 0 resources，临时 Profile 标签下无残留容器；目录记录仍为 ready revision 4 且 Home 保留。reauth 后执行归档删除，目录最终为 `deleted` revision 6，原 Home 路径消失，隐藏归档根中保留归档清单，应用定义、Adapter 绑定、临时账号授权和运行容器均清理。
 - 最终再次禁用 `r6f-qa-admin`；后台重载后旧 Cookie 访问管理面跳转登录，使用其最后密码新登录返回 401。`owner`/`test` 完整记录未变化，QA 管理员只保留 Personal/Work 原授权；入口 health/ready 均为 200，Personal 保持 1/1/5、Work 保持 1/1/0。详细 Cookie、密码、策略请求、Session 重定向和运行材料只保存在被忽略的 `profile-lifecycle-1/`。
 
-## 尚未完成
+## 2026-09-19 当时未完成与后续结果
 
 ### 按现有环境推进的复核（2026-09-19）
 
@@ -63,6 +63,12 @@
 - 接入运行控制器的历史核对曾发现管理员身份阻断：运行控制器的 `keys/admins/admin` 公钥与当时使用的仓库 `infra/sealskin/config/admin.json` 私钥不匹配；扫描当时的运行目录未找到匹配私钥，因此未重启控制器、未安装 overlay、未调用管理写 API。2026-09-19 后续只读复核确认当前本机挂载公钥与仓库私钥推导公钥一致，并以该身份完成管理员握手及 `GET /api/admin/apps/installed`（5 个现有应用）读取；历史不匹配不改写为当时通过。
 - 后续重建的生产基线 overlay 与 checks 镜像均成功构建；在无网络、只读容器中重跑 `test_environment_management.py` / `test_home_archive.py` 共 11 项，11 passed。该结果仍不等于已安装生产控制器。
 
-R6F 仍未完成真实 Personal/Work Home 的停机备份、真实 Mac/Trilium 上自定义 artifact 的视觉与交互验收、现有 Personal/Work 的停用/启用/安全关闭写操作和破坏性实际回退。临时 Profile 生命周期通过不能代替两个现有 Profile 的用户数据与运行影响验证。现有 `run-release-combination.py` 仍绑定旧 R5E 资源，当前组合证据来自现有环境的受控手工步骤，不能把旧运行器结果扩大为 R6F 自动化组合通过。R6E 执行器仍未安装为常驻生产服务；自定义作业本轮以受控一次性执行完成并在清理后保留目录审计。用户已完成安全子集页面及普通账号边界实测，但不能扩大为真实 Mac 自定义产物通过。
+R6F 后续已完成真实 Personal/Work Home 的停机备份及健康重建阶段，详见 2026-09-20 补充记录；用户已确认 Work 浏览器内数据正常。随后又完成现有 Personal/Work 的完整停止—资源归零—固定入口重新打开矩阵，以及实际可逆回退：两个 Profile 停止后均确认 records/workers/orphans/resources/relays/guards/networks 为 0；旧 R4B Adapter、配置、version 1 账号表和旧控制器镜像实际启动并通过 health/ready；恢复 R6F Adapter、version 2 账号表、Profile 目录和 overlay 后，未覆盖回退期间产生的较新 `adapter-state.json`，Personal/Work 均恢复为 running，各 1 record/1 Worker，Personal 为 5 resources/1 Relay/1 Guard/2 networks，Work 无受管理网络资源，强制新鲜健康均为 `healthy`。
 
-R6F 保持“进行中”。overlay 安装、现有环境的固化/自定义指纹组合、临时 Profile 生命周期及组合控制根隔离恢复已完成并清理；下一步是真实生产 Home 停机备份、真实客户端自定义 artifact 验收、现有 Personal/Work 生命周期写操作和可逆回退演练。停用或安全关闭会影响现有浏览器，仍须单独选择 Profile 后再操作。在这些条件完成前，不得把 R6 父项标记为收尾。
+2026-09-20，用户在目标 Mac/Trilium 打开绑定已验收自定义 artifact 的临时 Profile，视觉与交互除 Google 第三方反自动化验证页外均正常。首次错误复用 Personal 网络策略被控制器按 Profile/Application/Home 绑定拒绝，见 [DEV-059](../../docs/deviations/DEV-2026-09-20-059-custom-profile-policy-binding.md)；为临时 Profile 建立独立不可变代理策略后，服务器端 1 record/1 Worker、5 resources/1 Relay/1 Guard/2 networks，健康及 entry/control/session/worker/browser/display/proxy/freshness 全部通过。Google 验证页不作为 artifact 故障。验收完成后临时 Profile 已安全关闭并确认 records/workers/orphans/resources/relays/guards/networks 全部为 0，目录记录为 `deleted`；应用移除、Home 归档、账号授权移除和代理 secret 撤销均已核对，Personal/Work 仍保持运行。
+
+R6F 于 2026-09-20 收尾。现有 `run-release-combination.py` 仍绑定旧 R5E 资源，本次组合结论来自现有环境的受控手工步骤，不能写成旧自动运行器通过；R6E 执行器未安装为常驻生产服务，自定义作业以受控一次性执行完成并保留目录审计。这些范围边界不影响本项已约定的组合、客户端、恢复、回退和清理条件。
+
+## 后续补充
+
+2026-09-20 的 Personal / Work 生产 Home 备份阶段见[补充验收记录](r6f-production-home-backup-acceptance-2026-09-20.md)。Personal 完成停止、0 资源确认、928 条目加密归档、verify 和隔离 restore，随后已由用户从固定入口用原 Home 创建健康新代次；旧 CLI 误报见 [DEV-056](../../docs/deviations/DEV-2026-09-20-056-control-cli-error-classification.md)。Work 因缺少 Camoufox 环境字段按 [DEV-057](../../docs/deviations/DEV-2026-09-20-057-fixed-runtime-backup-evidence.md) 增加显式固定运行证据模式；118 项回归通过后，Work 正常停止并完成 5,174 条目加密归档、verify 和隔离 restore，随后也从固定入口用原 Home 创建健康新代次，固定镜像/挂载/强制健康通过。此后完成完整停用—启用矩阵、实际可逆回退、目标 Mac 自定义 artifact 验收和临时 Profile 清理，回退后两者强制新鲜健康均为 healthy。本节保留 2026-09-19 的阶段边界，最终结论以上述后续结果为准。

@@ -106,6 +106,21 @@ func TestEnvironmentCatalogRequiresSeparateAdministratorIdentity(t *testing.T) {
 	}
 }
 
+func TestTemplateCatalogRequiresEnvironmentCatalog(t *testing.T) {
+	cfg := validConfig()
+	cfg.TemplateCatalog = "/private/templates.json"
+	if cfg.Validate() == nil {
+		t.Fatal("template catalog without environment catalog accepted")
+	}
+	cfg.SealSkin.LifecycleEnabled = true
+	cfg.ProfileDirectory = "/private/profiles.json"
+	cfg.EnvironmentCatalog = "/private/environment-catalog.json"
+	cfg.SealSkinAdmin = &SealSkinAdmin{Username: "profile-admin", ClientPrivateKeyFile: "/private/admin.pem"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("template catalog with environment catalog rejected: %v", err)
+	}
+}
+
 func validConfig() Config {
 	return Config{
 		ListenAddress: "127.0.0.1:8080", PublicBaseURL: "https://adapter.example",
@@ -138,5 +153,43 @@ func TestProxyTemplateRequiresCatalogAdminAndLaunchOwner(t *testing.T) {
 	cfg.ProxyTemplate.RelayImage = "relay:latest"
 	if cfg.Validate() == nil {
 		t.Fatal("proxy template with a tag instead of a digest accepted")
+	}
+}
+
+func TestNetworkProfileCatalogRequiresProxyTemplate(t *testing.T) {
+	cfg := validConfig()
+	cfg.SealSkin.LifecycleEnabled = true
+	cfg.ProfileDirectory, cfg.EnvironmentCatalog = "/private/profiles.json", "/private/catalog.json"
+	cfg.SealSkinAdmin = &SealSkinAdmin{Username: "profile-admin", ClientPrivateKeyFile: "/private/admin.pem"}
+	cfg.NetworkProfileCatalog = "/private/network_profiles.json"
+	if cfg.Validate() == nil {
+		t.Fatal("network profile catalog without proxy template accepted")
+	}
+	cfg.ProxyTemplate = &profile.ProxyTemplate{Owner: cfg.SealSkin.Username, RelayImage: "sha256:" + strings.Repeat("1", 64), ProbeImage: "sha256:" + strings.Repeat("2", 64), ProbeURL: "https://probe.example/"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("network profile catalog with complete dependencies rejected: %v", err)
+	}
+}
+
+func TestDirectTemplateRequiresCatalogAdminAndLaunchOwner(t *testing.T) {
+	cfg := validConfig()
+	cfg.SealSkin.LifecycleEnabled = true
+	cfg.DirectTemplate = &profile.DirectTemplate{Owner: cfg.SealSkin.Username, ApprovedResolverID: "cloudflare-r7e", ApprovedResolverIP: "1.1.1.1", RelayImage: "sha256:" + strings.Repeat("1", 64), ProbeImage: "sha256:" + strings.Repeat("2", 64), ProbeURL: "https://probe.example/"}
+	if cfg.Validate() == nil {
+		t.Fatal("direct template without environment catalog accepted")
+	}
+	cfg.ProfileDirectory, cfg.EnvironmentCatalog = "/private/profiles.json", "/private/catalog.json"
+	cfg.SealSkinAdmin = &SealSkinAdmin{Username: "profile-admin", ClientPrivateKeyFile: "/private/admin.pem"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.DirectTemplate.Owner = "profile-admin"
+	if cfg.Validate() == nil {
+		t.Fatal("direct template owner other than the launch identity accepted")
+	}
+	cfg.DirectTemplate.Owner = cfg.SealSkin.Username
+	cfg.DirectTemplate.ApprovedResolverIP = "127.0.0.1"
+	if cfg.Validate() == nil {
+		t.Fatal("loopback DIRECT resolver accepted")
 	}
 }

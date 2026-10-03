@@ -2,7 +2,7 @@
 
 [工作项](../../docs/work-items/R4B-2026-09-14-target-client-migration.md) · [DEV-040](../../docs/deviations/DEV-2026-09-15-040-migration-controller-capabilities.md) · [DEV-041](../../docs/deviations/DEV-2026-09-15-041-camoufox-window-size.md) · [DEV-042](../../docs/deviations/DEV-2026-09-15-042-work-wayland-shutdown.md) · [DEV-043](../../docs/deviations/DEV-2026-09-17-043-caddy-api-config-persistence.md) · [DEV-044](../../docs/deviations/DEV-2026-09-17-044-production-maintenance-runner.md) · [客户端矩阵](../../docs/client-matrix.md) · [运维步骤](../../docs/operations.md#camoufox-入口切换与回退准备)
 
-日期：2026-09-15–17，UTC。状态：**已收尾，生产切换、目标 Mac 与正式 Caddy/Docker/VPS 重启通过**。迁移前能力检查、失败代次清理和生产启动保护已验证；用户确认 r7 Mac 基础分项，并提出窗口过小。r9 已通过完整产物、正常桌面、Linux 公网客户端及实际截图预览验收；用户随后确认 r9 按钮和页面图片预览，但仍看到固定画面上下留边。新的 `fill-r10` 客户端候选已在同一 r9 环境与 QA Home 上通过全视区缩放和坐标回归，用户已确认 Mac 视觉铺满且点击映射正常，但反馈 Trilium 未横向展开时字体细长、分辨率观感与 Work 不同；该非等比显示取舍已记录。Work Firefox/Wayland 的新建兼容候选已通过退出、显示、恢复和秘密边界组合验收并清理专用 QA。`release-ready-2` 已部署共享控制器、账号入口、Work 兼容镜像和 r9/fill-r10 Personal；本机/公网认证、目标 Mac 生产入口及正式 Caddy/Docker/VPS 重启通过；R2 的退出全部登录与 Debian 13 仍待外部条件。
+日期：2026-09-15–17，UTC。状态：**已收尾，生产切换、目标 Mac 与正式 Caddy/Docker/VPS 重启通过**。迁移前能力检查、失败代次清理和生产启动保护已验证；用户确认 r7 Mac 基础分项，并提出窗口过小。r9 已通过完整产物、正常桌面、Linux 公网客户端及实际截图预览验收；用户随后确认 r9 按钮和页面图片预览，但仍看到固定画面上下留边。新的 `fill-r10` 客户端候选已在同一 r9 环境与 QA Home 上通过全视区缩放和坐标回归，用户已确认 Mac 视觉铺满且点击映射正常，但反馈 Trilium 未横向展开时字体细长、分辨率观感与 Work 不同；该非等比显示取舍已记录。Work Firefox/Wayland 的新建兼容候选已通过退出、显示、恢复和秘密边界组合验收并清理专用 QA。`release-ready-2` 已部署共享控制器、账号入口、Work 兼容镜像和 r9/fill-r10 Personal；本机/公网认证、目标 Mac 生产入口及正式 Caddy/Docker/VPS 重启通过。R2 的退出全部登录与 Debian 13 在本报告收尾时仍待外部条件，用户于 2026-09-20 后续取消两项。
 
 ## 发现与实际处理
 
@@ -115,4 +115,4 @@ r8 首轮重放引用已清理的旧 QA 网络，在浏览器启动前失败；�
 
 首个生产包准备和独立验证未改动生产；发现 API 加载的 Caddy 配置不能跨服务重启后，`release-ready-2` 增加 autosave drop-in 并重新完成 39 文件复核。管理员已安装 tmpfiles、Docker/Caddy systemd drop-in 和 0700 `/run/browser-platform/session-secrets`。维护过程的控制 socket 指纹、QA 管理端口、多 Cookie、根路径状态和 `embedded` 断言失败均保留，修复后从当前 journal/阶段续接，详见 DEV-043/044。
 
-当前发布仍缺 R2 的退出全部登录持续运行验证与 Debian 13；Caddy/Docker/VPS 正式重启已经通过。目标 Mac 已确认生产账号登录、Personal 画面/点击/图片预览和 Work 打开正常；回退材料已保留但没有为了验收而破坏当前成功代次执行回退。上述结果完成实际切换、本机/公网认证、生产实机、daemon 与整机恢复验证；R4B 已收尾，退出登录与 Debian 13 归 R2，本轮未启动 R6。
+本报告收尾时仍缺 R2 的退出全部登录持续运行验证与 Debian 13；Caddy/Docker/VPS 正式重启已经通过。目标 Mac 已确认生产账号登录、Personal 画面/点击/图片预览和 Work 打开正常；回退材料已保留但没有为了验收而破坏当前成功代次执行回退。上述结果完成实际切换、本机/公网认证、生产实机、daemon 与整机恢复验证；R4B 已收尾。2026-09-20 用户后来取消退出登录与 Debian 13 两项，它们保持未执行且不记为通过。

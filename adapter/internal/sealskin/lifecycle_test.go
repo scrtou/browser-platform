@@ -70,6 +70,40 @@ func TestRuntimeInventoryFailsClosedOnIncompleteResponses(t *testing.T) {
 	}
 }
 
+func TestRuntimeDirectCapabilityFromEncryptedInventory(t *testing.T) {
+	serverPrivate, clientPrivate := testKeys(t)
+	fake := &fakeSealSkinServer{serverPrivate: serverPrivate, clientPublic: &clientPrivate.PublicKey}
+	server := httptest.NewServer(fake)
+	defer server.Close()
+	client := newTestClient(t, server.URL, serverPrivate, clientPrivate, server.Client())
+	for _, test := range []struct {
+		name    string
+		present bool
+		version int
+	}{
+		{name: "legacy field absent"},
+		{name: "direct version 1", present: true, version: 1},
+		{name: "future version is not downgraded", present: true, version: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			wire := map[string]any{"version": 1, "home_name": "personal", "records": []any{}, "workers": []any{}}
+			if test.present {
+				wire["network_direct_version"] = test.version
+			}
+			fake.mu.Lock()
+			fake.runtime = wire
+			fake.mu.Unlock()
+			snapshot, err := client.InspectHome(context.Background(), "personal")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, found := snapshot.Capabilities()["network_direct_version"]; !found || got != test.version {
+				t.Fatalf("DIRECT capability: got %d (present=%v), want observed version %d", got, found, test.version)
+			}
+		})
+	}
+}
+
 func TestLifecycleRejectsInvalidLocalInputs(t *testing.T) {
 	client := &Client{} // A malformed call must fail before contacting the server.
 	for _, home := range []string{"", "cleanroom", "CLEANROOM", "../personal", "personal/work", "個人"} {

@@ -21,6 +21,9 @@ import (
 
 const passwordIterations = 600000
 
+const MinPasswordBytes = 4
+const MaxPasswordBytes = 256
+
 var accountID = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 
 type Account struct {
@@ -34,13 +37,14 @@ type Account struct {
 }
 
 type Registry struct {
-	Version int       `json:"version"`
-	Users   []Account `json:"users"`
+	Version       int       `json:"version"`
+	Users         []Account `json:"users"`
+	SetupRequired bool      `json:"setup_required,omitempty"`
 }
 
 func HashPassword(password string) (string, error) {
-	if len(password) < 12 || len(password) > 256 {
-		return "", errors.New("password must contain between 12 and 256 bytes")
+	if len(password) < MinPasswordBytes || len(password) > MaxPasswordBytes {
+		return "", errors.New("password must contain between 4 and 256 bytes")
 	}
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
@@ -78,6 +82,9 @@ func checkPassword(encoded, password string) bool {
 // registryVersion is 2 as soon as any account carries a role; otherwise the
 // table stays at version 1 so an older Adapter can still load it.
 func registryVersion(registry Registry) int {
+	if registry.SetupRequired {
+		return 3
+	}
 	for _, user := range registry.Users {
 		if user.Role != "" {
 			return 2
@@ -87,6 +94,12 @@ func registryVersion(registry Registry) int {
 }
 
 func validateRegistry(registry Registry, profiles map[string]bool) error {
+	if registry.SetupRequired {
+		if registry.Version == 3 && registry.Users != nil && len(registry.Users) == 0 {
+			return nil
+		}
+		return errors.New("invalid administrator initialization state")
+	}
 	if (registry.Version != 1 && registry.Version != 2) || len(registry.Users) == 0 || len(registry.Users) > 64 {
 		return errors.New("invalid access account registry")
 	}

@@ -20,5 +20,6 @@ RUN python3 /tmp/browser-platform-configure-desktop.py \
     && rm /tmp/browser-platform-configure-desktop.py
 RUN chmod 0755 /usr/local/bin/browser-platform-entrypoint \
       /usr/local/bin/browser-platform-camoufox /defaults/autostart
-ENV BROWSER_PLATFORM_ARTIFACT_FILE=/run/browser-platform/environment.json
+ENV BROWSER_PLATFORM_ARTIFACT_FILE=/run/browser-platform/environment.json \
+    HARDEN_OPENBOX=true
 ENTRYPOINT ["/usr/local/bin/browser-platform-entrypoint"]

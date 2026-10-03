@@ -348,6 +348,54 @@ def test_missing_adapter_journal_is_not_silently_fabricated(setup, monkeypatch):
     assert not (root / "adapter/state.json").exists()
 
 
+def test_fixed_runtime_evidence_binds_exact_application_image(setup, monkeypatch):
+    args, root = setup
+    source_arguments(args, root, monkeypatch)
+    image_id = "sha256:" + "e" * 64
+    artifact = file(root / "environment/artifact.json", backup.canonical({
+        "imageId": image_id, "baseImageId": "sha256:" + "d" * 64,
+        "inputSHA256": "a" * 64, "files": {"Dockerfile": "b" * 64}}))
+    acceptance = file(root / "environment/acceptance.json", backup.canonical({
+        "status": "PASS", "profiles": {"qa": {"status": "running", "records": 1,
+        "workers": 1, "orphans": 0}}, "containers": {"qa": {"worker_image": image_id,
+        "all_running": True}}}))
+    monkeypatch.setattr(backup.home_backup, "app_context", lambda *_: {
+        "application_id": "qa-app", "image": image_id, "image_id": image_id,
+        "environment_id": "", "artifact_sha256": "", "acceptance_sha256": "",
+        "network_policy_id": "", "network_policy_sha256": ""})
+    args.artifact, args.acceptance, args.fixed_runtime_evidence = artifact, acceptance, True
+    monkeypatch.setattr(backup, "collect_sources", module_source_collect_sources())
+    backup.create(args)
+    assert backup.verify(args)["result"] == "BACKUP_VERIFIED"
+    receipt = backup.restore(args)
+    assert receipt["ready_to_activate"] is False
+    assert (args.target / "environment/artifact.json").read_bytes() == artifact.read_bytes()
+
+
+def test_fixed_runtime_evidence_is_explicit_and_rejects_image_mismatch(setup, monkeypatch):
+    args, root = setup
+    source_arguments(args, root, monkeypatch)
+    image_id = "sha256:" + "e" * 64
+    args.artifact = file(root / "environment/artifact.json", backup.canonical({
+        "imageId": "sha256:" + "f" * 64, "inputSHA256": "a" * 64,
+        "files": {"Dockerfile": "b" * 64}}))
+    args.acceptance = file(root / "environment/acceptance.json", backup.canonical({
+        "status": "PASS", "profiles": {"qa": {"status": "running", "records": 1,
+        "workers": 1, "orphans": 0}}, "containers": {"qa": {"worker_image": image_id,
+        "all_running": True}}}))
+    monkeypatch.setattr(backup.home_backup, "app_context", lambda *_: {
+        "application_id": "qa-app", "image": image_id, "image_id": image_id,
+        "environment_id": "", "artifact_sha256": "", "acceptance_sha256": "",
+        "network_policy_id": "", "network_policy_sha256": ""})
+    original = module_source_collect_sources()
+    args.fixed_runtime_evidence = False
+    with pytest.raises(Exception, match="BACKUP_ENVIRONMENT_MISMATCH"):
+        original(args)
+    args.fixed_runtime_evidence = True
+    with pytest.raises(Exception, match="BACKUP_FIXED_RUNTIME_EVIDENCE_INVALID"):
+        original(args)
+
+
 def access_and_session_state(args, root):
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     import yaml
@@ -468,3 +516,37 @@ def test_legacy_plaintext_control_archive_refuses_session_and_login_state(setup,
     with pytest.raises(SystemExit, match="secure-backup.py"):
         backup.home_backup.control_state(args)
     assert not args.output.exists()
+
+
+@pytest.mark.parametrize("revoked_after_backup", [False, True])
+def test_proxy_creation_authorization_encrypted_restore(setup, revoked_after_backup):
+    from app.secret_store import FileSecretStore, SecretError
+    args, root = setup
+    store_path = root / "control/proxy-secret-store"
+    key = root / "key-material/secret-store.key"
+    shutil.rmtree(store_path)
+    key.unlink()
+    store = FileSecretStore.initialize(store_path, key)
+    original = {"owner": "qa", "profile": "original", "home": "original-home", "app": "original-app"}
+    added = {"owner": "qa", "profile": "new", "home": "new-home", "app": "new-app"}
+    refs = store.put("qa-proxy", 1, [original], "qa-user", "qa-proxy-secret-sentinel")
+    store.authorize(added, refs["username"], refs["password"], "a" * 64)
+    authorization = store.authorization_path(added).read_bytes()
+    backup.create(args)
+    assert b"qa-proxy-secret-sentinel" not in args.output.read_bytes()
+    backup.verify(args)
+    backup.restore(args)
+    restored = FileSecretStore(args.target / "control/proxy-secret-store", args.target / "key-material/secret-store.key")
+    assert restored.authorization_path(added).read_bytes() == authorization
+    with pytest.raises(SecretError, match="SECRET_RECOVERY_LOCKED"):
+        restored.resolve(added, refs["username"], refs["password"])
+    if revoked_after_backup:
+        store.revoke(refs["password"], "b" * 32)
+    backup.activate(args)
+    if revoked_after_backup:
+        with pytest.raises(SecretError, match="SECRET_REVOKED"):
+            restored.resolve(added, refs["username"], refs["password"])
+    else:
+        assert restored.resolve(added, refs["username"], refs["password"])["password"] == b"qa-proxy-secret-sentinel"
+        with pytest.raises(SecretError, match="SECRET_ACCESS_DENIED"):
+            restored.resolve({**added, "app": "other"}, refs["username"], refs["password"])

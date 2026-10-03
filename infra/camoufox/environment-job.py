@@ -10,6 +10,7 @@ published.
 """
 
 import argparse
+import copy
 import fcntl
 import hashlib
 import importlib.util
@@ -27,11 +28,15 @@ import time
 
 from acceptance import docker
 from environment import ArtifactError, decode, encode, validate_spec
+from template_sources import generate_combination, publish_compatibility, validate_generation_target, validate_target_shape
 
 ROOT = Path(__file__).resolve().parent
 REQUEST_VERSION = 1
 STATUS_VERSION = 1
 CATALOG_VERSION = 1
+TEMPLATE_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,95}")
+FIREFOX_VERSION = re.compile(r"(?:^|[ ;])Firefox/([0-9]+\.[0-9]+)(?:[ ;]|$)")
+RV_VERSION = re.compile(r"(?:^|[ (;])rv:([0-9]+\.[0-9]+)\)")
 JOB_ID = re.compile(r"^job-[a-f0-9]{16}$")
 NAME = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 QA_LABEL = "io.browser-platform.qa=environment-job"
@@ -103,14 +108,33 @@ def read_request(path):
         request = decode(read_bounded(path, 64 * 1024))
     except (ArtifactError, ValueError) as error:
         raise JobError("ENVIRONMENT_JOB_INVALID", "undecodable request") from error
-    if (not isinstance(request, dict) or set(request) != {"version", "job_id", "actor", "requested_at", "spec"}
-            or request["version"] != REQUEST_VERSION or not isinstance(request["job_id"], str)
-            or not JOB_ID.fullmatch(request["job_id"]) or not isinstance(request["actor"], str)
-            or not NAME.fullmatch(request["actor"]) or not isinstance(request["requested_at"], str)):
+    fields = {"version", "job_id", "actor", "requested_at", "spec"}
+    if isinstance(request, dict) and request.get("version") in (2, 3):
+        fields.add("templates")
+    if isinstance(request, dict) and request.get("version") == 3:
+        fields.add("generation")
+    if (not isinstance(request, dict) or set(request) != fields
+            or type(request["version"]) is not int or request["version"] not in (REQUEST_VERSION, 2, 3)
+            or not isinstance(request["job_id"], str) or not JOB_ID.fullmatch(request["job_id"])
+            or not isinstance(request["actor"], str) or not NAME.fullmatch(request["actor"])
+            or not isinstance(request["requested_at"], str)):
         raise JobError("ENVIRONMENT_JOB_INVALID", "request fields")
+    if request["version"] in (2, 3) and not isinstance(request["templates"],dict):
+        raise JobError("ENVIRONMENT_JOB_INVALID", "template references")
+    if request["version"] == 3:
+        try:
+            validate_target_shape(request['generation'])
+        except ValueError as error:
+            raise JobError("GENERATION_TARGET_INVALID") from error
     spec = request["spec"]
     try:
-        validate_spec(spec)
+        check_spec=copy.deepcopy(spec)
+        if request.get('generation',{}).get('engine')=='chromix':
+            if check_spec.get('webrtcPolicy')!='proxy-only' or 'webrtc-proxy-only' not in check_spec.get('requiredCapabilities',[]):
+                raise JobError('UNSUPPORTED_CAPABILITY')
+            check_spec['webrtcPolicy']='disabled'
+            check_spec['requiredCapabilities']=['webrtc-disabled' if v=='webrtc-proxy-only' else v for v in check_spec['requiredCapabilities']]
+        validate_spec(check_spec)
     except ArtifactError as error:
         raise JobError(str(error) if str(error) == "UNSUPPORTED_CAPABILITY" else "ENVIRONMENT_JOB_INVALID", "spec") from error
     if spec["id"] != "env-custom-" + request["job_id"][4:] or spec["revision"] != 1:
@@ -120,7 +144,7 @@ def read_request(path):
 
 class Spool:
     def __init__(self, root):
-        self.root = private_directory(root)
+        self.root = private_directory(Path(root).resolve())
         for name in ("queue", "status", "artifacts", "evidence"):
             private_directory(self.root / name)
 
@@ -300,13 +324,36 @@ def append_catalog(path, entry):
         os.fchmod(lock.fileno(), 0o600)
         fcntl.flock(lock, fcntl.LOCK_EX)
         catalog = read_catalog(path)
-        if any(isinstance(item, dict) and item.get("id") == entry["id"] for item in catalog["artifacts"]):
+        existing=next((item for item in catalog['artifacts'] if isinstance(item,dict) and item.get('id')==entry['id']),None)
+        if existing is not None:
+            if {k:v for k,v in existing.items() if k!='accepted_at'}=={k:v for k,v in entry.items() if k!='accepted_at'}:return
             raise JobError("CATALOG_ID_EXISTS")
         catalog["artifacts"].append(entry)
         write_private(path, encode(catalog))
 
 
-def catalog_entry(*, environment_id, artifact, artifact_sha, report_sha, image, definition, capabilities, source, job_id=""):
+def template_metadata(artifact, browser_template_id):
+    """Derive the R7D coherence fields from the accepted artifact bytes."""
+    spec, resolved = artifact.get("spec"), artifact.get("resolvedConfig")
+    if (not TEMPLATE_ID.fullmatch(browser_template_id or "") or not isinstance(spec, dict)
+            or not isinstance(resolved, dict) or spec.get("osFamily") != "linux"
+            or type(spec.get("revision")) is not int or spec["revision"] < 1):
+        raise JobError("CATALOG_METADATA_INVALID")
+    user_agent, platform_name = resolved.get("navigator.userAgent"), resolved.get("navigator.platform")
+    if not isinstance(user_agent, str) or not isinstance(platform_name, str) or not platform_name:
+        raise JobError("CATALOG_METADATA_INVALID")
+    browser, rv = FIREFOX_VERSION.search(user_agent), RV_VERSION.search(user_agent)
+    if not browser or not rv or browser.group(1) != rv.group(1):
+        raise JobError("CATALOG_METADATA_INVALID")
+    return {
+        "template_revision": spec["revision"], "browser_template_id": browser_template_id,
+        "browser_engine": "camoufox", "browser_version": browser.group(1),
+        "os_family": spec["osFamily"], "platform": platform_name, "user_agent": user_agent,
+    }
+
+
+def catalog_entry(*, environment_id, artifact, artifact_sha, report_sha, image, definition, capabilities,
+                  browser_template_id, source, job_id=""):
     spec = artifact["spec"]
     entry = {
         "id": environment_id, "sha256": artifact_sha, "acceptance_sha256": report_sha, "image": image,
@@ -314,7 +361,7 @@ def catalog_entry(*, environment_id, artifact, artifact_sha, report_sha, image, 
         "required_runtime_capabilities": capabilities,
         "locale": spec["locale"], "languages": spec["languages"], "timezone": spec["timezone"],
         "screen": f'{spec["screen"]["width"]}x{spec["screen"]["height"]}@{spec["screen"]["deviceScaleFactor"]}',
-        "accepted_at": now(),
+        "accepted_at": now(), **template_metadata(artifact, browser_template_id),
     }
     if job_id:
         entry["job_id"] = job_id
@@ -350,6 +397,13 @@ def process(spool, request_path, args, prepare, *, generator=generate, fixture=F
         spool.write_status(job_id, status="queued", phase="wait", code="HOST_MEMORY_LOW",
                            message=f"available {free} MiB, need {args.min_free_mib} MiB")
         return "queued"
+    if request.get('generation',{}).get('engine') in ('chromix','firefox') or request.get('generation',{}).get('engine')=='camoufox' and request['spec']['screen'].get('mode')=='auto':
+        from native_jobs import process_native
+        try:
+            return process_native(spool,request,args,fixture=fixture,append_catalog=append_catalog,generator=generator)
+        except JobError as error:
+            spool.write_status(job_id,status='failed',phase='failed',code=error.code,finished_at=now())
+            return 'failed'
     spec = request["spec"]
     environment_id = spec["id"]
     artifact_dir = private_directory(spool.root / "artifacts" / environment_id)
@@ -361,16 +415,35 @@ def process(spool, request_path, args, prepare, *, generator=generate, fixture=F
         image = resolve_image(args.image)
         progress["image"] = image
         spool.write_status(job_id, status="running", phase="generate", **progress)
-        attempts = generator(spec, image, artifact_dir, evidence_dir)
-        raw = artifact_path.read_bytes()
+        fingerprint, display = None, None
+        if request.get('templates') is not None:
+            if not getattr(args,'template_catalog',None):raise JobError('TEMPLATE_CATALOG_REQUIRED')
+            if request.get('generation') is not None:
+                validate_generation_target(args.template_catalog,request['generation'],args.browser_template_id)
+            attempts, fingerprint, display = generate_combination(spool.root,request,image,artifact_dir,evidence_dir,generator)
+        elif artifact_path.exists():
+            # Process interruption must never regenerate an existing device.
+            attempts = 0
+        else:
+            attempts = generator(spec, image, artifact_dir, evidence_dir)
+        raw = read_bounded(artifact_path, 2 * 1024 * 1024)
         artifact = decode(raw)
+        if artifact.get("spec") != spec or artifact.get("runtimeImageDigest") != image:
+            raise JobError("ENVIRONMENT_ARTIFACT_MISMATCH", "retained artifact differs from request")
+        if request.get('generation') is not None:
+            metadata = template_metadata(artifact,args.browser_template_id)
+            if metadata['browser_engine'] != request['generation']['engine'] or metadata['browser_version'] != request['generation']['browser_version']:
+                raise JobError('GENERATION_ARTIFACT_MISMATCH')
         artifact_sha = hashlib.sha256(raw).hexdigest()
         progress.update(attempts=attempts, artifact_id=artifact["id"], artifact_sha256=artifact_sha)
         spool.write_status(job_id, status="running", phase="acceptance", **progress)
-        with fixture(job_id, image) as active:
-            code = accept(artifact_path, active.networks["internal"], report_path, args.recreations, evidence_dir / "acceptance.log")
-        if code or not report_path.is_file():
-            raise JobError("ENVIRONMENT_ACCEPTANCE_FAILED", f"exit {code}")
+        if not report_path.exists():
+            with fixture(job_id, image) as active:
+                code = accept(artifact_path, active.networks["internal"], report_path, args.recreations, evidence_dir / "acceptance.log")
+            if code or not report_path.is_file():
+                raise JobError("ENVIRONMENT_ACCEPTANCE_FAILED", f"exit {code}")
+        # Existing reports are immutable; only a complete matching PASS can
+        # resume publication. Failed reports remain available for inspection.
         acceptance_summary(report_path, artifact_sha, image)
         report_sha = hashlib.sha256(report_path.read_bytes()).hexdigest()
         progress["acceptance_sha256"] = report_sha
@@ -378,13 +451,22 @@ def process(spool, request_path, args, prepare, *, generator=generate, fixture=F
         definition = build_template(prepare, artifact_path=artifact_path, report_path=report_path, artifact=artifact,
                                     image=image, args=args, verify=args.verify_in_image)
         entry = catalog_entry(environment_id=environment_id, artifact=artifact, artifact_sha=artifact_sha, report_sha=report_sha,
-                              image=image, definition=definition, capabilities=capabilities(image), source="custom", job_id=job_id)
+                              image=image, definition=definition, capabilities=capabilities(image),
+                              browser_template_id=args.browser_template_id, source="custom", job_id=job_id)
+        if fingerprint is not None:
+            entry['label']=fingerprint['label']+' · '+display['label']
+        if request.get('generation') is not None:
+            validate_generation_target(args.template_catalog,request['generation'],args.browser_template_id)
         append_catalog(args.catalog, entry)
+        if getattr(args,'template_catalog',None):
+            if display is None:
+                display={'id':'display-'+job_id,'revision':1,'label':entry['screen']}
+            publish_compatibility(args.template_catalog,entry,display,write_private,encode,request.get('generation'))
     except JobError as error:
         spool.write_status(job_id, status="failed", phase="failed", code=error.code, message=error.message,
                            finished_at=now(), **progress)
         return "failed"
-    except (OSError, ValueError, subprocess.SubprocessError, ArtifactError) as error:
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError, ArtifactError) as error:
         spool.write_status(job_id, status="failed", phase="failed", code="ENVIRONMENT_JOB_FAILED",
                            message=type(error).__name__, finished_at=now(), **progress)
         return "failed"
@@ -400,6 +482,17 @@ def run_next(spool, args, prepare, **hooks):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return "locked"
+        retry_job = getattr(args, "retry_job", None)
+        if retry_job:
+            if not JOB_ID.fullmatch(retry_job):
+                raise JobError("ENVIRONMENT_JOB_INVALID")
+            path = spool.root / "queue" / (retry_job + ".json")
+            if not path.is_file():
+                raise JobError("ENVIRONMENT_JOB_INVALID")
+            status = spool.status(retry_job)
+            if status and status.get("status") == "accepted":
+                return "accepted"
+            return process(spool, path, args, prepare, **hooks)
         queued = spool.queued()
         if not queued:
             return None
@@ -419,18 +512,23 @@ def register(args, prepare):
     definition = build_template(prepare, artifact_path=artifact_path, report_path=report_path, artifact=artifact,
                                 image=image, args=args, verify=args.verify_in_image)
     entry = catalog_entry(environment_id=artifact["spec"]["id"], artifact=artifact, artifact_sha=artifact_sha, report_sha=report_sha,
-                          image=image, definition=definition, capabilities=image_capabilities(image), source="frozen")
+                          image=image, definition=definition, capabilities=image_capabilities(image),
+                          browser_template_id=args.browser_template_id, source="frozen")
     append_catalog(args.catalog, entry)
     print(json.dumps({"registered": entry["id"], "sha256": artifact_sha, "acceptance_sha256": report_sha}))
 
 
 def add_template_arguments(parser):
+    parser.add_argument("--native-targets", type=Path, help="fixed native generator image registry")
+    parser.add_argument("--template-catalog", type=Path, help="compatible browser/display catalog; required for v2/v3 combinations")
     parser.add_argument("--catalog", type=Path, required=True, help="Adapter environment_catalog file (0600)")
     parser.add_argument("--session-origin", required=True, help="trusted HTTPS origin of the SealSkin client")
     parser.add_argument("--username", default="profile-adapter")
     parser.add_argument("--clipboard-addon", type=Path)
     parser.add_argument("--store", default="SealSkin Apps")
     parser.add_argument("--template", default="Default")
+    parser.add_argument("--browser-template-id", required=True,
+                        help="accepted R7D browser template bound to the artifact")
     parser.add_argument("--no-verify-in-image", dest="verify_in_image", action="store_false")
 
 
@@ -440,9 +538,11 @@ def main():
     run = commands.add_parser("run", help="process queued jobs")
     run.add_argument("--spool", type=Path, required=True)
     run.add_argument("--image", required=True, help="complete sha256: digest of the pinned Worker image")
+    run.add_argument("--client-browsers", type=Path, help="fixed Playwright browser cache for dynamic display acceptance")
     run.add_argument("--recreations", type=int, default=10)
     run.add_argument("--min-free-mib", type=int, default=2048)
     run.add_argument("--watch", type=int, default=0, help="poll interval in seconds; 0 processes at most one job")
+    run.add_argument("--retry-job", help="explicitly resume one retained job; never used with --watch")
     add_template_arguments(run)
     reg = commands.add_parser("register", help="add a frozen artifact and its successful report to the catalog")
     reg.add_argument("--artifact", type=Path, required=True)
@@ -456,6 +556,8 @@ def main():
         return
     if not re.fullmatch(r"sha256:[a-f0-9]{64}", args.image) or not 10 <= args.recreations <= 50 or args.min_free_mib < 0:
         parser.error("image must be a complete digest; recreations 10-50")
+    if args.retry_job and (not JOB_ID.fullmatch(args.retry_job) or args.watch):
+        parser.error("retry-job must be a job ID and cannot be combined with watch")
     spool = Spool(args.spool)
     while True:
         result = run_next(spool, args, prepare)

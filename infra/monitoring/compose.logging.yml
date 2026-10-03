@@ -1,0 +1,17 @@
+# Explicit candidate override. Applying requires recreating named containers.
+# Do not use this file to recreate production without a maintenance plan.
+services:
+  sealskin:
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+        compress: "true"
+  profile-relay-personal:
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+        compress: "true"

@@ -691,6 +691,13 @@ func selectRecovery(list *checkList, definition Definition) *Recovery {
 			"由运维执行 stop-profile 清理本代次，确认资源全部消失后重新打开入口；Home 数据保留",
 		}}
 	case browser != nil && browser.Status == CheckFail:
+		if definition.BrowserTemplateID != "" {
+			return &Recovery{Code: "BROWSER_EXITED", Title: "受管浏览器已退出，远程桌面与会话仍在运行", Blocking: true, Steps: []string{
+				"不要从远程桌面菜单启动 Firefox 或其他浏览器；它们不属于当前受管模板",
+				"返回管理页，对该浏览器点击「安全关闭」，等待运行资源释放后重新打开固定入口；Home 与浏览数据保留",
+				"如果安全关闭失败或资源状态不明，保留 Home 和占用，由运维核对后重试",
+			}}
+		}
 		return &Recovery{Code: "BROWSER_EXITED", Title: "浏览器已退出，远程桌面与会话仍在运行", Blocking: true, Steps: []string{
 			"点击「继续进入会话」回到远程桌面；只刷新入口会回到空桌面",
 			"在远程桌面空白处点右键，选择 FireFox 重新打开浏览器（Mac 触控板可双指点按）",

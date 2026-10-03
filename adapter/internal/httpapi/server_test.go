@@ -232,7 +232,8 @@ func TestBootstrapRedirectAndUnknownOwnershipError(t *testing.T) {
 	start := httptest.NewRequest(http.MethodPost, "https://adapter.example/browser/personal/start", nil)
 	startResponse := httptest.NewRecorder()
 	server.ServeHTTP(startResponse, start)
-	if startResponse.Code != http.StatusConflict || strings.Contains(startResponse.Body.String(), "EOF") {
+	if startResponse.Code != http.StatusConflict || !strings.Contains(startResponse.Body.String(), "安全关闭") ||
+		!strings.Contains(startResponse.Body.String(), "固定入口") || strings.Contains(startResponse.Body.String(), "operator recovery") {
 		t.Fatalf("start status=%d body=%q", startResponse.Code, startResponse.Body.String())
 	}
 	profiles.err = profile.ErrResumeFailed

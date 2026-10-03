@@ -90,9 +90,18 @@ type Config struct {
 	// surface can change them; the configured profiles seed its first import.
 	ProfileDirectory   string `json:"profile_directory,omitempty"`
 	EnvironmentCatalog string `json:"environment_catalog,omitempty"`
+	// TemplateCatalog is R7D's explicit browser/display compatibility directory.
+	// It depends on environment_catalog for immutable fingerprint artifacts.
+	TemplateCatalog         string `json:"template_catalog,omitempty"`
+	LegacyNetworkMigrations string `json:"legacy_network_migrations,omitempty"`
+	// NetworkProfileCatalog is R7C's independent unified proxy directory.
+	NetworkProfileCatalog string `json:"network_profile_catalog,omitempty"`
 	// ProxyTemplate enables R6D proxy drafts: the fixed owner, Relay/probe
 	// image digests and approved probe URL every generated policy shares.
 	ProxyTemplate *profile.ProxyTemplate `json:"proxy_template,omitempty"`
+	// DirectTemplate enables server-side materialization of controlled DIRECT
+	// policies for R7E browser creation and switching.
+	DirectTemplate *profile.DirectTemplate `json:"direct_template,omitempty"`
 	// EnvironmentJobSpool is the private directory shared with the host-side
 	// custom fingerprint job runner (R6E); it requires environment_catalog.
 	EnvironmentJobSpool string               `json:"environment_job_spool,omitempty"`
@@ -132,6 +141,9 @@ func Load(path string) (Config, error) {
 	cfg.ControlSocket = resolvePath(baseDir, cfg.ControlSocket)
 	cfg.ProfileDirectory = resolvePath(baseDir, cfg.ProfileDirectory)
 	cfg.EnvironmentCatalog = resolvePath(baseDir, cfg.EnvironmentCatalog)
+	cfg.TemplateCatalog = resolvePath(baseDir, cfg.TemplateCatalog)
+	cfg.LegacyNetworkMigrations = resolvePath(baseDir, cfg.LegacyNetworkMigrations)
+	cfg.NetworkProfileCatalog = resolvePath(baseDir, cfg.NetworkProfileCatalog)
 	cfg.EnvironmentJobSpool = resolvePath(baseDir, cfg.EnvironmentJobSpool)
 	if cfg.SealSkin.LifecycleEnabled && cfg.ControlSocket == "" && cfg.StateFile != "" {
 		cfg.ControlSocket = cfg.StateFile + ".control.sock"
@@ -184,6 +196,12 @@ func (cfg Config) Validate() error {
 	if cfg.EnvironmentJobSpool != "" && cfg.EnvironmentCatalog == "" {
 		return errors.New("environment_job_spool requires environment_catalog")
 	}
+	if cfg.TemplateCatalog != "" && cfg.EnvironmentCatalog == "" {
+		return errors.New("template_catalog requires environment_catalog")
+	}
+	if cfg.LegacyNetworkMigrations != "" && (cfg.DirectTemplate == nil || cfg.EnvironmentCatalog == "" || cfg.Access == nil) {
+		return errors.New("legacy_network_migrations requires direct_template, environment_catalog and access")
+	}
 	if cfg.ProxyTemplate != nil {
 		if cfg.EnvironmentCatalog == "" {
 			return errors.New("proxy_template requires environment_catalog and sealskin_admin")
@@ -194,6 +212,20 @@ func (cfg Config) Validate() error {
 		if err := cfg.ProxyTemplate.Validate(); err != nil {
 			return err
 		}
+	}
+	if cfg.DirectTemplate != nil {
+		if cfg.EnvironmentCatalog == "" {
+			return errors.New("direct_template requires environment_catalog and sealskin_admin")
+		}
+		if cfg.DirectTemplate.Owner != cfg.SealSkin.Username {
+			return errors.New("direct_template.owner must equal sealskin.username")
+		}
+		if err := cfg.DirectTemplate.Validate(); err != nil {
+			return err
+		}
+	}
+	if cfg.NetworkProfileCatalog != "" && cfg.ProxyTemplate == nil {
+		return errors.New("network_profile_catalog requires proxy_template")
 	}
 	if cfg.Access != nil {
 		if err := cfg.Access.Validate(); err != nil {
@@ -218,11 +250,8 @@ func (cfg Config) Validate() error {
 	if wait := cfg.Startup.ControlWaitSeconds; wait != nil && (*wait < 0 || *wait > 900) {
 		return errors.New("startup.control_wait_seconds must be between 0 and 900")
 	}
-	if cfg.Limits.MaxActiveProfiles < 0 || cfg.Limits.MaxConcurrentLaunch < 0 || cfg.Limits.MinFreeDiskMiB < 0 {
-		return errors.New("limits must not be negative")
-	}
-	if cfg.Limits.MinFreeDiskMiB > 0 && cfg.Limits.StoragePath == "" {
-		return errors.New("limits.min_free_disk_mib requires limits.storage_path")
+	if err := cfg.Limits.Validate(); err != nil {
+		return err
 	}
 	for _, definition := range cfg.Profiles {
 		if definition.IdlePolicy.Enabled() && !cfg.SealSkin.LifecycleEnabled {

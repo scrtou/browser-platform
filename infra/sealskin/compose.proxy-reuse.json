@@ -1,0 +1,7 @@
+{
+  "services": {
+    "sealskin": {
+      "image": "sha256:1d93d6b8a92e7d431a603d4f2778b92aa2e91e8943df25c73f49f9013ef8a40e"
+    }
+  }
+}

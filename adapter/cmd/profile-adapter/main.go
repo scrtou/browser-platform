@@ -30,6 +30,7 @@ func main() {
 	reconcileProfile := flag.String("reconcile-profile", "", "ask the running adapter to reconcile a Profile or resume its pending stop")
 	resumeProfile := flag.String("resume-profile", "", "ask the running adapter to resume a dormant generation in order (Relay, Guard, probe, Worker); never creates")
 	inspectProfile := flag.String("inspect-profile", "", "inspect a Profile through the running adapter's private control socket")
+	inspectCapacity := flag.Bool("inspect-capacity", false, "show capacity policy and local machine resources without modifying state")
 	healthProfile := flag.String("health-profile", "", "read a Profile's runtime health report through the private control socket")
 	probeProfile := flag.String("probe-profile", "", "force a fresh runtime health probe (at most once per 10 seconds) through the private control socket")
 	coherenceProfile := flag.String("coherence-profile", "", "sample browser environment and network coherence for an existing generation through the private control socket")
@@ -48,8 +49,20 @@ func main() {
 		}
 		action, target = name, value
 	}
+	if *inspectCapacity {
+		if action != "" {
+			logger.Error("only one Profile command may be supplied")
+			os.Exit(1)
+		}
+		action = "capacity"
+	}
 	if err := run(*configPath, action, target, logger); err != nil {
-		logger.Error("profile adapter stopped", "error", err)
+		if action != "" {
+			logger.Error("profile command failed", "action", action, "profile", target,
+				"error_code", control.ErrorCode(err), "error", err)
+		} else {
+			logger.Error("profile adapter stopped", "error", err)
+		}
 		os.Exit(1)
 	}
 }
@@ -58,6 +71,15 @@ func run(configPath, action, target string, logger *slog.Logger) error {
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return err
+	}
+	if action == "capacity" {
+		report, err := cfg.Limits.InspectCapacity()
+		if err != nil {
+			return err
+		}
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(report)
 	}
 	if action != "" && action != "reset" {
 		if !cfg.SealSkin.LifecycleEnabled {
@@ -158,8 +180,24 @@ func run(configPath, action, target string, logger *slog.Logger) error {
 			return clientErr
 		}
 		options = append(options, profile.WithEnvironmentCatalog(catalog), profile.WithAdminOrchestrator(adminClient), profile.WithHomeArchiver(client))
+		if cfg.TemplateCatalog != "" {
+			templates, templateErr := profile.NewFileTemplateCatalog(cfg.TemplateCatalog)
+			if templateErr != nil {
+				return templateErr
+			}
+			options = append(options, profile.WithTemplateCatalog(templates))
+		}
 		if cfg.ProxyTemplate != nil {
 			options = append(options, profile.WithProxyTemplate(*cfg.ProxyTemplate))
+			if cfg.NetworkProfileCatalog != "" {
+				options = append(options, profile.WithNetworkProfileCatalog(cfg.NetworkProfileCatalog))
+			}
+		}
+		if cfg.DirectTemplate != nil {
+			options = append(options, profile.WithDirectTemplate(*cfg.DirectTemplate))
+		}
+		if cfg.LegacyNetworkMigrations != "" {
+			options = append(options, profile.WithLegacyNetworkMigrations(cfg.LegacyNetworkMigrations))
 		}
 		if cfg.EnvironmentJobSpool != "" {
 			options = append(options, profile.WithEnvironmentJobs(cfg.EnvironmentJobSpool))
@@ -181,7 +219,42 @@ func run(configPath, action, target string, logger *slog.Logger) error {
 	defer stop()
 	var httpOptions []httpapi.Option
 	if cfg.Access != nil {
-		gateway, err := access.New(ctx, *cfg.Access, cfg.PublicBaseURL, cfg.SealSkin.PublicSessionBaseURL, profiles, profiles.CheckDisplaySession, logger)
+		homeProvider := access.HomeProvider(func(homeCtx context.Context, ids []string) []access.HomeCard {
+			cards := make([]access.HomeCard, 0, len(ids))
+			for _, id := range ids {
+				card := access.HomeCard{ProfileID: id, Label: id, EntryPath: "/browser/" + id + "/"}
+				summary, summaryErr := profiles.Environment(homeCtx, id)
+				if summaryErr != nil {
+					cards = append(cards, card)
+					continue
+				}
+				card.Label, card.EntryPath, card.Status = summary.Label, summary.EntryPath, string(summary.Status)
+				card.Enabled, card.Available, card.Observed = summary.Enabled, true, summary.Observed
+				card.Network = summary.ConfiguredNetworkMode
+				card.NetworkName = summary.NetworkProfileLabel
+				if card.Network == "" {
+					card.Network = summary.NetworkMode
+				}
+				card.NetworkIssue = card.Network == "" || card.Network == "legacy" || card.Network == "unmanaged" || summary.NetworkMode == "unmanaged"
+				card.BrowserTemplate, card.Fingerprint, card.Display = summary.BrowserTemplateID, summary.EnvironmentArtifactID, summary.DisplayTemplateID
+				if summary.Health != nil {
+					card.Health, card.HealthCode, card.Stale = string(summary.Health.Overall), summary.Health.Code, summary.Health.Stale
+					card.CheckedAt = summary.Health.CheckedAt.UTC().Format(time.RFC3339)
+					if summary.Health.Code == "EGRESS_NOT_CONFIGURED" {
+						card.NetworkIssue = true
+					}
+				}
+				cards = append(cards, card)
+			}
+			return cards
+		})
+		gateway, err := access.New(ctx, *cfg.Access, cfg.PublicBaseURL, cfg.SealSkin.PublicSessionBaseURL, profiles, profiles.CheckDisplaySession, logger, access.WithHomeProvider(homeProvider), access.WithDisplayPreference(profiles.DisplayPreference), access.WithUIScaling(profiles.UIScalingPreference, func(id string, revision, percent int, actor string) (int, error) {
+			record, err := profiles.UpdateBrowser(id, revision, actor, profile.BrowserPatch{UIScalingPercent: &percent})
+			if errors.Is(err, profile.ErrRevisionMismatch) {
+				return 0, access.ErrDisplayRevisionConflict
+			}
+			return record.Revision, err
+		}))
 		if err != nil {
 			return err
 		}

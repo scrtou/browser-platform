@@ -2,6 +2,16 @@
 
 R6AV初始化契约：发行不预置账号。明确的初始注册表为`{"version":3,"users":[],"setup_required":true}`，权限和属主检查不变；旧格式空表、缺失/损坏表继续拒绝。入口显示等待管理员初始化，所有登录均拒绝。使用`profile-accounts init --config <私有配置> --user <管理员名>`从标准输入读取密码，文件锁内只允许首位管理员创建，已有账号不覆盖；成功后写回正常v2表并由网关重载。普通put在等待初始化时也只接受admin，UI/API仍禁止自删与最后管理员删除。
 
+R6AM：授权首页只展示当前浏览器所绑定代理的名称，列表/详情一致；不返回整份代理目录、地址或凭据。原权限过滤、模板转义及 nonce/CSP 保持。见 [验收](../r6am-workspace-proxy-name-acceptance-2026-10-02.md)。
+
+R6AL：工作区列表直接显示网络配置模式，沿用授权摘要、转义及原 nonce/CSP，未知/不可用不推测为直连。无新增查询、探测或权限。见 [验收](../r6al-workspace-network-acceptance-2026-10-02.md)。
+
+R6AG：所有现有需近期密码确认的管理操作统一使用密码弹框，成功后继续原提交。覆盖代理创建/探针/停用/撤销/删除、浏览器删除/网络绑定与迁移/模板应用回退、管理员创建/账号密码重置/启停/角色/删除，保留指纹数据删除。普通不需确认的操作不新增门槛；取消不执行，密码错误可重试；只有明确reauth响应才重试一次，普通拒绝与超时不自动重试。 见[验收](../r6ag-all-reauth-acceptance-2026-10-02.md)。
+
+R6AF：指纹数据删除遇到近期密码验证时，在弹框输入当前密码并继续原已确认删除；取消/错误不删除，引用拒绝原框反馈，成功才刷新。管理页确认密码入口也使用弹框，无脚本仍有验证链接。原权限、5分钟窗口、引用保护和持久删除标记保持。 见[验收](../r6af-job-delete-acceptance-2026-10-02.md)。
+
+R6AE更新：修改密码在首页/管理页打开共享弹窗，原地址保留无脚本回退；密码创建、重置和自助修改最低4、最高256个UTF-8字节，原哈希强度、当前密码验证、CSRF和其他登录撤销语义保留。浏览器详情按概览、常用设置、网络、环境模板、危险操作分页签，代理/账号按实际功能分组；短表单保持单页。指纹四类删除为直接按钮打开对象确认框，原引用保护和确认勾选保留。 见[本项验收](../r6ae-dialog-layout-password-acceptance-2026-10-02.md)。
+
 [Adapter](../../../adapter/README.md) · [工作项](../../../docs/work-items/R5D-2026-09-14-entry-authentication.md) · [加密备份](../lifecycle/secret-store.md)
 
 R5D 候选 3 在独立阶段完成本地账号、短期访问授权及 HTTPS/真实 Selkies 验收；其原候选当时没有部署。R4B 已把后续共享组合部署生产，两个公开 origin 的所有请求都经过 Adapter；SealSkin API 和原 Session 监听只在本机可达。示例见 [Caddyfile](Caddyfile.example)，阶段范围和固定摘要见 [验收报告](../entry-authentication-acceptance-2026-09-15.md)。
@@ -55,7 +65,7 @@ profile-accounts enable --config /private/adapter-config.json --user owner
 
 新增/修改表原子写入为 0600，并使用文件锁串行管理操作。替换现有账号需要 `put --replace`，会替换密码、Profile 授权并重新启用账号，未指定 `--role` 时保留原角色；命令不输出密码或派生值。配置 `profile_directory` 后，CLI 只按该权威目录校验授权；目录缺失、损坏或不安全时拒绝操作，不回退到配置 `profiles` 种子。生产（candidate-4）仍按“任何账号表变化撤销全部登录”运行；R6B candidate-2 改为只撤销变化的账号。写入 version 2（出现角色）后旧 Adapter 无法读取该表，回退前须先降级角色或恢复旧表。当前上限为 64 个账号、4096 个内存授权、256 个待交接地址、1024 个活动显示请求。
 
-用户在 Trilium WebView 笔记中继续保存固定 Profile 地址；首次或到期后先登录。访问入口根路径可查看已授权 Profile 并退出登录；R6B candidate-2 的 `/manage/` 只对管理员开放并提供目录与账号操作（生产尚未部署）。登录表单使用 `Referrer-Policy: same-origin` 保留合法 POST Origin，交接和显示使用 `no-referrer`。R6B 的目标 Mac/Trilium 与真实控制器组合验收归 R6F，不以 Go 隔离测试替代。
+用户在 Trilium WebView 笔记中继续保存固定 Profile 地址；首次或到期后先登录。访问入口根路径可查看已授权 Profile 并退出登录；`/manage/` 只对管理员开放并提供当前能力门控允许的目录与账号操作。登录表单使用 `Referrer-Policy: same-origin` 保留合法 POST Origin，交接和显示使用 `no-referrer`。R6F 已完成目标 Mac/Trilium 管理面、普通账号边界和真实自定义 artifact 验收；新增/归档删除、代理与自定义作业是否开放仍以生产后端能力配置为准。
 
 ## 状态、日志和恢复
 

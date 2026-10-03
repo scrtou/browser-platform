@@ -74,6 +74,8 @@ Go 新增测试覆盖：对账与入口对休眠代次触发恢复且不 launch�
 - 备份演练使用 QA Home；真实生产 Home 的停机备份需先停止对应 Profile，本次未执行。
 - 场景 3 的旧代次使用进程模拟 Worker；真实旧 Wayland Worker 未演练。
 
+后续范围说明（2026-09-20）：R2C/R4B 后来完成真实 Home、`Linger=yes` 及正式 Caddy/Docker/VPS 恢复。退出全部登录后的持续运行与 Debian 13 仍未执行，用户已将两项移出当前交付范围；本报告保留 2026-09-13 当时的未验收结论，不把取消改写为通过。
+
 ## 回滚
 
 停止 Adapter 与 SealSkin API 后，用 `/opt/browser-platform/sealskin-lifecycle/install.py --rollback` 恢复原文件，再运行 `/opt/browser-platform/sealskin-lifecycle-previous-0ec9a9b42b4b5bf8/install.py` 安装上一版，交换目录并恢复备份的 Adapter 二进制与 `compose.yml`。若已在新版本创建代次，其 Worker 不再自动删除，回退前先 `stop-profile` 确认资源清空。备份位于本机 `runtime/boot-recovery-2026-09-13/deployment-backup/`。

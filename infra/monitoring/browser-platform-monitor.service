@@ -1,0 +1,12 @@
+[Unit]
+Description=Read-only browser platform health and resource monitor
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/.local/lib/browser-platform/monitor.py --config %h/.config/browser-platform/monitor/config.json
+UMask=0077
+NoNewPrivileges=yes
+MemoryMax=64M
+CPUQuota=10%
+TasksMax=16
+TimeoutStartSec=30

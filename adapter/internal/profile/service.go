@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -21,32 +20,49 @@ import (
 )
 
 var (
-	ErrProfileNotFound  = errors.New("profile not found")
-	ErrOperationRunning = errors.New("profile operation is already running")
-	ErrOwnershipUnknown = errors.New("profile session ownership is unknown; operator recovery is required")
-	ErrAdminUnavailable = errors.New("verified administrator SealSkin client is not configured")
-	ErrBrowserBusy      = errors.New("browser still owns runtime resources")
-	ErrBrowserCreating  = errors.New("browser creation is still in progress")
-	ErrBrowserDeleted   = errors.New("browser has been deleted")
+	ErrProfileNotFound       = errors.New("profile not found")
+	ErrOperationRunning      = errors.New("profile operation is already running")
+	ErrOwnershipUnknown      = errors.New("profile session ownership is unknown; operator recovery is required")
+	ErrAdminUnavailable      = errors.New("verified administrator SealSkin client is not configured")
+	ErrBrowserBusy           = errors.New("browser still owns runtime resources")
+	ErrBrowserCreating       = errors.New("browser creation is still in progress")
+	ErrBrowserDeleted        = errors.New("browser has been deleted")
+	ErrTemplateChangePending = errors.New("browser template change is pending completion")
 )
 
 type Definition struct {
 	ID string `json:"id"`
 	// Label is an optional display name for management pages; it never
 	// replaces the ID used by entry paths, journals or authorization.
-	Label                     string  `json:"label,omitempty"`
-	ApplicationID             string  `json:"application_id"`
-	HomeName                  string  `json:"home_name"`
-	StartURL                  string  `json:"start_url"`
-	Language                  *string `json:"language,omitempty"`
-	Timezone                  *string `json:"timezone,omitempty"`
-	WaylandMode               bool    `json:"wayland_mode"`
-	NetworkPolicyID           string  `json:"network_policy_id,omitempty"`
-	NetworkPolicySHA256       string  `json:"network_policy_sha256,omitempty"`
-	NetworkMode               string  `json:"network_mode,omitempty"`
-	EnvironmentArtifactID     string  `json:"environment_artifact_id,omitempty"`
-	EnvironmentArtifactSHA256 string  `json:"environment_artifact_sha256,omitempty"`
-	EnvironmentSource         string  `json:"environment_source,omitempty"`
+	Label               string  `json:"label,omitempty"`
+	DisplayPreference   string  `json:"display_preference,omitempty"`
+	UIScalingPercent    int     `json:"ui_scaling_percent,omitempty"`
+	ResolutionMode      string  `json:"resolution_mode,omitempty"`
+	ApplicationID       string  `json:"application_id"`
+	HomeName            string  `json:"home_name"`
+	StartURL            string  `json:"start_url"`
+	Language            *string `json:"language,omitempty"`
+	Timezone            *string `json:"timezone,omitempty"`
+	WaylandMode         bool    `json:"wayland_mode"`
+	NetworkPolicyID     string  `json:"network_policy_id,omitempty"`
+	NetworkPolicySHA256 string  `json:"network_policy_sha256,omitempty"`
+	NetworkMode         string  `json:"network_mode,omitempty"`
+	// NetworkProfileID/Revision identify the accepted unified proxy catalog
+	// revision from which this browser-specific policy was materialized. Old
+	// R6D per-browser policies and DIRECT revisions leave both fields empty.
+	NetworkProfileID          string `json:"network_profile_id,omitempty"`
+	NetworkProfileRevision    int    `json:"network_profile_revision,omitempty"`
+	NetworkBindingKey         string `json:"network_binding_key,omitempty"`
+	EnvironmentArtifactID     string `json:"environment_artifact_id,omitempty"`
+	EnvironmentArtifactSHA256 string `json:"environment_artifact_sha256,omitempty"`
+	EnvironmentSource         string `json:"environment_source,omitempty"`
+	// R7D template identities are immutable-per-Profile revision. They are
+	// absent on legacy records and always written as one coherent set.
+	BrowserTemplateID           string `json:"browser_template_id,omitempty"`
+	BrowserTemplateRevision     int    `json:"browser_template_revision,omitempty"`
+	EnvironmentTemplateRevision int    `json:"environment_template_revision,omitempty"`
+	DisplayTemplateID           string `json:"display_template_id,omitempty"`
+	DisplayTemplateRevision     int    `json:"display_template_revision,omitempty"`
 	// IdlePolicy enables automatic reclaim; nil or mode "off" disables it.
 	IdlePolicy *IdlePolicy `json:"idle_policy,omitempty"`
 	// RequiredRuntimeCapabilities binds a new Worker to its controller contract.
@@ -87,11 +103,15 @@ func (p *IdlePolicy) Timeout() time.Duration {
 // Limits are checked before any new launch; none of them ever releases an
 // existing reservation.
 type Limits struct {
+	Auto                bool   `json:"auto,omitempty"`
+	MemoryPerProfileMiB int    `json:"memory_per_profile_mib,omitempty"`
+	MemoryReserveMiB    int    `json:"memory_reserve_mib,omitempty"`
 	MaxActiveProfiles   int    `json:"max_active_profiles,omitempty"`
 	MaxConcurrentLaunch int    `json:"max_concurrent_launches,omitempty"`
 	MinFreeDiskMiB      int    `json:"min_free_disk_mib,omitempty"`
 	StoragePath         string `json:"storage_path,omitempty"`
 	freeDiskMiB         func(string) (int64, error)
+	resources           func(string) (HostResources, error)
 }
 
 type Orchestrator interface {
@@ -106,6 +126,7 @@ type Orchestrator interface {
 // separate administrator identity in the production process.
 type AdminOrchestrator interface {
 	InstallApp(context.Context, map[string]any, string) error
+	ReplaceInstalledApp(context.Context, string, map[string]any, string) error
 	PatchInstalledApp(context.Context, string, map[string]any, string) error
 	DeleteInstalledApp(context.Context, string, string) error
 	ImportProxySecret(context.Context, sealskin.ProxySecretImportRequest, string) (sealskin.ProxySecretRefs, error)
@@ -119,6 +140,7 @@ type HomeArchiver interface {
 }
 
 type EnvironmentArtifact struct {
+	Label                       string         `json:"label,omitempty"`
 	ID                          string         `json:"id"`
 	SHA256                      string         `json:"sha256"`
 	AcceptanceSHA256            string         `json:"acceptance_sha256"`
@@ -127,6 +149,16 @@ type EnvironmentArtifact struct {
 	Status                      string         `json:"status"`
 	Application                 map[string]any `json:"application"`
 	RequiredRuntimeCapabilities map[string]int `json:"required_runtime_capabilities,omitempty"`
+	// R7D coherence metadata is optional for legacy R6 artifacts. Legacy
+	// artifacts remain readable by the old creation path, but are excluded
+	// from R7D compatible-template listings until these fields are complete.
+	TemplateRevision  int    `json:"template_revision,omitempty"`
+	BrowserTemplateID string `json:"browser_template_id,omitempty"`
+	BrowserEngine     string `json:"browser_engine,omitempty"`
+	BrowserVersion    string `json:"browser_version,omitempty"`
+	OSFamily          string `json:"os_family,omitempty"`
+	Platform          string `json:"platform,omitempty"`
+	UserAgent         string `json:"user_agent,omitempty"`
 	// Descriptive fields for the catalog listing; they never replace the
 	// artifact's own bytes as the source of device values.
 	Locale     string   `json:"locale,omitempty"`
@@ -143,15 +175,19 @@ type EnvironmentCatalog interface {
 }
 
 type CreateBrowserRequest struct {
-	Label                 string
-	StartURL              string
-	EnvironmentArtifactID string
-	NetworkMode           string
-	NetworkPolicyID       string
-	NetworkPolicySHA256   string
-	Language              *string
-	Timezone              *string
-	WaylandMode           bool
+	Label                  string
+	StartURL               string
+	EnvironmentArtifactID  string
+	BrowserTemplateID      string
+	DisplayTemplateID      string
+	NetworkMode            string
+	NetworkProfileID       string
+	NetworkProfileRevision int
+	NetworkPolicyID        string
+	NetworkPolicySHA256    string
+	Language               *string
+	Timezone               *string
+	WaylandMode            bool
 }
 
 // ManagementCapabilities reports which optional management backends are
@@ -160,7 +196,10 @@ type CreateBrowserRequest struct {
 type ManagementCapabilities struct {
 	CreateDelete    bool
 	ProxyDrafts     bool
+	NetworkProfiles bool
+	ManagedDirect   bool
 	EnvironmentJobs bool
+	TemplateCatalog bool
 }
 
 type Service struct {
@@ -176,7 +215,8 @@ type Service struct {
 	now           func() time.Time
 	health        healthCache
 	limits        Limits
-	launching     int32
+	admissionMu   sync.Mutex // protects capacity check, reservation, and launching
+	launching     int
 	stopHook      func(string) // test hook, called after an idle stop attempt
 
 	locksMu sync.Mutex
@@ -184,10 +224,17 @@ type Service struct {
 	plansMu sync.Mutex
 	plans   map[string]launchPlan
 
-	proxyTemplate *ProxyTemplate
-	draftsMu      sync.Mutex
-	drafts        map[string]*proxyDraft
-	jobSpool      string
+	proxyTemplate             *ProxyTemplate
+	directTemplate            *DirectTemplate
+	draftsMu                  sync.Mutex
+	drafts                    map[string]*proxyDraft
+	networkProfileCatalogPath string
+	networkProfilesMu         sync.Mutex
+	createMu                  sync.Mutex // serializes durable creation intent and its external steps
+	networkProfiles           *networkProfileCatalog
+	jobSpool                  string
+	templateCatalog           TemplateCatalog
+	legacyMigrationCatalog    string
 }
 
 func NewService(orchestrator Orchestrator, store *state.Store, publicBaseURL string, definitions []Definition, options ...Option) (*Service, error) {
@@ -225,6 +272,12 @@ func NewService(orchestrator Orchestrator, store *state.Store, publicBaseURL str
 	} else if len(service.directory.records) == 0 {
 		return nil, errors.New("at least one profile is required")
 	}
+	if service.networkProfileCatalogPath != "" {
+		service.networkProfiles, err = newNetworkProfileCatalog(service.networkProfileCatalogPath, func() time.Time { return service.now() })
+		if err != nil {
+			return nil, err
+		}
+	}
 	for _, definition := range service.directory.definitions() {
 		if len(definition.RequiredRuntimeCapabilities) != 0 && service.runtime == nil {
 			return nil, errors.New("runtime capability requirements need verified lifecycle")
@@ -234,6 +287,19 @@ func NewService(orchestrator Orchestrator, store *state.Store, publicBaseURL str
 		}
 		if definition.IdlePolicy.Enabled() && service.runtime == nil {
 			return nil, errors.New("idle reclaim requires verified lifecycle")
+		}
+		if definition.NetworkProfileID != "" {
+			record, _ := service.directory.record(definition.ID)
+			// A durable creation intent has no installed policy yet. Ensure and all
+			// editing paths reject creating records; retry will validate the catalog
+			// again before authorization. Do not let an interrupted creation prevent
+			// unrelated browsers from recovering at process startup.
+			if record.Status == RecordCreating && validDigest(record.CreationRequestSHA256) && definition.NetworkPolicyID == "" {
+				continue
+			}
+			if err := service.verifyNetworkProfileBinding(definition); err != nil {
+				return nil, fmt.Errorf("profile %q network catalog binding: %w", definition.ID, err)
+			}
 		}
 	}
 	return service, nil
@@ -268,12 +334,28 @@ func WithEnvironmentCatalog(catalog EnvironmentCatalog) Option {
 	return func(s *Service) { s.catalog = catalog }
 }
 
+// WithTemplateCatalog enables R7D's explicit browser/display compatibility
+// catalog. An accepted environment artifact alone never implies compatibility.
+func WithTemplateCatalog(catalog TemplateCatalog) Option {
+	return func(s *Service) { s.templateCatalog = catalog }
+}
+
 // WithProxyTemplate enables proxy drafts. The template fixes the operator
 // values every generated proxy_required revision shares: the launching
 // SealSkin identity, the Relay and probe image digests and the approved
 // probe target.
 func WithProxyTemplate(template ProxyTemplate) Option {
 	return func(s *Service) { copied := template; s.proxyTemplate = &copied }
+}
+
+func WithDirectTemplate(template DirectTemplate) Option {
+	return func(s *Service) { copied := template; s.directTemplate = &copied }
+}
+
+// WithNetworkProfileCatalog enables R7C's independent, append-only proxy
+// revision catalog. The file is private, fsynced and atomically replaced.
+func WithNetworkProfileCatalog(path string) Option {
+	return func(s *Service) { s.networkProfileCatalogPath = path }
 }
 
 // Records lists every browser definition with its directory metadata.
@@ -287,7 +369,10 @@ func (s *Service) ManagementCapabilities() ManagementCapabilities {
 	return ManagementCapabilities{
 		CreateDelete:    createDelete,
 		ProxyDrafts:     createDelete && s.proxyTemplate != nil,
+		NetworkProfiles: createDelete && s.proxyTemplate != nil && s.networkProfiles != nil,
+		ManagedDirect:   createDelete && s.directTemplate != nil,
 		EnvironmentJobs: s.catalog != nil && s.jobSpool != "",
+		TemplateCatalog: s.catalog != nil && s.templateCatalog != nil,
 	}
 }
 
@@ -301,22 +386,40 @@ func (s *Service) KnownProfile(id string) bool {
 // locking. It never touches a running generation: the next launch reads the
 // new start URL, and a disabled browser only refuses new launches and reuse.
 func (s *Service) UpdateBrowser(id string, expectedRevision int, actor string, patch BrowserPatch) (Record, error) {
+	if patch.UIScalingPercent != nil && *patch.UIScalingPercent != 0 {
+		record, ok := s.directory.record(id)
+		if !ok {
+			return Record{}, ErrProfileNotFound
+		}
+		if !s.supportsUIScaling(record.Definition) {
+			return Record{}, errors.New("UI scaling requires an automatic system-DPI display")
+		}
+	}
 	return s.directory.update(id, expectedRevision, actor, patch)
 }
 
 // Ensure returns a live session for a Profile. It never launches while an
 // earlier operation has an unproven outcome.
 func (s *Service) Ensure(ctx context.Context, profileID string) (result sealskin.Session, resultErr error) {
-	definition, ok := s.directory.get(profileID)
-	if !ok {
-		return sealskin.Session{}, ErrProfileNotFound
-	}
-	if definition.Disabled {
-		return sealskin.Session{}, ErrProfileDisabled
-	}
 	lock := s.profileLock(profileID)
 	lock.Lock()
 	defer lock.Unlock()
+	// A queued launch must read the definition after a configuration change
+	// releases this lock, including any durable pending launch gate.
+	record, ok := s.directory.record(profileID)
+	if !ok {
+		return sealskin.Session{}, ErrProfileNotFound
+	}
+	if record.Status == RecordUpdating {
+		return sealskin.Session{}, ErrTemplateChangePending
+	}
+	if record.Status != "" && record.Status != RecordReady {
+		return sealskin.Session{}, fmt.Errorf("profile record is %s", record.Status)
+	}
+	definition := record.Definition
+	if definition.Disabled {
+		return sealskin.Session{}, ErrProfileDisabled
+	}
 	defer func() {
 		if resultErr == nil && result.SessionID != "" {
 			if err := s.verifySessionAccess(ctx, definition, result.SessionID); err != nil {
@@ -382,15 +485,11 @@ func (s *Service) Ensure(ctx context.Context, profileID string) (result sealskin
 			initialURL = definition.StartURL
 		}
 	}
-	if err := s.checkCapacity(profileID); err != nil {
-		return sealskin.Session{}, err
-	}
-	atomic.AddInt32(&s.launching, 1)
-	defer atomic.AddInt32(&s.launching, -1)
-	binding, err = s.prepareLaunch(profileID)
+	binding, err = s.admitLaunch(profileID)
 	if err != nil {
 		return sealskin.Session{}, err
 	}
+	defer s.releaseLaunchSlot()
 	request := sealskin.LaunchURLRequest{
 		URL: binding.BootstrapURL, InitialURL: initialURL, ApplicationID: definition.ApplicationID,
 		HomeName: definition.HomeName, Language: definition.Language,
@@ -680,6 +779,21 @@ func validLabel(label string) bool {
 }
 
 func validateDefinition(definition Definition) error {
+	if !validUIScaling(definition.UIScalingPercent) {
+		return errors.New("invalid ui_scaling_percent")
+	}
+	if definition.UIScalingPercent != 0 && definition.ResolutionMode != "auto" && !(definition.BrowserTemplateID == "" && definition.WaylandMode) {
+		return errors.New("UI scaling cannot change fixed display DPI")
+	}
+	if definition.ResolutionMode != "" && definition.ResolutionMode != "auto" {
+		return errors.New("resolution_mode must be auto or empty")
+	}
+	if definition.ResolutionMode == "auto" && (definition.BrowserTemplateID == "" || definition.DisplayPreference != "") {
+		return errors.New("auto resolution requires a template and no fixed display preference")
+	}
+	if definition.DisplayPreference != "" && definition.DisplayPreference != "contain" && definition.DisplayPreference != "fill" {
+		return errors.New("display_preference must be contain or fill")
+	}
 	if definition.ID == "" || definition.ApplicationID == "" || definition.HomeName == "" || definition.StartURL == "" {
 		return errors.New("id, application_id, home_name and start_url are required")
 	}
@@ -726,6 +840,17 @@ func validateDefinition(definition Definition) error {
 	if definition.ProxyUpstream != "" && (definition.NetworkMode != "proxy_required" || len(definition.ProxyUpstream) > 300 || strings.ContainsAny(definition.ProxyUpstream, "@ \t\n")) {
 		return errors.New("proxy_upstream must be a protocol://host:port summary of a proxy_required browser")
 	}
+	if (definition.NetworkProfileID == "") != (definition.NetworkProfileRevision == 0) {
+		return errors.New("network_profile_id and network_profile_revision must be paired")
+	}
+	if definition.NetworkProfileID != "" {
+		if !validNetworkProfileID(definition.NetworkProfileID) || definition.NetworkProfileRevision < 1 || definition.NetworkMode != "proxy_required" {
+			return errors.New("network profile binding must identify a valid proxy_required catalog revision")
+		}
+	}
+	if definition.NetworkBindingKey != "" && (len(definition.NetworkBindingKey) > 128 || strings.TrimSpace(definition.NetworkBindingKey) != definition.NetworkBindingKey || definition.NetworkProfileID == "") {
+		return errors.New("network_binding_key requires a catalog binding and must be at most 128 characters")
+	}
 	if definition.EnvironmentArtifactID != "" {
 		if len(definition.EnvironmentArtifactSHA256) != 64 || strings.ToLower(definition.EnvironmentArtifactSHA256) != definition.EnvironmentArtifactSHA256 {
 			return errors.New("environment artifact must carry a lowercase SHA-256")
@@ -736,6 +861,24 @@ func validateDefinition(definition Definition) error {
 		if definition.EnvironmentSource != "frozen" && definition.EnvironmentSource != "custom" {
 			return errors.New("new browser environments must come from a frozen or custom accepted artifact")
 		}
+	}
+	templateFields := []bool{
+		definition.BrowserTemplateID != "", definition.BrowserTemplateRevision != 0,
+		definition.EnvironmentTemplateRevision != 0,
+		definition.DisplayTemplateID != "", definition.DisplayTemplateRevision != 0,
+	}
+	templateSet := 0
+	for _, set := range templateFields {
+		if set {
+			templateSet++
+		}
+	}
+	if templateSet != 0 && templateSet != len(templateFields) {
+		return errors.New("browser, environment and display template revisions must be bound together")
+	}
+	if templateSet != 0 && (definition.BrowserTemplateRevision < 1 || definition.EnvironmentTemplateRevision < 1 || definition.DisplayTemplateRevision < 1 ||
+		!validPolicyName(definition.BrowserTemplateID) || !validPolicyName(definition.DisplayTemplateID) || definition.EnvironmentArtifactID == "") {
+		return errors.New("template binding is invalid")
 	}
 	for _, value := range []string{definition.ID, definition.HomeName} {
 		for _, char := range value {
@@ -753,4 +896,13 @@ func validateDefinition(definition Definition) error {
 		return errors.New("start_url must not contain user credentials")
 	}
 	return nil
+}
+
+// DisplayPreference is presentation-only; it never changes the remote screen.
+func (s *Service) DisplayPreference(id string) string {
+	record, ok := s.directory.record(id)
+	if !ok || record.ResolutionMode == "auto" {
+		return ""
+	}
+	return record.DisplayPreference
 }

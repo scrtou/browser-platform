@@ -1,0 +1,7 @@
+FROM browser-platform/chromix:154-cjk-r2
+# Build only after verifying this tag resolves to the fixed cjk-r2 image ID.
+COPY launcher.py /usr/local/lib/browser-platform/chromix-launcher.py
+COPY install-resolution-limit.py /tmp/install-resolution-limit.py
+RUN python3 /tmp/install-resolution-limit.py && rm /tmp/install-resolution-limit.py
+RUN python3 -c "import runpy; runpy.run_path('/usr/local/lib/browser-platform/chromix-launcher.py')['verify_fonts']()"
+LABEL io.browser-platform.chromix-auto-version="1"

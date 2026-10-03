@@ -17,14 +17,19 @@ import (
 )
 
 type managementAdmin struct {
-	installCalls int
-	deleteCalls  int
-	archiveCalls int
-	installErr   error
-	archiveErr   error
-	lastApp      map[string]any
-	lastHome     string
-	lastArchive  string
+	authorizeCalls int
+	authorizeErr   error
+	lastAuthorize  sealskin.ProxySecretAuthorizationRequest
+	installCalls   int
+	replaceCalls   int
+	deleteCalls    int
+	archiveCalls   int
+	installErr     error
+	archiveErr     error
+	lastApp        map[string]any
+	lastReplace    map[string]any
+	lastHome       string
+	lastArchive    string
 
 	patchCalls       int
 	patchErr         error
@@ -42,15 +47,24 @@ type managementAdmin struct {
 	appendErr        error
 	lastAppend       sealskin.NetworkPolicyAppendRequest
 	lastAppendKey    string
+	appendStarted    chan<- struct{}
+	appendRelease    <-chan struct{}
 	revoked          []string
 	revokeOperations []string
 	revokeErr        error
+	revokeStarted    chan<- struct{}
 }
 
 func (a *managementAdmin) InstallApp(_ context.Context, app map[string]any, _ string) error {
 	a.installCalls++
 	a.lastApp = app
 	return a.installErr
+}
+
+func (a *managementAdmin) ReplaceInstalledApp(_ context.Context, appID string, app map[string]any, _ string) error {
+	a.replaceCalls++
+	a.lastPatchApp, a.lastReplace = appID, app
+	return a.patchErr
 }
 
 func (a *managementAdmin) DeleteInstalledApp(_ context.Context, _ string, _ string) error {
@@ -89,6 +103,12 @@ func (a *managementAdmin) ProbeProxyDraft(_ context.Context, request sealskin.Pr
 func (a *managementAdmin) AppendNetworkPolicy(_ context.Context, request sealskin.NetworkPolicyAppendRequest, key string) (sealskin.NetworkPolicyAppendResponse, error) {
 	a.appendCalls++
 	a.lastAppend, a.lastAppendKey = request, key
+	if a.appendStarted != nil {
+		a.appendStarted <- struct{}{}
+	}
+	if a.appendRelease != nil {
+		<-a.appendRelease
+	}
 	if a.appendErr != nil {
 		return sealskin.NetworkPolicyAppendResponse{}, a.appendErr
 	}
@@ -98,6 +118,9 @@ func (a *managementAdmin) AppendNetworkPolicy(_ context.Context, request sealski
 }
 
 func (a *managementAdmin) RevokeProfileSecret(_ context.Context, reference, operationID string) (sealskin.RevokeSecretResult, error) {
+	if a.revokeStarted != nil {
+		a.revokeStarted <- struct{}{}
+	}
 	a.revoked = append(a.revoked, reference)
 	a.revokeOperations = append(a.revokeOperations, operationID)
 	if a.revokeErr != nil {
@@ -159,6 +182,30 @@ func TestCreateBrowserPersistsFixedBindingsAndIsIdempotent(t *testing.T) {
 	changed.StartURL = "https://other.example/"
 	if _, err := service.CreateBrowser(context.Background(), changed, "root", "request-1"); !errors.Is(err, ErrRevisionMismatch) {
 		t.Fatalf("changed idempotent request: %v", err)
+	}
+}
+
+func TestCreateBrowserManagedDirectMaterializesPolicyServerSide(t *testing.T) {
+	admin := &managementAdmin{}
+	service, _ := managementService(t, admin)
+	service.directTemplate = &DirectTemplate{
+		Owner: "adapter", ApprovedResolverID: "cloudflare-r7e", ApprovedResolverIP: "1.1.1.1",
+		RelayImage: "sha256:" + strings.Repeat("1", 64), ProbeImage: "sha256:" + strings.Repeat("2", 64), ProbeURL: "https://probe.example/",
+	}
+	request := createRequest()
+	request.NetworkPolicyID, request.NetworkPolicySHA256 = "", ""
+	record, err := service.CreateBrowser(context.Background(), request, "root", "managed-direct-create")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if admin.appendCalls != 1 || admin.lastAppend.Policy["mode"] != "direct" ||
+		admin.lastAppend.Policy["approved_resolver_id"] != "cloudflare-r7e" ||
+		record.NetworkPolicyID != admin.lastAppend.PolicyID || record.NetworkPolicySHA256 == "" {
+		t.Fatalf("managed DIRECT create: record=%+v append=%+v calls=%d", record, admin.lastAppend, admin.appendCalls)
+	}
+	raw := createRequest()
+	if _, err := service.CreateBrowser(context.Background(), raw, "root", "managed-direct-raw"); !errors.Is(err, ErrManagedPolicyRequired) {
+		t.Fatalf("raw policy reference accepted with managed DIRECT enabled: %v", err)
 	}
 }
 
@@ -239,4 +286,10 @@ func TestLaunchPlanBindsSubjectRevisionExpiryAndSingleUse(t *testing.T) {
 	if _, err := service.EnsureWithLaunchPlan(context.Background(), "alice", "existing", expired.Token); !errors.Is(err, ErrLaunchPlanInvalid) {
 		t.Fatalf("expired plan: %v", err)
 	}
+}
+
+func (a *managementAdmin) AuthorizeProxySecret(_ context.Context, request sealskin.ProxySecretAuthorizationRequest, _ string) error {
+	a.authorizeCalls++
+	a.lastAuthorize = request
+	return a.authorizeErr
 }

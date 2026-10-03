@@ -43,3 +43,5 @@
 Firefox经原日志reconcile已通过显示/真实输入/正常关闭及SQLite历史读回；首次新启动因同主机QA客户端遇到Docker接口变化取消，Camoufox事件明确ERR_NETWORK_CHANGED，见 [DEV-156](../deviations/DEV-2026-10-03-156-fresh-qa-host-network-change.md)。修订QA客户端隔离后重走冷启动，不修改生产协议或放宽门槛。
 
 客户端隔离后的冷启动仍约31秒模糊失败，发现生产式HTTPS Transport共享30秒响应头限制，截断180秒长请求预算，见 [DEV-157](../deviations/DEV-2026-10-03-157-long-start-tls-header-timeout.md)。需修复并重建/完整回归及新部署验证，1.0仍未定版。
+
+最新attempt8 Firefox冷启动/显示/输入/正常关闭及历史读回通过；Camoufox正常启动和显示通过，但输入标记未进入历史，见[DEV-158](../deviations/DEV-2026-10-03-158-fresh-qa-input-focus.md)。最终存储门槛仍保持，修订QA焦点后继续。

@@ -10,6 +10,8 @@ R5C1 候选增加显式 `mode=direct`。DIRECT 不使用外部代理或凭据；
 
 控制清单须支持 `network_direct_version: 1`，Relay 镜像须带 `io.browser-platform.direct-egress=1`。使用兼容的冻结浏览器镜像，保留内部 SOCKS5、关闭浏览器内置 DoH/WebRTC 的配置；本次候选沿用已验收的 Camoufox r6。按生命周期说明计算完整规范化策略 SHA，并将同一策略引用写入应用和 Adapter Profile。省略新字段的旧策略保持原 SHA，不能使用通用 `exclude_defaults` 重算旧摘要。
 
+2026-09-29 修复 Adapter 丢弃该字段的问题：`inspect-profile` 的 `capabilities.network_direct_version` 保留控制器实测版本，旧控制器缺字段仍为 0。它用于发布核对，不自动启用 DIRECT 或改变 Profile。Work 控制器/网关前置和新备份已通过，旧记录迁移与公网验收仍待完成，见 [R7F 续跑验收](../r7f-production-review-acceptance-2026-09-29.md)。
+
 本版要求 Linux 主机至少有一个直接配置在本机接口上的公网 IPv4。控制器从 Docker 检查固定、只读的 `/proc/1/net/fib_trie` bind，读取当前宿主机公网地址；对应 DIRECT 网关也只读挂载该 procfs 文件，校验真实 procfs 与冻结的地址集合。Worker、Guard 不挂载它。NAT-only 主机缺少外部地址权威证据，本版拒绝启用，不能猜测 NAT 出口或用普通快照文件代替。
 
 控制器的目标路径固定为 `/run/browser-platform-host/ipv4-fib-trie`。[Compose overlay](../compose.direct.yml) 提供这个可选挂载，并要求显式指定保留版本的 `SEALSKIN_DIRECT_IMAGE`。先用 `docker compose -f infra/sealskin/compose.yml -f infra/sealskin/compose.direct.yml config` 核对合并配置；实际部署仍按对应维护工作项执行。新控制器重建时必须保留该 bind，不能把宿主机网络或可写 procfs 交给控制器/Worker。

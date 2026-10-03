@@ -31,11 +31,24 @@ func freeDiskMiB(path string) (int64, error) {
 	return int64(stat.Bavail) * int64(stat.Bsize) / (1 << 20), nil
 }
 
-// checkCapacity runs under the Profile lock before prepareLaunch. It never
+// checkCapacity runs under the Profile and admission locks. It never
 // touches SealSkin and never changes the journal; it only refuses.
 func (s *Service) checkCapacity(profileID string) error {
 	limits := s.limits
-	if limits.MaxActiveProfiles > 0 {
+	var measured *HostResources
+	if limits.Auto {
+		report, err := limits.InspectCapacity()
+		if err != nil {
+			return &CapacityError{Code: "CAPACITY_RESOURCES_UNKNOWN", Detail: "host resources could not be measured"}
+		}
+		limits.MaxActiveProfiles = report.MaxActiveProfiles
+		limits.MaxConcurrentLaunch = report.MaxConcurrentLaunches
+		limits.MinFreeDiskMiB = report.MinFreeDiskMiB
+		limits.MemoryPerProfileMiB = report.MemoryPerProfileMiB
+		limits.MemoryReserveMiB = report.MemoryReserveMiB
+		measured = report.Resources
+	}
+	if limits.Auto || limits.MaxActiveProfiles > 0 {
 		all, err := s.store.All()
 		if err != nil {
 			return err
@@ -55,15 +68,29 @@ func (s *Service) checkCapacity(profileID string) error {
 			return &CapacityError{Code: "CAPACITY_ACTIVE_PROFILES", Detail: fmt.Sprintf("%d active Profiles reach the limit of %d", active, limits.MaxActiveProfiles)}
 		}
 	}
-	if limits.MaxConcurrentLaunch > 0 && int(s.launching) >= limits.MaxConcurrentLaunch {
+	if limits.MaxConcurrentLaunch > 0 && s.launching >= limits.MaxConcurrentLaunch {
 		return &CapacityError{Code: "CAPACITY_CONCURRENT_LAUNCHES", Detail: fmt.Sprintf("%d launches in flight reach the limit of %d", s.launching, limits.MaxConcurrentLaunch)}
+	}
+	if measured != nil {
+		// Pending starts may not yet appear in MemAvailable. Reserve their full
+		// budgets under the admission lock; division also avoids multiplication overflow.
+		usable := measured.AvailableMemoryMiB - int64(limits.MemoryReserveMiB)
+		if usable < 0 || usable/int64(limits.MemoryPerProfileMiB) <= int64(s.launching) {
+			return &CapacityError{Code: "CAPACITY_MEMORY", Detail: fmt.Sprintf("%d MiB available cannot cover the reserve and another %d MiB browser budget (%d launches pending)", measured.AvailableMemoryMiB, limits.MemoryPerProfileMiB, s.launching)}
+		}
 	}
 	if limits.MinFreeDiskMiB > 0 {
 		path := limits.StoragePath
 		if path == "" {
 			path = "/"
 		}
-		free, err := limits.freeDiskMiB(path)
+		var free int64
+		var err error
+		if measured != nil {
+			free = measured.FreeDiskMiB
+		} else {
+			free, err = limits.freeDiskMiB(path)
+		}
 		if err != nil {
 			return &CapacityError{Code: "CAPACITY_DISK_UNKNOWN", Detail: "free disk space could not be measured"}
 		}
@@ -72,6 +99,28 @@ func (s *Service) checkCapacity(profileID string) error {
 		}
 	}
 	return nil
+}
+
+// admitLaunch serializes global admission only until the durable reservation
+// exists. Remote work must run without admissionMu held.
+func (s *Service) admitLaunch(profileID string) (state.Binding, error) {
+	s.admissionMu.Lock()
+	defer s.admissionMu.Unlock()
+	if err := s.checkCapacity(profileID); err != nil {
+		return state.Binding{}, err
+	}
+	binding, err := s.prepareLaunch(profileID)
+	if err != nil {
+		return state.Binding{}, err
+	}
+	s.launching++
+	return binding, nil
+}
+
+func (s *Service) releaseLaunchSlot() {
+	s.admissionMu.Lock()
+	defer s.admissionMu.Unlock()
+	s.launching--
 }
 
 // IdleDecision reports what one idle evaluation did.

@@ -2,7 +2,7 @@
 
 [生命周期](README.md) · [DIRECT 网站 DNS](direct-network.md) · [R5C2 工作项](../../../docs/work-items/R5C2-2026-09-14-approved-dns-ttl.md)
 
-R5C2 候选为代理端点增加显式批准解析器和代次 DNS 记录，已完成私有 QA 和标准 Unbound/受控公网端点的真实三路径 TTL 验收，见 [最终报告](../approved-dns-ttl-acceptance-2026-09-14.md)。生产尚未采用；`network_bootstrap_dns_version: 1` 仅表示控制器支持此契约，不能代替某个 Profile 的新鲜 DNS 观测。
+R5C2 候选为代理端点增加显式批准解析器和代次 DNS 记录，已完成私有 QA 和标准 Unbound/受控公网端点的真实三路径 TTL 验收，见 [最终报告](../approved-dns-ttl-acceptance-2026-09-14.md)。生产尚未采用；`network_bootstrap_dns_version: 1` 仅表示控制器支持此契约，不能代替某个 Profile 的新鲜 DNS 观测。R7G 动态域名模式在不改变浏览器代次的前提下消费后续批准回答，使用独立 `endpoint` lease 和 `relay-v2` Guard 规则；静态数字 IP 与未声明动态能力的镜像仍走本页的冻结行为。
 
 ## 配置和兼容
 
@@ -22,9 +22,9 @@ R5C2 候选为代理端点增加显式批准解析器和代次 DNS 记录，已�
 
 创建网络资源前先保存占用，再保存 `bootstrap_dns_version: 1` 与 `bootstrap_dns`。记录包含解析来源、策略中的原始主机名、实际解析器、CNAME/A 回答、各次接收时间、TTL、完整地址集合和选中端点。绑定覆盖 Home hash、operation 和策略 SHA；allocation 另存 DNS 记录、Relay 配置及网络规则配置的摘要。
 
-`ttl_seconds` 为相关 CNAME/A 记录的最小 TTL；`expires_at` 为各记录“接收时间 + TTL”的最小值。两者描述当时回答，**不能作为释放 Home、热改地址或恢复时重新解析的授权**。控制器没有应用缓存；下一代次重新查询，批准递归解析器可能依自己的真实缓存返回剩余 TTL。
+`ttl_seconds` 为相关 CNAME/A 记录的最小 TTL；`expires_at` 为各记录“接收时间 + TTL”的最小值。静态模式下两者描述当时回答，**不能作为释放 Home、热改地址或恢复时重新解析的授权**。动态模式仅在每代次已持有 `dynamic_upstream_version: 1`、镜像能力标签和有效 lease 时，按该 TTL 触发有界刷新；刷新仍须候选 TCP 预检、Relay 内真实 `PROXY_OK` 探测和 Guard 的旧/新原子切换。任何 DNS、预检、探测或规则失败都保留旧 lease/阻断，不把 TTL 当作放宽 ACL 的授权。
 
-新代理代次恢复和控制器重接前，核对 DNS 记录与 allocation、冻结端点、配置摘要及 Relay 的精确只读绑定挂载。DNS 到期或解析器故障不改变已经冻结的端点；恢复仍必须通过原上游的网络预检，不能因为 DNS 记录存在就跳过验证。
+新代理代次恢复和控制器重接前，核对 DNS 记录与 allocation、端点 lease、配置摘要及 Relay 的精确只读绑定挂载。动态 lease 还核对单调 revision、lease ID、`relay-v2` 网络摘要与只读 runtime 挂载；控制器重启后只恢复可证明的同一代次。静态代次的 DNS 到期或解析器故障不改变已经冻结的端点；动态刷新或恢复仍必须通过原上游的网络预检，不能因为 DNS 记录存在就跳过验证。
 
 `NETWORK_BOOTSTRAP_DNS_TIMEOUT`、`SERVFAIL`、`NXDOMAIN`、`REFUSED`、`INVALID`、`NO_IPV4`、`UNAVAILABLE` 以完整 `NETWORK_BOOTSTRAP_DNS_` 前缀返回；非法端点集合使用 `NETWORK_UPSTREAM_ADDRESS_INVALID`。失败留下 `preparing` 占用及脱敏错误记录，不创建 Worker，也不临时放宽 ACL。新配置或挂载漂移使用 `NETWORK_BOOTSTRAP_CONFIG_CHANGED` / `NETWORK_BOOTSTRAP_CONFIG_MOUNT_CHANGED`，DNS 记录损坏为 `NETWORK_RESERVATION_INVALID`；保留占用供对账。
 
@@ -86,3 +86,8 @@ python3 infra/sealskin/checks/check-public-dns-ttl.py verify \
 公共递归前端可能有多个缓存期限或命中未预热的节点；前三轮失败见 [DEV-016](../../../docs/deviations/DEV-2026-09-14-016-public-recursive-cache-samples.md)，不扩大为公共 DNS 保证。第五轮的[独立标准递归入口](../checks/public-dns-authority/README.md) 没有 hosts、stub/forward zone、预取或合成 TTL，真实经公网根/父区解析。原始失败和第五轮旧网桥 PARTIAL 均保留。
 
 [浏览器工具](../checks/check-public-dns-browser.py) 驱动正常生命周期和页面，[故障工具](../checks/check-public-dns-fault.py) 同时观测 WS/WSS 关闭及真实失败页，[DIRECT wire](../checks/public-dns-wire.py) 和[专属网桥](../checks/public-dns-bridge-wire.py) 关联 DNS/跨重启出站。记录器结束前保存完整容器/Mounts，按精确 ID 执行带卷清理。五轮服务/包已清理，原基础权威恢复，本机/外部复测通过；基础 QA 委派和 SSH 暂留后续验证。
+
+
+R7G 失败恢复约束（2026-09-30）：动态 pending 恢复只能停止已证实属于当前 Home/operation 的 Relay；归属未证实不执行停止，恢复失败保留 pending 和错误证据，不能宣称回滚成功。真实 SDK 停止调用及双失败隔离证据见 [集成验收](../r7g-controller-integration-acceptance-2026-09-30.md)；该增量未部署生产，公网供应方和目标客户端范围仍待验证。
+
+2026-09-30 动态增量：两个隔离 Home 的公共递归 DNS 和认证 SOCKS5 完成 A→B→A，旧 WSS 保持、新连接真实来源变化，见[公网验收](../r7g-public-acceptance-2026-09-30.md)。仅受控公网 QA，商业供应方自然漂移和客户端仍单列；临时 DNS 入站规则已回收。

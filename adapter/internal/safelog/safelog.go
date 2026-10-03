@@ -12,7 +12,7 @@ import (
 type handler struct{ next slog.Handler }
 
 var messages = map[string]bool{
-	"only one Profile command may be supplied": true, "profile adapter stopped": true,
+	"only one Profile command may be supplied": true, "profile adapter stopped": true, "profile command failed": true,
 	"profile state reset after operator inspection": true, "SealSkin control plane not ready before startup reconciliation": true,
 	"profile still requires recovery": true, "profile runtime reconciled": true, "adapter control listener failed": true,
 	"profile health changed": true, "idle policy": true, "graceful shutdown": true, "control shutdown": true,

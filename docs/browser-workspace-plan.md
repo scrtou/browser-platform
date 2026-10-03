@@ -130,7 +130,7 @@ Work 必须同时通过：Adapter/Session/Worker/显示、DNS、HTTPS、出口�
 2. R7B：按失败码在隔离 QA 修复 Work 受管理出网，完成无直连和恢复验收；未经用户维护授权不动生产 Work。
 3. R7C：代理目录、Secret Store、探针、修订/撤销和绑定 API；补充合法运行实例零 Stop 副作用测试（承接 DEV-062）。
 4. R7D：指纹模板、浏览器模板、显示模板及其兼容组合目录；落实指纹稳定性与字段一致性检查、受限高层自定义、浏览器配置下拉和停止后应用/回退；用户按“清晰适配/固定指纹”选择效果，X11/Wayland 与 Selkies 作为底层详情分别验收。
-5. R7E：首页 UI 重设计和管理页“网络代理”Tab，先隔离 fixture，再 Mac/Trilium 视觉验收。
+5. R7E：首页 UI 重设计和管理页“网络代理”Tab，完成隔离 fixture 与 DOM/CSS 契约；候选不部署，目标 Mac/Trilium 视觉随 R7F 发布验证。
 6. R7F：只在明确授权后发布 Adapter/控制器变更；发布前保留回退二进制、Profile/Home/Session/账号摘要，发布只执行授权服务重启。
 
 ## 6. 完成与不做的事
@@ -138,3 +138,5 @@ Work 必须同时通过：Adapter/Session/Worker/显示、DNS、HTTPS、出口�
 完成必须证明：Work 的真实公网路径可用且受 Guard/Relay/DIRECT 约束；代理凭据不泄露；浏览器可分别从 accepted 浏览器模板、指纹模板和显示模板兼容组合下拉选择，并在停止后安全切换；指纹跨重启稳定且引擎/平台、语言/时区、screen/DPR 与显示规则一致；代理变化不会静默改写指纹；“清晰适配”有明确而非推测的 screen/DPR 与缩放规则；旧 revision 可回退；页面明确区分浏览器模板、指纹、显示效果与 Selkies 传输；首页和管理页在 Mac/Trilium 1280×800 及窄屏清晰可用。
 
 方案阶段本身不曾授权修复 Work、新增代理、停止浏览器、修改 Home/账号、切换 Camoufox/Firefox 或部署 UI。用户已于 2026-09-21 明确确认开始并持续推进；实施仍须按 R7A–R7F 逐项建立、验收和收尾，生产副作用只在对应工作项与发布门槛内执行。
+
+R6W 已补齐新建时的已有代理复用：accepted 认证/无认证修订均可选择，新浏览器建立独立策略；认证由控制器追加精确授权，密码无需重填。既有浏览器切换仍沿用原授权检查。见 [验收](../infra/sealskin/r6w-existing-proxy-acceptance-2026-10-01.md)。

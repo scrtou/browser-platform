@@ -115,7 +115,7 @@ func TestManagementBehindTheRealGateway(t *testing.T) {
 		t.Fatal("page exposes verifiers")
 	}
 	// The new query selects only the view: every pane keeps the real admin gate.
-	for _, tab := range []string{"browsers", "jobs", "accounts"} {
+	for _, tab := range []string{"browsers", "jobs", "fingerprints", "displays", "fingerprint-data&section=fingerprints", "fingerprint-data&section=displays", "fingerprint-data&section=combinations", "accounts"} {
 		target := "https://adapter.example/manage/?tab=" + tab
 		if do(http.MethodGet, target, nil).Code != http.StatusSeeOther || do(http.MethodGet, target, nil, alice).Code != http.StatusForbidden {
 			t.Fatalf("tab %s bypassed the login/admin gate", tab)
@@ -139,6 +139,253 @@ func TestManagementBehindTheRealGateway(t *testing.T) {
 		return body[start : start+43]
 	}
 	token := csrf(bob)
+	createManager := linkedCreateFixture()
+	createServer := New(createManager, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example",
+		slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{}, WithAccess(gateway))
+	for _, tc := range []struct {
+		cookie       *http.Cookie
+		csrf, origin string
+		allowed      bool
+	}{
+		{nil, token, "https://adapter.example", false}, {alice, token, "https://adapter.example", false},
+		{bob, "invalid", "https://adapter.example", false}, {bob, token, "https://foreign.example", false},
+		{bob, token, "https://adapter.example", true},
+	} {
+		createManager.createKey = ""
+		values := url.Values{"csrf": {tc.csrf}, "label": {"linked"}, "start_url": {"https://start.example"}, "idempotency_key": {"gateway-linked"},
+			"browser_template_id": {"firefox"}, "environment_artifact_id": {"firefox-auto"}, "network_selection": {"direct"}}
+		r := httptest.NewRequest("POST", "https://adapter.example/manage/browsers", strings.NewReader(values.Encode()))
+		r.Header.Set("Origin", tc.origin)
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if tc.cookie != nil {
+			r.AddCookie(tc.cookie)
+		}
+		w := httptest.NewRecorder()
+		createServer.ServeHTTP(w, r)
+		if (createManager.createKey != "") != tc.allowed {
+			t.Fatalf("linked create gateway mismatch: %d allowed=%v", w.Code, tc.allowed)
+		}
+		if tc.allowed && (createManager.createRequest.DisplayTemplateID != "auto" || w.Header().Get("Location") != "/manage/?notice=created") {
+			t.Fatal("authenticated create lost its accepted display binding")
+		}
+	}
+
+	templateService := &sourceForms{fakeEnvironmentJobs: &fakeEnvironmentJobs{fakeBrowserManager: &fakeBrowserManager{fakeProfiles: profiles, capabilities: profile.ManagementCapabilities{EnvironmentJobs: true}}}}
+	templateServer := New(templateService, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{}, WithAccess(gateway))
+	for _, path := range []string{"fingerprint-templates", "display-templates", "template-combinations"} {
+		for _, tc := range []struct {
+			cookie       *http.Cookie
+			csrf, origin string
+			allowed      bool
+		}{{nil, token, "https://adapter.example", false}, {alice, token, "https://adapter.example", false}, {bob, "wrong", "https://adapter.example", false}, {bob, token, "https://foreign.example", false}, {bob, token, "https://adapter.example", true}} {
+			before := templateService.calls
+			values := url.Values{"csrf": {tc.csrf}}
+			if path == "template-combinations" {
+				values.Set("browser_template_id", "camoufox-linux-v152")
+			}
+			r := httptest.NewRequest("POST", "https://adapter.example/manage/"+path, strings.NewReader(values.Encode()))
+			r.Header.Set("Origin", tc.origin)
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			if tc.cookie != nil {
+				r.AddCookie(tc.cookie)
+			}
+			w := httptest.NewRecorder()
+			templateServer.ServeHTTP(w, r)
+			if (templateService.calls > before) != tc.allowed {
+				t.Fatalf("template route %s authorization bypass or valid request denied: %d", path, w.Code)
+			}
+		}
+	}
+	migrationProfiles := &fakeLegacyMigrator{fakeProfiles: profiles}
+	migrationServer := New(migrationProfiles, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example",
+		slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{}, WithAccess(gateway))
+	migrationWrite := func(cookie *http.Cookie, csrfValue, origin string) *httptest.ResponseRecorder {
+		values := url.Values{"csrf": {csrfValue}, "action": {"legacy_network_migrate"}, "revision": {"4"}, "migration_id": {"work-direct"}, "idempotency_key": {"migrate-1"}, "image": {"untrusted:latest"}}
+		request := httptest.NewRequest(http.MethodPost, "https://adapter.example/manage/browsers/work", strings.NewReader(values.Encode()))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		request.Header.Set("Origin", origin)
+		if cookie != nil {
+			request.AddCookie(cookie)
+		}
+		response := httptest.NewRecorder()
+		migrationServer.ServeHTTP(response, request)
+		return response
+	}
+	for _, test := range []struct {
+		cookie       *http.Cookie
+		csrf, origin string
+	}{
+		{nil, token, "https://adapter.example"}, {alice, token, "https://adapter.example"},
+		{bob, "invalid", "https://adapter.example"}, {bob, token, "https://foreign.example"}, {bob, token, "https://adapter.example"},
+	} {
+		migrationWrite(test.cookie, test.csrf, test.origin)
+		if len(migrationProfiles.calls) != 0 {
+			t.Fatal("legacy migration bypassed login/admin/CSRF/Origin/recent authentication")
+		}
+	}
+	selectionManager := networkSelectionFixture()
+	selectionServer := New(selectionManager, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{}, WithAccess(gateway))
+	checkSelectionGateway := func(confirmed bool) {
+		for _, selection := range []string{"direct", "proxy|corp|3"} {
+			for _, tc := range []struct {
+				cookie       *http.Cookie
+				csrf, origin string
+				valid        bool
+			}{
+				{nil, token, "https://adapter.example", false}, {alice, token, "https://adapter.example", false},
+				{bob, "wrong", "https://adapter.example", false}, {bob, token, "https://foreign.example", false}, {bob, token, "https://adapter.example", true},
+			} {
+				selectionManager.directCall, selectionManager.lastBind = "", ""
+				v := url.Values{"csrf": {tc.csrf}, "action": {"network_select"}, "revision": {"3"}, "network_selection": {selection}, "idempotency_key": {"select-gateway"}}
+				r := httptest.NewRequest("POST", "https://adapter.example/manage/browsers/personal", strings.NewReader(v.Encode()))
+				r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				r.Header.Set("Origin", tc.origin)
+				if tc.cookie != nil {
+					r.AddCookie(tc.cookie)
+				}
+				w := httptest.NewRecorder()
+				selectionServer.ServeHTTP(w, r)
+				applied := selectionManager.directCall != "" || selectionManager.lastBind != ""
+				if applied != (tc.valid && confirmed) {
+					t.Fatalf("network select gateway: %s %d confirmed=%v", selection, w.Code, confirmed)
+				}
+			}
+		}
+	}
+	checkSelectionGateway(false)
+
+	deletionManager := deletionFixture()
+	deletionServer := New(deletionManager, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{}, WithAccess(gateway))
+	deleteNetwork := &deletionNetworkManager{networkSelectionManager: networkSelectionFixture()}
+	deleteNetworkServer := New(deleteNetwork, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{}, WithAccess(gateway))
+	if err := gateway.Accounts().Put("disposable", password, access.RoleUser, []string{"personal"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := gateway.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	checkDeletionGateway := func(confirmed bool) {
+		for _, route := range []string{"fingerprint-templates/item/delete", "display-templates/item/delete", "template-combinations/item/delete", "environment-jobs/item/delete", "network-profiles", "accounts/disposable"} {
+			for _, tc := range []struct {
+				cookie                *http.Cookie
+				csrf, origin, confirm string
+				valid                 bool
+			}{
+				{nil, token, "https://adapter.example", "delete", false}, {alice, token, "https://adapter.example", "delete", false},
+				{bob, "wrong", "https://adapter.example", "delete", false}, {bob, token, "https://foreign.example", "delete", false},
+				{bob, token, "https://adapter.example", "", false}, {bob, token, "https://adapter.example", "delete", true},
+			} {
+				v := url.Values{"csrf": {tc.csrf}, "confirm": {tc.confirm}}
+				targetServer := deletionServer
+				if route == "network-profiles" {
+					targetServer = deleteNetworkServer
+					v.Set("action", "delete")
+					v.Set("id", "corp")
+					v.Set("revision", "2")
+					v.Set("idempotency_key", "delete-corp-r2")
+				}
+				if route == "accounts/disposable" {
+					targetServer = server
+					v.Set("action", "delete")
+				}
+				before := len(deletionManager.deleted)
+				deleteNetwork.deleted = ""
+				r := httptest.NewRequest("POST", "https://adapter.example/manage/"+route, strings.NewReader(v.Encode()))
+				if route == "environment-jobs/item/delete" {
+					r.Header.Set("Accept", "application/json")
+				}
+				r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				r.Header.Set("Origin", tc.origin)
+				if tc.cookie != nil {
+					r.AddCookie(tc.cookie)
+				}
+				w := httptest.NewRecorder()
+				targetServer.ServeHTTP(w, r)
+				if route == "environment-jobs/item/delete" && tc.valid {
+					var result struct {
+						Done   bool
+						Reauth bool
+					}
+					if json.Unmarshal(w.Body.Bytes(), &result) != nil || result.Done != confirmed || result.Reauth == confirmed {
+						t.Fatalf("delete JSON feedback: %s", w.Body.String())
+					}
+				}
+
+				applied := len(deletionManager.deleted) > before || deleteNetwork.deleted != ""
+				if route == "accounts/disposable" {
+					rows, err := gateway.Accounts().Snapshot()
+					if err != nil {
+						t.Fatal(err)
+					}
+					exists := false
+					for _, row := range rows {
+						exists = exists || row.ID == "disposable"
+					}
+					applied = !exists
+				}
+				if applied != (confirmed && tc.valid) {
+					t.Fatalf("delete route %s: status=%d confirmed=%v", route, w.Code, confirmed)
+				}
+			}
+		}
+	}
+	checkDeletionGateway(false)
+
+	networkBase := &fakeProfiles{environments: map[string]profile.EnvironmentSummary{"personal": sampleSummary("personal"), "work": sampleSummary("work")}}
+	networkProfiles := &fakeNetworkProfiles{fakeBrowserManager: &fakeBrowserManager{fakeProfiles: networkBase,
+		capabilities: profile.ManagementCapabilities{CreateDelete: true, ProxyDrafts: true, NetworkProfiles: true, TemplateCatalog: true}}}
+	networkServer := New(networkProfiles, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example",
+		slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{}, WithAccess(gateway))
+	networkWrite := func(values url.Values) *httptest.ResponseRecorder {
+		values.Set("csrf", token)
+		request := httptest.NewRequest(http.MethodPost, "https://adapter.example/manage/network-profiles", strings.NewReader(values.Encode()))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		request.Header.Set("Origin", "https://adapter.example")
+		request.AddCookie(bob)
+		response := httptest.NewRecorder()
+		networkServer.ServeHTTP(response, request)
+		return response
+	}
+	for _, values := range []url.Values{
+		{"action": {"create"}, "id": {"corp"}, "label": {"Corp"}, "idempotency_key": {"create-corp"}, "protocol": {"socks5"}, "auth": {"none"}, "host": {"proxy.example.net"}, "port": {"1080"}},
+		{"action": {"probe"}, "id": {"corp"}, "draft_id": {"draft-corp"}},
+	} {
+		if response := networkWrite(values); response.Code != http.StatusForbidden || networkProfiles.lastCreate.ID != "" || networkProfiles.lastProbe != "" {
+			t.Fatalf("network mutation bypassed re-authentication: %d create=%q probe=%q", response.Code, networkProfiles.lastCreate.ID, networkProfiles.lastProbe)
+		}
+	}
+	proxyServer := New(&fakeProxyDrafts{fakeBrowserManager: networkProfiles.fakeBrowserManager}, func(context.Context) ([]sealskin.Session, error) { return nil, nil }, "https://adapter.example", "https://sessions.example", slog.New(slog.NewTextHandler(io.Discard, nil)), HealthUI{}, WithAccess(gateway))
+	// Every sensitive action must signal reauthentication before any side effect.
+	for _, tc := range []struct {
+		handler      http.Handler
+		path, action string
+	}{
+		{networkServer, "/manage/network-profiles", "create"}, {networkServer, "/manage/network-profiles", "probe"},
+		{networkServer, "/manage/network-profiles", "disable"}, {networkServer, "/manage/network-profiles", "revoke"}, {networkServer, "/manage/network-profiles", "delete"},
+		{networkServer, "/manage/browsers/personal/network-profile", "bind"},
+		{networkServer, "/manage/browsers/personal/template", "apply"}, {networkServer, "/manage/browsers/personal/template", "rollback"},
+		{networkServer, "/manage/browsers/personal", "delete"}, {proxyServer, "/manage/browsers/personal", "proxy_apply"}, {proxyServer, "/manage/browsers/personal", "network_direct"},
+		{selectionServer, "/manage/browsers/personal", "network_direct_managed"}, {selectionServer, "/manage/browsers/personal", "network_select"},
+		{migrationServer, "/manage/browsers/work", "legacy_network_migrate"}, {migrationServer, "/manage/browsers/work", "legacy_network_rollback"},
+		{server, "/manage/accounts", "create"}, {server, "/manage/accounts/alice", "delete"}, {server, "/manage/accounts/alice", "reset_password"},
+		{server, "/manage/accounts/alice", "disable"}, {server, "/manage/accounts/alice", "enable"}, {server, "/manage/accounts/alice", "role"},
+	} {
+		values := url.Values{"csrf": {token}, "action": {tc.action}, "revision": {"3"}, "idempotency_key": {"original-key"}, "network_selection": {"direct"}, "confirm": {"delete"}, "account": {"modaladmin"}, "password": {"qa-new-password"}, "role": {"admin"}}
+		req := httptest.NewRequest("POST", "https://adapter.example"+tc.path, strings.NewReader(values.Encode()))
+		req.Header.Set("Origin", "https://adapter.example")
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Accept", "application/json")
+		req.AddCookie(bob)
+		res := httptest.NewRecorder()
+		tc.handler.ServeHTTP(res, req)
+		var result struct {
+			Done   bool
+			Reauth bool
+		}
+		if res.Code != 403 || json.Unmarshal(res.Body.Bytes(), &result) != nil || !result.Reauth || result.Done {
+			t.Fatalf("sensitive reauth %s %s: %d %s", tc.path, tc.action, res.Code, res.Body.String())
+		}
+	}
 	// Create an entry account from the panel; it can log in and open its browser only.
 	created := do(http.MethodPost, "https://adapter.example/manage/accounts", url.Values{"csrf": {token}, "account": {"carol"}, "password": {"carol-synthetic-password"}, "role": {"user"}, "profiles": {"work"}}, bob)
 	if created.Code != http.StatusSeeOther || created.Header().Get("Location") != "/manage/?tab=accounts&notice=account_created" {
@@ -167,6 +414,21 @@ func TestManagementBehindTheRealGateway(t *testing.T) {
 		if confirmed.Code != http.StatusSeeOther || confirmed.Header().Get("Location") != next {
 			t.Fatalf("reauth did not return to %s", tab)
 		}
+	}
+	checkSelectionGateway(true)
+	checkDeletionGateway(true)
+	if w := do("POST", "https://adapter.example/manage/accounts/bob", url.Values{"csrf": {token}, "action": {"delete"}, "confirm": {"delete"}}, bob); w.Header().Get("Location") != "/manage/?tab=accounts&notice=account_self_delete" {
+		t.Fatal("self delete", w.Code)
+	}
+	writeDeletionFixture(t, "accounts", do("GET", "https://adapter.example/manage/?tab=accounts", nil, bob))
+	acceptedNetwork := networkWrite(url.Values{"action": {"create"}, "id": {"corp"}, "label": {"Corp"}, "idempotency_key": {"create-corp"},
+		"protocol": {"socks5"}, "auth": {"none"}, "host": {"proxy.example.net"}, "port": {"1080"}})
+	if response := migrationWrite(bob, token, "https://adapter.example"); response.Code != http.StatusSeeOther ||
+		strings.Join(migrationProfiles.calls, ",") != "work/4/work-direct/bob/migrate-1" {
+		t.Fatalf("authenticated migration failed or accepted arbitrary resource fields: %d", response.Code)
+	}
+	if acceptedNetwork.Code != http.StatusCreated || networkProfiles.lastCreate.ID != "corp" {
+		t.Fatalf("network mutation rejected after re-authentication: %d %s", acceptedNetwork.Code, acceptedNetwork.Body.String())
 	}
 	if do(http.MethodPost, "https://adapter.example/manage/accounts", url.Values{"csrf": {token}, "account": {"dave"}, "password": {"dave-synthetic-password"}, "role": {"admin"}}, bob).Header().Get("Location") != "/manage/?tab=accounts&notice=account_created" {
 		t.Fatal("administrator not created after re-authentication")

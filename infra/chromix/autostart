@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -euo pipefail
+exec python3 /usr/local/lib/browser-platform/chromix-launcher.py launch "${SEALSKIN_URL:-about:blank}"

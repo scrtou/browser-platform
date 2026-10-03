@@ -23,42 +23,45 @@ import (
 )
 
 type fakeSealSkinServer struct {
-	mu                sync.Mutex
-	serverPrivate     *rsa.PrivateKey
-	clientPublic      *rsa.PublicKey
-	sessionID         string
-	sessionKey        []byte
-	homes             []string
-	sessions          []Session
-	launchBody        LaunchURLRequest
-	launchIdempotency string
-	installedApps     []map[string]any
-	installKey        string
-	deleteAppKey      string
-	deletedApp        string
-	archiveKey        string
-	archiveHome       string
-	archiveName       string
-	secretImport      ProxySecretImportRequest
-	secretImportKey   string
-	probeRequest      ProxyProbeRequest
-	probeResult       ProxyProbeResult
-	policyAppend      NetworkPolicyAppendRequest
-	policyAppendKey   string
-	revokeBody        RevokeSecretRequest
-	revokeKey         string
-	runtime           any
-	health            any
-	healthQueries     []string
-	coherence         any
-	coherenceBodies   []StopProfileRequest
-	coherenceKeys     []string
-	coherencePaths    []string
-	stopBody          StopProfileRequest
-	stopIdempotency   string
-	handshakes        int
-	tamperSignature   bool
-	expireListOnce    bool
+	mu                  sync.Mutex
+	serverPrivate       *rsa.PrivateKey
+	clientPublic        *rsa.PublicKey
+	sessionID           string
+	sessionKey          []byte
+	homes               []string
+	sessions            []Session
+	launchBody          LaunchURLRequest
+	launchIdempotency   string
+	installedApps       []map[string]any
+	installKey          string
+	replaceKey          string
+	replacedApp         map[string]any
+	deleteAppKey        string
+	deletedApp          string
+	archiveKey          string
+	archiveHome         string
+	archiveName         string
+	secretImport        ProxySecretImportRequest
+	secretAuthorization ProxySecretAuthorizationRequest
+	secretImportKey     string
+	probeRequest        ProxyProbeRequest
+	probeResult         ProxyProbeResult
+	policyAppend        NetworkPolicyAppendRequest
+	policyAppendKey     string
+	revokeBody          RevokeSecretRequest
+	revokeKey           string
+	runtime             any
+	health              any
+	healthQueries       []string
+	coherence           any
+	coherenceBodies     []StopProfileRequest
+	coherenceKeys       []string
+	coherencePaths      []string
+	stopBody            StopProfileRequest
+	stopIdempotency     string
+	handshakes          int
+	tamperSignature     bool
+	expireListOnce      bool
 }
 
 func (f *fakeSealSkinServer) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
@@ -173,6 +176,31 @@ func (f *fakeSealSkinServer) ServeHTTP(writer http.ResponseWriter, request *http
 		f.installKey = request.Header.Get("X-Idempotency-Key")
 		f.installedApps = append(f.installedApps, app)
 		f.writeEncrypted(writer, http.StatusCreated, app)
+	case request.Method == http.MethodPut && strings.HasPrefix(request.URL.Path, "/api/admin/apps/installed/"):
+		var app map[string]any
+		if json.Unmarshal(plain, &app) != nil {
+			f.writeEncrypted(writer, http.StatusUnprocessableEntity, map[string]string{"detail": "invalid app"})
+			return
+		}
+		appID := strings.TrimPrefix(request.URL.Path, "/api/admin/apps/installed/")
+		if app["id"] != appID {
+			f.writeEncrypted(writer, http.StatusBadRequest, map[string]string{"detail": "app id mismatch"})
+			return
+		}
+		f.replaceKey, f.replacedApp = request.Header.Get("X-Idempotency-Key"), app
+		replaced := false
+		for i, current := range f.installedApps {
+			if current["id"] == appID {
+				f.installedApps[i] = app
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			f.writeEncrypted(writer, http.StatusNotFound, map[string]string{"detail": "not found"})
+			return
+		}
+		f.writeEncrypted(writer, http.StatusOK, app)
 	case request.Method == http.MethodDelete && strings.HasPrefix(request.URL.Path, "/api/admin/apps/installed/"):
 		f.deletedApp = strings.TrimPrefix(request.URL.Path, "/api/admin/apps/installed/")
 		f.deleteAppKey = request.Header.Get("X-Idempotency-Key")
@@ -188,6 +216,12 @@ func (f *fakeSealSkinServer) ServeHTTP(writer http.ResponseWriter, request *http
 		f.archiveHome = strings.TrimSuffix(strings.TrimPrefix(request.URL.Path, "/api/homedirs/"), "/archive")
 		f.archiveName, f.archiveKey = body.ArchiveName, request.Header.Get("X-Idempotency-Key")
 		writer.WriteHeader(http.StatusNoContent)
+	case request.Method == http.MethodPost && request.URL.Path == "/api/admin/environment-management/proxy-secret-authorizations":
+		if json.Unmarshal(plain, &f.secretAuthorization) != nil || request.Header.Get("X-Idempotency-Key") == "" {
+			f.writeEncrypted(writer, http.StatusUnprocessableEntity, map[string]string{"detail": "SECRET_AUTHORIZATION_REQUEST_INVALID"})
+			return
+		}
+		f.writeEncrypted(writer, http.StatusOK, map[string]bool{"authorized": true})
 	case request.Method == http.MethodPost && request.URL.Path == "/api/admin/environment-management/proxy-secrets":
 		if json.Unmarshal(plain, &f.secretImport) != nil || request.Header.Get("X-Idempotency-Key") == "" {
 			f.writeEncrypted(writer, http.StatusUnprocessableEntity, map[string]string{"detail": "SECRET_IMPORT_REQUEST_INVALID"})
@@ -348,6 +382,40 @@ func TestInstallAppPreservesDefinitionAndRejectsDuplicate(t *testing.T) {
 	}
 }
 
+func TestReplaceInstalledAppUsesFullDefinitionAndPUT(t *testing.T) {
+	serverPrivate, clientPrivate := testKeys(t)
+	fake := &fakeSealSkinServer{
+		serverPrivate: serverPrivate, clientPublic: &clientPrivate.PublicKey,
+		installedApps: []map[string]any{{"id": "camoufox-personal-r3", "provider_config": map[string]any{"image": "old", "legacy_only": true}}},
+	}
+	server := httptest.NewServer(fake)
+	defer server.Close()
+	client := newTestClient(t, server.URL, serverPrivate, clientPrivate, server.Client())
+	definition := map[string]any{
+		"id":              "camoufox-personal-r3",
+		"provider_config": map[string]any{"image": "sha256:" + strings.Repeat("a", 64)},
+	}
+	if err := client.ReplaceInstalledApp(context.Background(), "camoufox-personal-r3", definition, ""); err == nil {
+		t.Fatal("replacement without idempotency was accepted")
+	}
+	if err := client.ReplaceInstalledApp(context.Background(), "other", definition, "replace-1"); err == nil {
+		t.Fatal("replacement with mismatched body ID was accepted")
+	}
+	if err := client.ReplaceInstalledApp(context.Background(), "camoufox-personal-r3", definition, "replace-1"); err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	actual, _ := json.Marshal(fake.installedApps[0])
+	wanted, _ := json.Marshal(definition)
+	if string(actual) != string(wanted) || fake.replaceKey != "replace-1" {
+		t.Fatalf("replacement was not exact: app=%s key=%q", actual, fake.replaceKey)
+	}
+	if provider := fake.installedApps[0]["provider_config"].(map[string]any); provider["legacy_only"] != nil {
+		t.Fatal("full PUT retained a legacy-only provider field")
+	}
+}
+
 func TestAdminClientDeletesApplicationAndArchivesHome(t *testing.T) {
 	serverPrivate, clientPrivate := testKeys(t)
 	fake := &fakeSealSkinServer{serverPrivate: serverPrivate, clientPublic: &clientPrivate.PublicKey}
@@ -386,6 +454,16 @@ func TestAdminClientManagesProxyDrafts(t *testing.T) {
 	refs, err := client.ImportProxySecret(context.Background(), ProxySecretImportRequest{SecretID: "proxy-browser-a", SecretVersion: 2, Grants: []SecretGrant{grant}, Username: "u", Password: "p"}, "import-1")
 	if err != nil || refs != (ProxySecretRefs{UsernameSecretRef: "secret://proxy-browser-a/username/2", PasswordSecretRef: "secret://proxy-browser-a/password/2"}) {
 		t.Fatalf("import: %+v %v", refs, err)
+	}
+	authorization := ProxySecretAuthorizationRequest{UsernameSecretRef: refs.UsernameSecretRef, PasswordSecretRef: refs.PasswordSecretRef, Grant: grant, RequestSHA256: strings.Repeat("a", 64)}
+	if err := client.AuthorizeProxySecret(context.Background(), authorization, ""); err == nil {
+		t.Fatal("authorization without durable key accepted")
+	}
+	if err := client.AuthorizeProxySecret(context.Background(), authorization, "grant-1"); err != nil {
+		t.Fatal(err)
+	}
+	if fake.secretAuthorization != authorization {
+		t.Fatal("authorization request changed during encrypted transport")
 	}
 	result, err := client.ProbeProxyDraft(context.Background(), ProxyProbeRequest{UpstreamHost: "proxy.example", UpstreamPort: 1080, UpstreamProtocol: "socks5", UpstreamAuth: "username_password",
 		UsernameSecretRef: refs.UsernameSecretRef, PasswordSecretRef: refs.PasswordSecretRef, Grant: &grant, ProbeURL: "https://probe.example/", ProbeTimeoutSeconds: 10})

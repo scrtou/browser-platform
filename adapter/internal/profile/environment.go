@@ -24,7 +24,8 @@ type EnvironmentHealth struct {
 }
 
 // EnvironmentSummary is the read-only management view of one Profile. It is
-// derived from the configured definition, the atomic journal and the cached
+// derived from the configured definition, the in-memory proxy catalog, the
+// atomic journal and the cached
 // health report only. It never carries operation IDs, Session IDs, bootstrap
 // or handoff URLs, idempotency keys, policy digests, error text or any
 // resolved environment configuration, and producing it never observes,
@@ -41,12 +42,17 @@ type EnvironmentSummary struct {
 	Language        string `json:"language,omitempty"`
 	Timezone        string `json:"timezone,omitempty"`
 	DisplayMode     string `json:"display_mode"`
+	ResolutionMode  string `json:"resolution_mode,omitempty"`
 	NetworkMode     string `json:"network_mode"`
 	NetworkPolicyID string `json:"network_policy_id,omitempty"`
 	// ConfiguredNetworkMode is the directory's binding (direct /
 	// proxy_required / legacy); NetworkMode stays the observed runtime view.
 	ConfiguredNetworkMode string             `json:"configured_network_mode,omitempty"`
+	NetworkProfileLabel   string             `json:"network_profile_label,omitempty"`
 	ProxyUpstream         string             `json:"proxy_upstream,omitempty"`
+	BrowserTemplateID     string             `json:"browser_template_id,omitempty"`
+	EnvironmentArtifactID string             `json:"environment_artifact_id,omitempty"`
+	DisplayTemplateID     string             `json:"display_template_id,omitempty"`
 	Status                state.Status       `json:"status"`
 	UpdatedAt             *time.Time         `json:"updated_at,omitempty"`
 	Observed              bool               `json:"observed"`
@@ -71,7 +77,9 @@ func (s *Service) Environment(ctx context.Context, id string) (EnvironmentSummar
 		ProfileID: definition.ID, Label: definition.DisplayLabel(), StartURL: definition.StartURL, EntryPath: "/browser/" + definition.ID + "/",
 		ApplicationID: definition.ApplicationID, HomeName: definition.HomeName,
 		DisplayMode: "x11", NetworkMode: "unmanaged", Status: state.StatusStopped,
-		Enabled: !definition.Disabled, Revision: record.Revision,
+		ResolutionMode: definition.ResolutionMode,
+		Enabled:        !definition.Disabled, Revision: record.Revision,
+		BrowserTemplateID: definition.BrowserTemplateID, EnvironmentArtifactID: definition.EnvironmentArtifactID, DisplayTemplateID: definition.DisplayTemplateID,
 	}
 	if definition.Language != nil {
 		summary.Language = *definition.Language
@@ -86,6 +94,13 @@ func (s *Service) Environment(ctx context.Context, id string) (EnvironmentSummar
 		summary.NetworkMode, summary.NetworkPolicyID = "managed", definition.NetworkPolicyID
 	}
 	summary.ConfiguredNetworkMode, summary.ProxyUpstream = definition.NetworkMode, definition.ProxyUpstream
+	// Resolve only the current binding's display name, including disabled
+	// revisions still used by a browser. Never guess a name from its upstream.
+	if definition.NetworkMode == "proxy_required" && definition.NetworkProfileID != "" && s.networkProfiles != nil {
+		if network, _, err := s.networkProfiles.getRevision(definition.NetworkProfileID, definition.NetworkProfileRevision); err == nil {
+			summary.NetworkProfileLabel = network.Label
+		}
+	}
 	binding, found, err := s.store.Get(id)
 	if err != nil {
 		return EnvironmentSummary{}, err

@@ -24,8 +24,8 @@ func main() {
 }
 
 func run(args []string, input io.Reader) error {
-	if len(args) == 0 || (args[0] != "put" && args[0] != "disable" && args[0] != "enable" && args[0] != "role" && args[0] != "ungrant-profile" && args[0] != "check") {
-		return errors.New("use profile-accounts put|disable|enable|role|ungrant-profile|check --config <adapter-config>")
+	if len(args) == 0 || (args[0] != "init" && args[0] != "put" && args[0] != "disable" && args[0] != "enable" && args[0] != "role" && args[0] != "ungrant-profile" && args[0] != "check") {
+		return errors.New("use profile-accounts init|put|disable|enable|role|ungrant-profile|check --config <adapter-config>")
 	}
 	command := args[0]
 	flags := flag.NewFlagSet("profile-accounts", flag.ContinueOnError)
@@ -90,6 +90,9 @@ func run(args []string, input io.Reader) error {
 	if *user == "" || *profileID != "" {
 		return errors.New("put requires --user")
 	}
+	if command == "init" && (*replace || *role != "" || *grants != "") {
+		return errors.New("init accepts only --config and --user")
+	}
 	var selected []string
 	if *grants != "" {
 		selected = strings.Split(*grants, ",")
@@ -103,9 +106,16 @@ func run(args []string, input io.Reader) error {
 	if strings.ContainsAny(password, "\r\n") {
 		return errors.New("password input must contain a single line")
 	}
-	err = store.Put(*user, password, *role, selected, *replace)
+	if command == "init" {
+		err = store.InitializeAdmin(*user, password)
+	} else {
+		err = store.Put(*user, password, *role, selected, *replace)
+	}
 	password = ""
 	if errors.Is(err, access.ErrAccountExists) {
+		if command == "init" {
+			return errors.New("account registry is already initialized")
+		}
 		return errors.New("account already exists; replacement requires --replace")
 	}
 	return err

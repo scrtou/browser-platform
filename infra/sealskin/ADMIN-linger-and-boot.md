@@ -1,8 +1,8 @@
-# 管理员待办：加密备份与开机持续运行
+# 管理员参考：加密备份与开机持续运行
 
 [运维与恢复](../../docs/operations.md) · [R2 工作项](../../docs/work-items/R2-2026-09-13-boot-recovery.md) · [R2A 准备验收](legacy-backup-acceptance-2026-09-15.md)
 
-Adapter 目前以 **systemd 用户服务** `profile-adapter.service` 运行（`~/.config/systemd/user/`）。没有 linger 时，用户服务不具备退出全部登录后持续运行及开机自动启动的保证。2026-09-15 只读核对：主机 Debian 12，Adapter `active/enabled`，`Linger=no`，`sudo -n true` 仍提示需要密码；本流程不持有密码。以下两种方案二选一，由管理员执行，之后完成退出登录验证并记录到 R2。启用 linger 不等于已经通过整机恢复验收。
+Adapter 目前以 **systemd 用户服务** `profile-adapter.service` 运行（`~/.config/systemd/user/`）。没有 linger 时，用户服务不具备退出全部登录后持续运行及开机自动启动的保证。2026-09-15 只读核对时主机为 Debian 12、`Linger=no`；R2C 后续已启用并确认 `Linger=yes`，2026-09-17 正式 VPS 重启证明用户管理器与 Adapter 在首个 SSH 登录前启动。用户于 2026-09-20 决定不再执行“退出全部登录”行为验证，因此下述方案与步骤只作运维参考，不是当前待办，也不能写成该场景已经通过。
 
 ## 维护前的具体准备
 
@@ -16,7 +16,7 @@ R2A 已生成 Personal/Work 的只读运行快照并核对所需身份文件，�
 4. 在隔离环境核对数据、服务身份、凭据和实际镜像，记录站点登录结果后才继续重启或迁移。旧恢复标记只作离线提示，不能把恢复包直接交给旧控制器启动；每个包只含目标 Home。
 5. 若维护同时发布 R5D，采用 [匹配的发布与回退顺序](entry-auth/README.md#发布候选与维护顺序)，另核对 r7 应用/策略、账号、tmpfs、目标客户端及组合验收。已启用 Store/入口登录/密封状态的部署必须用完整 `create` 格式及最新撤销/账号恢复流程。
 
-明文 `backup-home.py` / `control-state` 只保留历史 QA 范围，不能代替上述加密备份及恢复验证。真实 Home 演练（R2C）与整机重启（2026-09-17，见 R2 工作项）已执行；退出全部登录后的持续运行验证仍待管理员执行，本文件不表示该项已完成。
+明文 `backup-home.py` / `control-state` 只保留历史 QA 范围，不能代替上述加密备份及恢复验证。真实 Home 演练（R2C）与整机重启（2026-09-17，见 R2 工作项）已执行；退出全部登录后的持续运行验证未执行，并已移出当前交付范围。
 
 ## 方案 A：启用 linger（改动最小，推荐）
 
@@ -40,14 +40,14 @@ sudo systemctl enable --now profile-adapter.service
 
 模板以部署账号运行（`User=sshUser`，附加 `docker` 组）、`After=docker.service`，并把可写路径限制在 `infra/sealskin`（状态文件与控制 socket 所在目录）。二进制、配置与密钥路径与用户服务相同；如部署路径不同需同步修改 `ReadWritePaths`、`ExecStart` 与 `EnvironmentFile`。切换前先确认没有未完成的停止操作（`-inspect-profile` 两个 Profile 均为 running 或 stopped）。
 
-## 验证（执行后）
+## 可选验证（若未来重新纳入范围）
 
 1. `systemctl --user is-active profile-adapter.service`（方案 A）或 `systemctl is-active profile-adapter.service`（方案 B）。
 2. 退出全部 SSH 会话后从另一台机器检查固定入口及 `https://mybrowser.azhen.de/browser/work/health`，确认 Adapter 仍可达并读取健康分项。当前旧部署直接检查；发布 R5D 后须先以有 Work 权限的账号登录，匿名登录跳转不是故障，HTTP 200 本身也不代表健康全项通过。重新登录主机后另用运维 socket `-health-profile work` 核对。
 3. 重新登录后 `journalctl --user -u profile-adapter.service --since -1h`（或系统级 `journalctl -u`）没有重启记录。
 4. 把命令输出（脱敏）记入 `docs/work-items/R2-2026-09-13-boot-recovery.md` 的验收表，并更新 `docs/progress.md#startup` 的“用户退出登录后持续运行”一行。
 
-2026-09-17 VPS 重启中 `user@1000.service` 与 Adapter 在 14:16:44 UTC 启动，早于 14:16:55 UTC 的首个 SSH 登录；这证明开机自动启动，但不替代上述第 2 步的退出全部登录验证。
+2026-09-17 VPS 重启中 `user@1000.service` 与 Adapter 在 14:16:44 UTC 启动，早于 14:16:55 UTC 的首个 SSH 登录；这证明开机自动启动，但不替代未执行的退出全部登录验证。
 
 ## 开机顺序（供整机重启维护窗口使用）
 
@@ -56,6 +56,6 @@ sudo systemctl enable --now profile-adapter.service
 3. SealSkin API 启动时对每个受管理占用核对归属；在 R5D 先认证密封库并重建对应显示材料，恢复仍须精确匹配原代次。单独控制器恢复不代表已通过主机重启验证。
 4. Adapter 启动：最多等待 `startup.control_wait_seconds`（默认 120 秒）直到 SealSkin 会话列表可读，然后逐 Profile 对账。识别为休眠代次时按序恢复：Relay → Guard（规则就绪）→ 控制器接回内网 → 一次性探测（代理 TLS 通过且直连阻断）→ Worker → 显示端点。任一步失败占用保留、绑定不放行；规则/探测失败时 Worker 不启动。运维可 `-resume-profile` 重试或按原生命周期 `-stop-profile` 清理。启用 coherence 的候选还须取得新鲜报告/门槛，恢复旧报告不能放行。
 5. 无策略且仍保留完整休眠清单的代次：启动 Worker → 刷新会话记录中的地址 → 显示端点就绪。已经被自动删除的 Worker 不能走此恢复路径。
-6. 验证两个 Profile 的 `-health-profile`、授权入口、Home/operation/Session、数据与网络证据；整个窗口不应出现 Worker 在 Guard 就绪前联网的时段。R5D 登录、显示与 coherence 组合、正式 VPS 重启和 Debian 13 分别记录，不能由现有分项 QA 推定。
+6. 验证两个 Profile 的 `-health-profile`、授权入口、Home/operation/Session、数据与网络证据；整个窗口不应出现 Worker 在 Guard 就绪前联网的时段。R5D 登录、显示与 coherence 组合及正式 VPS 重启分别记录；Debian 13 未执行且已移出当前范围，不能由 Debian 12 证据推定。
 
 整机重启前保留本次加密备份的验证/恢复结果，以及容器、两个 Profile 的 `inspect`/`health` 基线。完整配置、原始 Docker inspect、密钥与 Session 响应只存私有目录；公开报告只写版本、摘要和分项结论。

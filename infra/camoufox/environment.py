@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import configparser
+import copy
 from dataclasses import asdict
 from datetime import datetime, timezone
 import fcntl
@@ -32,6 +33,19 @@ BROWSER = Path("/opt/camoufox/browser")
 EXECUTABLE = BROWSER / "camoufox"
 MANIFEST = BROWSER.parent / "browser-manifest.json"
 SCHEMA = "browser-platform/camoufox-environment/v1"
+AUTO_SCHEMA = "browser-platform/camoufox-environment/v2"
+DISPLAY_KEYS = {"screen.width","screen.height","screen.availWidth","screen.availHeight","window.outerWidth","window.outerHeight","window.devicePixelRatio","window.screenX","window.screenY"}
+
+def automatic(spec): return spec.get("screen",{}).get("mode")=="auto"
+
+def fixed_spec(spec):
+    value=copy.deepcopy(spec)
+    if automatic(value):
+        require(value["screen"]=={"mode":"auto","dprMode":"system","width":1280,"height":720},"UNSUPPORTED_CAPABILITY")
+        value["screen"]={"width":1280,"height":720,"deviceScaleFactor":1}
+        value["requiredCapabilities"]=[{"auto-screen":"fixed-screen","system-dpr":"fixed-dpr"}.get(k,k) for k in value["requiredCapabilities"]]
+    return value
+
 CAPABILITIES = {
     "locale", "languages", "timezone", "fixed-screen", "fixed-dpr",
     "frozen-device-config", "webrtc-disabled", "proxy-only",
@@ -104,6 +118,7 @@ def is_hash(value) -> bool:
 
 def validate_spec(spec):
     require(isinstance(spec, dict))
+    spec=fixed_spec(spec)
     require(set(spec) == {
         "id", "revision", "osFamily", "locale", "languages", "timezone", "screen",
         "window", "webrtcPolicy", "geolocationPolicy", "requiredCapabilities",
@@ -139,6 +154,7 @@ def validate_spec(spec):
 
 def managed_preferences(spec):
     return {
+        **({"layout.css.devPixelsPerPx":"-1.0"} if automatic(spec) else {}),
         "intl.locale.requested": spec["locale"],
         "intl.accept_languages": ",".join(spec["languages"]),
         "network.proxy.type": 1,
@@ -240,7 +256,7 @@ def validate_artifact(artifact, metadata):
         "schemaVersion", "id", "createdAt", "spec", "runtime", "runtimeImageDigest",
         "browserforgeFingerprint", "resolvedConfig", "firefoxUserPrefs",
     })
-    require(artifact["schemaVersion"] == SCHEMA)
+    require(artifact["schemaVersion"] == (AUTO_SCHEMA if automatic(artifact["spec"]) else SCHEMA))
     require(artifact["runtime"] == metadata, "ENVIRONMENT_VERSION_MISMATCH")
     require(isinstance(artifact["runtimeImageDigest"], str)
             and artifact["runtimeImageDigest"].startswith("sha256:")
@@ -257,17 +273,16 @@ def validate_artifact(artifact, metadata):
             and BF_NAVIGATOR_FIELDS == set(fingerprint["navigator"]), "BROWSERFORGE_RESULT_INCOMPLETE")
     config = artifact["resolvedConfig"]
     validate_properties(config)
-    for key, value in {
+    required_config = {
         "navigator.language": spec["locale"],
         "navigator.languages": spec["languages"],
         "timezone": spec["timezone"],
-        "screen.width": spec["screen"]["width"],
-        "screen.height": spec["screen"]["height"],
-        "window.devicePixelRatio": spec["screen"]["deviceScaleFactor"],
-        "window.outerWidth": spec["window"]["width"],
-        "window.outerHeight": spec["window"]["height"],
-    }.items():
-        require(config.get(key) == value, "ENVIRONMENT_SPEC_MISMATCH")
+    }
+    if automatic(spec):
+        require(not DISPLAY_KEYS.intersection(config),"ENVIRONMENT_SPEC_MISMATCH")
+    else:
+        required_config.update({"screen.width":spec["screen"]["width"],"screen.height":spec["screen"]["height"],"window.devicePixelRatio":spec["screen"]["deviceScaleFactor"],"window.outerWidth":spec["window"]["width"],"window.outerHeight":spec["window"]["height"]})
+    for key,value in required_config.items():require(config.get(key)==value,"ENVIRONMENT_SPEC_MISMATCH")
     require("Linux" in config.get("navigator.userAgent", "")
             and "Firefox/152." in config.get("navigator.userAgent", ""), "ENVIRONMENT_VERSION_MISMATCH")
     prefs = artifact["firefoxUserPrefs"]
@@ -284,6 +299,7 @@ def validate_artifact(artifact, metadata):
 def expected_environment(artifact, sha256):
     spec = artifact["spec"]
     return {
+        **({"BROWSER_PLATFORM_DISPLAY_MODE":"auto","MAX_RES":"3840x2160","SELKIES_MANUAL_RESOLUTION":"false"} if automatic(spec) else {"SELKIES_MANUAL_RESOLUTION":"true","SELKIES_MANUAL_WIDTH":str(spec["screen"]["width"]),"SELKIES_MANUAL_HEIGHT":str(spec["screen"]["height"])}),
         "BROWSER_PLATFORM_ENVIRONMENT_ID": spec["id"],
         "BROWSER_PLATFORM_ARTIFACT_SHA256": sha256,
         "BROWSER_PLATFORM_RUNTIME_IMAGE_DIGEST": artifact["runtimeImageDigest"],
@@ -291,9 +307,6 @@ def expected_environment(artifact, sha256):
         "BROWSER_PLATFORM_LANGUAGES": ",".join(spec["languages"]),
         "TZ": spec["timezone"],
         "PIXELFLUX_WAYLAND": "false",
-        "SELKIES_MANUAL_RESOLUTION": "true",
-        "SELKIES_MANUAL_WIDTH": str(spec["screen"]["width"]),
-        "SELKIES_MANUAL_HEIGHT": str(spec["screen"]["height"]),
     }
 
 
@@ -306,6 +319,7 @@ def load_artifact(path, sha256, *, check_environment=True):
     artifact = decode(raw)
     validate_artifact(artifact, runtime_metadata())
     if check_environment:
+        if automatic(artifact["spec"]):require(not any(os.environ.get(k) for k in ("SELKIES_MANUAL_WIDTH","SELKIES_MANUAL_HEIGHT")),"ENVIRONMENT_CONFIG_DRIFT")
         expected = expected_environment(artifact, sha256)
         require(all(os.environ.get(key) == value for key, value in expected.items()), "ENVIRONMENT_CONFIG_DRIFT")
         require(not any(key.startswith("CAMOU_CONFIG") for key in os.environ), "ENVIRONMENT_CONFIG_DRIFT")
@@ -327,6 +341,9 @@ def verify_acceptance(artifact, sha256):
     require(len(raw) <= 2 * 1024 * 1024 and hashlib.sha256(raw).hexdigest() == expected,
             "ENVIRONMENT_ACCEPTANCE_MISMATCH")
     report = decode(raw)
+    if automatic(artifact["spec"]):
+        require(report.get("schemaVersion")=="browser-platform/native-acceptance/v1" and report.get("status")=="pass" and report.get("phase")=="all" and report.get("artifactSHA256")==sha256 and report.get("runtimeImageDigest")==artifact["runtimeImageDigest"] and report.get("recreationsPerHome",0)>=10 and len(report.get("observations",[]))>=22 and report.get("offlineBackupRestore")=="pass" and report.get("dynamicDisplay")=="pass","ENVIRONMENT_ACCEPTANCE_INCOMPLETE")
+        return
     require(isinstance(report, dict)
             and report.get("schemaVersion") == "browser-platform/camoufox-acceptance/v1"
             and report.get("status") == "pass" and report.get("phase") == "all",
@@ -482,6 +499,9 @@ def main():
                                  os.environ.get("BROWSER_PLATFORM_ARTIFACT_SHA256", ""))
         verify_acceptance(artifact, os.environ["BROWSER_PLATFORM_ARTIFACT_SHA256"])
         if args.command == "verify":
+            if os.getuid()==0:
+                from display_config import configure
+                configure("camoufox",automatic(artifact["spec"]))
             print("ENVIRONMENT_ARTIFACT_OK")
         else:
             launch(artifact, args.urls)

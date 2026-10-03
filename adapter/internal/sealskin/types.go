@@ -55,6 +55,7 @@ type HomeRuntime struct {
 	Workers                   []RuntimeWorker   `json:"workers"`
 	NetworkRuntimeVersion     int               `json:"network_runtime_version,omitempty"`
 	NetworkEnforcementVersion int               `json:"network_enforcement_version,omitempty"`
+	NetworkDirectVersion      int               `json:"network_direct_version,omitempty"`
 	LaunchJournalVersion      int               `json:"launch_journal_version,omitempty"`
 	ProfileInitialURLVersion  int               `json:"profile_initial_url_version,omitempty"`
 	CoherenceRuntimeVersion   int               `json:"coherence_runtime_version,omitempty"`
@@ -69,6 +70,7 @@ func (snapshot HomeRuntime) Capabilities() map[string]int {
 	return map[string]int{
 		"network_runtime_version":     snapshot.NetworkRuntimeVersion,
 		"network_enforcement_version": snapshot.NetworkEnforcementVersion,
+		"network_direct_version":      snapshot.NetworkDirectVersion,
 		"launch_journal_version":      snapshot.LaunchJournalVersion,
 		"profile_initial_url_version": snapshot.ProfileInitialURLVersion,
 		"coherence_runtime_version":   snapshot.CoherenceRuntimeVersion,
@@ -380,4 +382,12 @@ type RevokeSecretResult struct {
 	AffectedGenerations int    `json:"affected_generations"`
 	SecretID            string `json:"secret_id"`
 	SecretVersion       int    `json:"secret_version"`
+}
+
+// ProxySecretAuthorizationRequest grants one new browser access without transporting credentials.
+type ProxySecretAuthorizationRequest struct {
+	UsernameSecretRef string      `json:"username_secret_ref"`
+	PasswordSecretRef string      `json:"password_secret_ref"`
+	Grant             SecretGrant `json:"grant"`
+	RequestSHA256     string      `json:"request_sha256"`
 }

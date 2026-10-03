@@ -34,6 +34,28 @@ type Service interface {
 type reply struct {
 	Result profile.LifecycleResult `json:"result"`
 	Error  string                  `json:"error,omitempty"`
+	Code   string                  `json:"error_code,omitempty"`
+}
+
+// CommandError carries only the stable classification returned by the private
+// control socket. Backend error text never crosses the final CLI log boundary.
+type CommandError struct {
+	StatusCode int
+	Code       string
+}
+
+func (e *CommandError) Error() string {
+	return fmt.Sprintf("control command returned HTTP %d (%s)", e.StatusCode, e.Code)
+}
+
+// ErrorCode returns a fixed audit code suitable for safelog. Errors that did
+// not originate from a classified control reply keep one generic code.
+func ErrorCode(err error) string {
+	var commandErr *CommandError
+	if errors.As(err, &commandErr) && commandErr.Code != "" {
+		return commandErr.Code
+	}
+	return "PROFILE_COMMAND_FAILED"
 }
 
 type healthReply struct {
@@ -61,28 +83,9 @@ func Handler(service Service) http.Handler {
 			response := reply{Result: result}
 			status := http.StatusOK
 			if err != nil {
-				switch {
-				case errors.Is(err, profile.ErrProfileNotFound):
-					status, response.Error = http.StatusNotFound, "profile not found"
-				case errors.Is(err, profile.ErrOwnershipUnknown):
-					status, response.Error = http.StatusConflict, "runtime ownership requires recovery"
-				case errors.Is(err, profile.ErrOperationRunning):
-					status, response.Error = http.StatusConflict, "profile operation is still running"
-				case errors.Is(err, profile.ErrStopUnconfirmed):
-					status, response.Error = http.StatusServiceUnavailable, "stop is pending; retry or reconcile required"
-				case errors.Is(err, profile.ErrLifecycleDisabled):
-					status, response.Error = http.StatusNotImplemented, "verified lifecycle is disabled"
-				case errors.Is(err, profile.ErrNotDormant):
-					status, response.Error = http.StatusConflict, "profile runtime is not a dormant generation"
-				case errors.Is(err, profile.ErrResumeFailed):
-					status, response.Error = http.StatusServiceUnavailable, "resume has not reached a verified ready state; the Home stays reserved"
-				case errors.Is(err, profile.ErrCoherenceBlocked):
-					status, response.Error = http.StatusServiceUnavailable, "current generation has not passed coherence checks; the Home stays reserved"
+				status, response.Error, response.Code = classifyLifecycleError(err)
+				if errors.Is(err, profile.ErrCoherenceBlocked) {
 					w.Header().Set("Retry-After", "10")
-				case errors.Is(err, profile.ErrCapacity):
-					status, response.Error = http.StatusServiceUnavailable, "capacity threshold reached; no launch was started"
-				default:
-					status, response.Error = http.StatusServiceUnavailable, "lifecycle operation could not be verified"
 				}
 			}
 			w.WriteHeader(status)
@@ -130,6 +133,31 @@ func Handler(service Service) http.Handler {
 	}
 	registerCoherence(mux, service)
 	return mux
+}
+
+func classifyLifecycleError(err error) (int, string, string) {
+	switch {
+	case errors.Is(err, profile.ErrProfileNotFound):
+		return http.StatusNotFound, "profile not found", "PROFILE_NOT_FOUND"
+	case errors.Is(err, profile.ErrOwnershipUnknown):
+		return http.StatusConflict, "runtime ownership requires recovery", "RUNTIME_OWNERSHIP_REQUIRED"
+	case errors.Is(err, profile.ErrOperationRunning):
+		return http.StatusConflict, "profile operation is still running", "PROFILE_OPERATION_RUNNING"
+	case errors.Is(err, profile.ErrStopUnconfirmed):
+		return http.StatusServiceUnavailable, "stop is pending; retry or reconcile required", "STOP_UNCONFIRMED"
+	case errors.Is(err, profile.ErrLifecycleDisabled):
+		return http.StatusNotImplemented, "verified lifecycle is disabled", "LIFECYCLE_DISABLED"
+	case errors.Is(err, profile.ErrNotDormant):
+		return http.StatusConflict, "profile runtime is not a dormant generation", "PROFILE_NOT_DORMANT"
+	case errors.Is(err, profile.ErrResumeFailed):
+		return http.StatusServiceUnavailable, "resume has not reached a verified ready state; the Home stays reserved", "RESUME_NOT_READY"
+	case errors.Is(err, profile.ErrCoherenceBlocked):
+		return http.StatusServiceUnavailable, "current generation has not passed coherence checks; the Home stays reserved", "COHERENCE_NOT_READY"
+	case errors.Is(err, profile.ErrCapacity):
+		return http.StatusServiceUnavailable, "capacity threshold reached; no launch was started", "CAPACITY_REJECTED"
+	default:
+		return http.StatusServiceUnavailable, "lifecycle operation could not be verified", "LIFECYCLE_UNVERIFIED"
+	}
 }
 
 // HealthCommand reads ("health") or forces ("probe") a Profile health report
@@ -236,7 +264,35 @@ func Command(ctx context.Context, socket, action, id string) (profile.LifecycleR
 		return profile.LifecycleResult{}, err
 	}
 	if response.StatusCode != http.StatusOK || result.Error != "" {
-		return result.Result, fmt.Errorf("control command returned HTTP %d: %s", response.StatusCode, result.Error)
+		code := result.Code
+		if code == "" {
+			code = legacyLifecycleErrorCode(response.StatusCode, result.Error)
+		}
+		return result.Result, &CommandError{StatusCode: response.StatusCode, Code: code}
 	}
 	return result.Result, nil
+}
+
+func legacyLifecycleErrorCode(status int, message string) string {
+	for _, candidate := range []struct {
+		status  int
+		message string
+		code    string
+	}{
+		{http.StatusNotFound, "profile not found", "PROFILE_NOT_FOUND"},
+		{http.StatusConflict, "runtime ownership requires recovery", "RUNTIME_OWNERSHIP_REQUIRED"},
+		{http.StatusConflict, "profile operation is still running", "PROFILE_OPERATION_RUNNING"},
+		{http.StatusServiceUnavailable, "stop is pending; retry or reconcile required", "STOP_UNCONFIRMED"},
+		{http.StatusNotImplemented, "verified lifecycle is disabled", "LIFECYCLE_DISABLED"},
+		{http.StatusConflict, "profile runtime is not a dormant generation", "PROFILE_NOT_DORMANT"},
+		{http.StatusServiceUnavailable, "resume has not reached a verified ready state; the Home stays reserved", "RESUME_NOT_READY"},
+		{http.StatusServiceUnavailable, "current generation has not passed coherence checks; the Home stays reserved", "COHERENCE_NOT_READY"},
+		{http.StatusServiceUnavailable, "capacity threshold reached; no launch was started", "CAPACITY_REJECTED"},
+		{http.StatusServiceUnavailable, "lifecycle operation could not be verified", "LIFECYCLE_UNVERIFIED"},
+	} {
+		if status == candidate.status && message == candidate.message {
+			return candidate.code
+		}
+	}
+	return "LIFECYCLE_UNVERIFIED"
 }

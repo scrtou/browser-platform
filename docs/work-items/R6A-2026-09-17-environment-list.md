@@ -14,7 +14,7 @@
   4. 旧配置和固定 Profile 入口保持兼容；未启用 `access` 的旧本机配置不暴露列表。
   5. Go 单元/HTTP 测试覆盖上述权限、脱敏、只读与错误路径；`go vet` 与涉及包 race 通过；组件说明、规格、设计、进度、计划和索引更新后收尾。
 - 本次验证、部署与客户端范围：Adapter 代码与 Go 测试（真实网关 + HTTP 处理链 + 假生命周期）；不改动 SealSkin、Caddy、账号表格式、生产配置或生产二进制，不部署生产。真实浏览器/Trilium 客户端和生产候选归 R6 第 5 步的组合 QA。
-- 前置项及其收尾记录：[R4B](R4B-2026-09-14-target-client-migration.md) 已于 2026-09-17 收尾；[R2](R2-2026-09-13-boot-recovery.md) 保留退出登录与 Debian 13 待外部条件，用户已决定继续。运行基线：生产 Adapter candidate-4（SHA-256 `7e7ab79e…`）、控制器 `0.3.2-entry-auth-v1-2ba57382ce75c8f9`。
+- 前置项及其收尾记录：[R4B](R4B-2026-09-14-target-client-migration.md) 已于 2026-09-17 收尾；本项开始时 [R2](R2-2026-09-13-boot-recovery.md) 的退出登录与 Debian 13 仍待外部条件，用户于 2026-09-20 后续取消两项。运行基线：生产 Adapter candidate-4（SHA-256 `7e7ab79e…`）、控制器 `0.3.2-entry-auth-v1-2ba57382ce75c8f9`。
 
 ## 阅读与代码核对
 

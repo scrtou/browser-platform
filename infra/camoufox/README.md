@@ -1,5 +1,9 @@
 # Camoufox 冻结环境与 SealSkin Worker
 
+R6AH磁盘治理已完成：缓存清理后可用约4.2GiB，真实数据和恢复材料保持；后续构建使用任务独立缓存并及时回收。见[验收](../sealskin/r6ah-disk-acceptance-2026-10-02.md)。
+
+2026-09-30 登记器元数据偏差 DEV-074 已独立收尾：固定/自定义登记共用实现及既有九项回归、r10 生产登记/绑定/启动通过；三个 accepted 条目的七字段与原 artifact 派生值逐项一致。Trilium 桌面菜单仍由 DEV-073/R7F 跟踪，见 [完成条件复核](../sealskin/r7f-completion-review-2026-09-30.md)。
+
 [文档导航](../../docs/README.md) · [开发进度](../../docs/progress.md) · [开发计划](../../docs/roadmap.md) · [验收索引](../../docs/acceptance/README.md)
 
 这里实现 Personal 环境基线之后的 Camoufox 阶段：固定依赖和浏览器，一次生成完整设备配置，后续启动只重放产物。2026-09-12 的 **r4 已通过完整重建、存储、渲染稳定性、正式 X11 入口及 Selkies Web 串流验收**，并安装为独立 SealSkin 应用 `camoufox-personal-r4`。现有 Personal/Work 应用、会话和 Home 保持原绑定。具体证据及客户端验收范围见 [运行记录](acceptance-2026-09-12.md)。
@@ -96,6 +100,8 @@ python3 infra/camoufox/resize-window.py \
 
 2026-09-15 的 r9 已通过完整产物验收（23 次稳定观测）、正常 Openbox 桌面及 Linux 公网客户端复测：客户区 1920×1080、边框 0，网页 outer 1920×1080 / inner 1920×1024；点击、上传/拖放、断线和原生截图预览通过。原独立 QA Home 与用户三类测试存储保持，入口保留供 Mac 新窗口/预览复测。精确镜像、产物和失败历史见 [R4B 阶段验收](../sealskin/target-client-migration-acceptance-2026-09-15.md)，未宣称生产迁移或全部旧协议/一致性矩阵已在 r9 重跑。
 
+2026-09-29 新建模板化 Camoufox 崩溃后，发现基础桌面的 FireFox 项会启动未受管的 `/usr/bin/firefox`。r10 候选从 Openbox 默认菜单、desktop entry 和命令入口移除系统 Firefox，默认 `HARDEN_OPENBOX=true`；已绑定的 Camoufox 二进制、环境配置、seeds 和 preferences 不变。候选镜像 `sha256:9a128663…`、r10 产物、两 Home 各 10 次重建、离线恢复及独立正常 X11/Selkies GUI 已通过；桌面右键无新窗口、系统 Firefox 不存在且正常停止释放 Home 锁。r10 已在生产绑定“测试”并从固定入口恢复，新鲜健康通过；目标 Mac/Trilium 及生产桌面右键直接用户证据仍待验收。详见 [r10 候选验收](managed-desktop-recovery-acceptance-2026-09-29.md) 与 [DEV-073](../../docs/deviations/DEV-2026-09-29-073-managed-browser-desktop-recovery.md)。
+
 ## 独立 SealSkin 应用
 
 以下命令从项目根目录执行；安装命令拒绝覆盖已有应用 ID。[prepare-sealskin.py](prepare-sealskin.py) 先在绑定的镜像中验证产物和完整成功报告，再生成可检查的应用 JSON。
@@ -163,15 +169,17 @@ R6E 的 [environment-job.py](environment-job.py) 处理 Adapter 写入私有 spo
 python3 infra/camoufox/environment-job.py run \
   --spool /private/environment-jobs --catalog /private/environment-catalog.json \
   --image sha256:<固定 Worker 镜像 ID> --session-origin https://mysession.azhen.de \
+  --browser-template-id camoufox-linux-v152 \
   [--clipboard-addon infra/sealskin/runtime/client-addons/<包>] [--recreations 10] [--watch 30]
 
 python3 infra/camoufox/environment-job.py register \
   --artifact infra/camoufox/artifacts/env-tw-camoufox-r9.json \
   --acceptance infra/camoufox/evidence/acceptance-r9-1-2026-09-15.json \
-  --catalog /private/environment-catalog.json --session-origin https://mysession.azhen.de
+  --catalog /private/environment-catalog.json --session-origin https://mysession.azhen.de \
+  --browser-template-id camoufox-linux-v152
 ```
 
-`--watch` 让执行器常驻轮询；省略时只处理一个作业后退出，适合由定时器触发。`register` 把已完整验收的固化产物登记为 `source=frozen` 条目，使用与自定义作业相同的模板与核对。执行器未安装为服务，生产未启用；2026-09-18 的真实隔离作业与执行器单元测试见 [R6E 验收](../sealskin/custom-fingerprint-acceptance-2026-09-18.md)，执行位置差异见 [DEV-051](../../docs/deviations/DEV-2026-09-18-051-environment-job-runner.md)。
+`--watch` 让执行器常驻轮询；省略时只处理一个作业后退出，适合由定时器触发。`register` 把已完整验收的固化产物登记为 `source=frozen` 条目，使用与自定义作业相同的模板与核对。两条路径都要求显式浏览器模板 ID，并从已接受产物自身派生 revision、engine、browser version、OS、platform 和完整 User-Agent；字段缺失或 UA 版本自相矛盾时拒绝发布，供 R7D 兼容目录继续做三元组核对。执行器未安装为服务，生产未启用；2026-09-18 的真实隔离作业与执行器单元测试见 [R6E 验收](../sealskin/custom-fingerprint-acceptance-2026-09-18.md)，执行位置差异见 [DEV-051](../../docs/deviations/DEV-2026-09-18-051-environment-job-runner.md)，R7D 元数据补齐见 [DEV-074](../../docs/deviations/DEV-2026-09-29-074-environment-registration-template-metadata.md)。
 
 ## 常见拒绝码
 
@@ -235,3 +243,34 @@ R4B 增加控制器能力核对（[DEV-040](../../docs/deviations/DEV-2026-09-15
 R5C3 的 [一致性策略](../sealskin/lifecycle/runtime-coherence.md) 可在已完整验收的正常 r6 Worker 中启用私有 Marionette，端口仅监听 loopback。控制器以固定有界脚本创建、隐藏并关闭自己的观测标签，读取精确受控 HTTPS 页面；不切换用户焦点、使用键鼠/剪贴板或读取用户页面。没有启用该策略的生产应用保持原行为。
 
 页面值与冻结产物/重建验收基线比较；Intl 原始语言标签由固定 Babel/CLDR 数据规范化，不采信页面自报的匹配结果。国家和时区不同只按显式约束处理，不重新随机化语言、时区、设备参数或 seeds。新 US/en-US/纽约环境已完成两 Home 各 10 次重建和离线/存储恢复，作为 R5C3 独立 QA 产物；没有切换真实 Personal/Work Home，Mac 实机及生产迁移仍归 R4B。
+
+## 独立模板组合执行器（R6P）
+
+管理页分别保存通用指纹模板和显示模板，生成组合时选择引擎。新指纹源 version 2 不含 engine/browser_version；新 v3 队列包含生成目标 ID/修订/引擎/版本快照，并精确引用 `templates/fingerprints/<id>.json` 与 `templates/displays/<id>.json` 的 SHA-256；来源、窗口/屏幕和固定 DPR1 在执行器再次核对。通用源的 `fingerprint-cache/<id>/<目标快照SHA256>/environment.json` 与 receipt 保存首次按目标生成的完整来源、镜像与摘要；旧无 version 源保持 `fingerprint-cache/<id>/` 缓存与 Camoufox152 限制，旧 v1/v2 作业继续读取。目标哈希由 ID/修订/引擎/版本的排序紧凑 JSON 计算，不含镜像，因此同目标镜像变化会拒绝而非随机重建。执行器生成前及发布前（含兼容目录锁内）再次核对 accepted 目标，产物实际版本必须匹配。已固定的来源不可重建成随机设备。当前自定义目标为 Camoufox 152.0/Linux；新执行器固定 r10 受管桌面镜像，历史 r9 产物不变。
+
+`environment-job.py run` 必须传 `--template-catalog`、当前 Adapter `--catalog`、`--browser-template-id camoufox-linux-v152` 和同一 `--spool`。新组合通过完整两个 Home 各十次重建/恢复验收及镜像校验后，先追加环境目录，再登记 accepted 显示兼容项。发布中断可使用原产物和匹配的成功报告继续；目录记录一致时不改写。失败报告、漂移和不完整缓存保留且拒绝发布。失败作业不会自动重跑；排查后用同样参数加 `--retry-job job-<hex>` 显式恢复，不能同时使用 `--watch`。已 accepted 重试无副作用；失败验收应新建组合任务，不能删除旧报告再冒充通过。
+
+部署使用冻结的执行器源码与依赖清单，不能直接指向脏工作区。`deploy-engine-neutral-templates.py --root <私有R6Q目录>` 生成限定发布材料，`--apply` 核对证据及生产输入后仅更新 Adapter 和空闲执行器服务；不替换目录、真实 Home 或会话。队列有未完成作业时拒绝维护。回退须先核对新增作业/模板/目录，不能覆盖用户新操作；旧 Adapter 可继续读取完整 accepted 产物，R6P 版本不理解通用 version 2 源及 v3 队列；已有这些数据时不能直接降级。
+
+独立验证工具：`check-template-desktop.py` 使用两个 accepted 组合在新 Home 做 A→B→A，检查实际尺寸、边角点击、文字、显示认证和存储；`check-template-publication.py` 复制 QA 来源/缓存，注入两类发布中断并用真实镜像校验恢复；`check-template-ui.py` 在隔离 Chromium 检查服务器渲染页面。见 [R6P 验收](../sealskin/r6p-template-separation-acceptance-2026-10-01.md)。
+
+备份必须保留整个私有 spool（templates、fingerprint-cache、queue/status、artifacts、evidence）以及两份目录和固定执行器/镜像。需要一致快照时先等待空闲并停止作业服务；不删除失败日志。R6K 的已有归档不会自动包含新来源缓存，不能仅依赖重新生成来恢复设备身份；异机全依赖闭包继续属于灾备后续。
+
+R6Q 当前交付与证据见 [工作项](../../docs/work-items/R6Q-2026-10-01-engine-neutral-fingerprint-templates.md)。R6Q 当时生成器能力只列 Camoufox 152/Linux，accepted Chromix 运行模板不意味着已有 Chromix 自定义生成器。
+
+R6Q 当时交付已部署，完整结果及旧模板兼容范围见 [R6Q 验收](../sealskin/r6q-engine-neutral-acceptance-2026-10-01.md)。
+
+
+## R6R 多引擎后继
+
+R6Q 的 Camoufox 单引擎限制由 R6R 扩展：v3 通用来源分派新增 Chromix154、原生Firefox155，Camoufox152原生成与验收流程保留。执行器新增 `--native-targets` 私有 registry；旧源/v1/v2不改派。多引擎的缓存、报告、限制、精确部署与回退见[组件说明](../environment-engines/README.md)。
+
+R6R已限定部署并收尾，完整范围和未验证项见[三引擎验收](../sealskin/r6r-multi-engine-acceptance-2026-10-01.md)。
+
+## R6S 共用显示策略
+
+Camoufox152与Chromix/Firefox共同支持自定义fixed/DPR1和内置auto/system。Camoufox自动产物为v2，移除固定screen/window/DPR覆盖并绑定系统DPI；固定产物继续v1。第一次设备源生成以1920×1080参考尺寸提取配置，再独立组合显示，旧缓存不重抽。自动验收使用真实Selkies客户端与两Home完整重放，正式入口仍要求完整匹配报告。运行器显式`--client-browsers`固定动态QA客户端依赖。版本、发布和回退见[多引擎组件](../environment-engines/README.md)。
+
+R6S服务器交付已部署：Camoufox固定/自动各22份观察及离线恢复、真实动态输入和同Home切换通过；旧固定产物与缓存保持。探针就绪修复后的新作业单独验收，早期无窗口QA关闭超时保留为失败，见[最终验收](../sealskin/r6s-shared-display-acceptance-2026-10-01.md)。
+
+R6AW正在增加四个规定内置通用指纹和固定1920×1080/DPR1显示；严格来源读者接受builtin字段并核对保留ID/内容，普通自定义来源和旧格式保持兼容。内置组合仅在独立完整验收后安装，重复发布保留已安装组合保护；状态见[R6AW](../../docs/work-items/R6AW-2026-10-02-protected-builtins.md)。

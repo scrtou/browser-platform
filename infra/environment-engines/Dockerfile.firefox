@@ -1,0 +1,22 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+ARG INPUT_SHA256
+RUN cp /usr/local/lib/browser-platform/browser-shutdown.py /usr/local/lib/browser-platform/firefox_x11_shutdown.py
+COPY firefox_shutdown.py /usr/local/lib/browser-platform/browser-shutdown.py
+COPY artifact.py /usr/local/lib/browser-platform/native_artifact.py
+COPY display_config.py /usr/local/lib/browser-platform/display_config.py
+COPY install-resolution-limit.py /tmp/install-resolution-limit.py
+RUN python3 /tmp/install-resolution-limit.py && rm /tmp/install-resolution-limit.py
+COPY firefox_launcher.py /usr/local/lib/browser-platform/firefox-launcher.py
+COPY browser-platform-autoconfig.js /usr/lib/firefox/defaults/pref/browser-platform-autoconfig.js
+COPY browser-platform.cfg /usr/lib/firefox/browser-platform.cfg
+COPY firefox-entrypoint /usr/local/bin/browser-platform-firefox-entrypoint
+COPY firefox-autostart /defaults/autostart
+RUN python3 -c "import hashlib,json;from pathlib import Path; files=['/usr/lib/firefox/firefox','/usr/lib/firefox/libxul.so','/usr/lib/firefox/browser-platform.cfg'];Path('/usr/local/lib/browser-platform/firefox-lock.json').write_text(json.dumps({'version':'155.0.1','files':{p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in files}}))" \
+ && chmod 755 /usr/local/bin/browser-platform-firefox-entrypoint /defaults/autostart
+RUN python3 -c 'from pathlib import Path; p=Path("/etc/xdg/openbox/rc.xml"); s=p.read_text(); assert s.count("</applications>")==1; p.write_text(s.replace("</applications>", "<application class=\"firefox\"><position force=\"yes\"><x>0</x><y>0</y></position><decor>no</decor></application></applications>"))'
+ENV TITLE=Firefox SELKIES_UI_TITLE=Firefox PIXELFLUX_WAYLAND=false
+LABEL io.browser-platform.browser-engine="firefox" io.browser-platform.firefox-version="155.0.1" io.browser-platform.custom-generation="1"
+ENTRYPOINT ["/usr/local/bin/browser-platform-firefox-entrypoint"]
+
+LABEL io.browser-platform.custom-input-sha256="${INPUT_SHA256}"

@@ -87,6 +87,12 @@ func (g *Gateway) prepareProxy() error {
 			proxy.Out.Header.Del("Cookie")
 			identity := proxy.In.Context().Value(contextKey{}).(requestLogin)
 			proxy.Out.Header.Set(backendAuthHeader, identity.Data.BackendToken)
+			if _, ok := displayAsset(proxy.In.URL.Path); ok && proxy.In.Method == http.MethodGet && g.displayTransformRequested(proxy.In) {
+				proxy.Out.Header.Set("Accept-Encoding", "identity")
+				for _, key := range []string{"Range", "If-Range", "If-None-Match", "If-Modified-Since"} {
+					proxy.Out.Header.Del(key)
+				}
+			}
 		},
 		ModifyResponse: func(response *http.Response) error {
 			id, ok := sessionPath(response.Request)
@@ -118,6 +124,9 @@ func (g *Gateway) prepareProxy() error {
 				if strings.HasPrefix(lower, "access-control-") || strings.HasPrefix(lower, "x-upstream-") || strings.HasPrefix(lower, "x-browser-platform-") {
 					response.Header.Del(key)
 				}
+			}
+			if err := g.transformDisplayResponse(response); err != nil {
+				return err
 			}
 			response.Header.Set("Cache-Control", "no-store")
 			response.Header.Set("Referrer-Policy", "no-referrer")
@@ -187,5 +196,9 @@ func (g *Gateway) serveSession(w http.ResponseWriter, r *http.Request) {
 		delete(g.active, key)
 		g.mu.Unlock()
 	}()
+	if r.URL.Path == "/"+id+"/_browser-platform/display" {
+		g.serveDisplayScaling(w, r.WithContext(ctx))
+		return
+	}
 	g.proxy.ServeHTTP(w, r.WithContext(ctx))
 }

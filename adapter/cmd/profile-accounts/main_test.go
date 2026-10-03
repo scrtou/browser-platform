@@ -149,7 +149,7 @@ func TestInvalidGrantPasswordAndArgumentsDoNotCreateAccounts(t *testing.T) {
 		password string
 	}{
 		{[]string{"put", "--config", config, "--user", "alice", "--profiles", "unknown"}, "valid-test-password"},
-		{[]string{"put", "--config", config, "--user", "alice", "--profiles", "personal"}, "short"},
+		{[]string{"put", "--config", config, "--user", "alice", "--profiles", "personal"}, "abc"},
 		{[]string{"put", "--config", config, "--user", "alice", "--profiles", "personal"}, "line-one-test\nline-two"},
 		{[]string{"put", "--config", config, "--password", "synthetic-private-argument"}, ""},
 	} {

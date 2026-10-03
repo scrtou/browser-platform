@@ -15,7 +15,7 @@ const (
 )
 
 var (
-	ErrLastAdmin       = errors.New("the last enabled administrator cannot be disabled or demoted")
+	ErrLastAdmin       = errors.New("the last enabled administrator cannot be disabled, demoted or deleted")
 	ErrAccountExists   = errors.New("account already exists")
 	ErrAccountNotFound = errors.New("account not found")
 	ErrUnknownProfile  = errors.New("grant contains an unknown Profile")
@@ -143,6 +143,16 @@ func normalizeGrants(grants []string, known map[string]bool) ([]string, error) {
 // role and re-enables it. An empty role keeps the existing role on replace
 // and means "user" on create.
 func (s *AccountStore) Put(id, password, role string, grants []string, replace bool) error {
+	return s.put(id, password, role, grants, replace, false)
+}
+
+// InitializeAdmin creates exactly one first administrator under the same file
+// lock as ordinary mutations. It never replaces or resets an existing account.
+func (s *AccountStore) InitializeAdmin(id, password string) error {
+	return s.put(id, password, RoleAdmin, nil, false, true)
+}
+
+func (s *AccountStore) put(id, password, role string, grants []string, replace, initializeOnly bool) error {
 	if !accountID.MatchString(id) {
 		return errors.New("invalid account ID")
 	}
@@ -154,6 +164,12 @@ func (s *AccountStore) Put(id, password, role string, grants []string, replace b
 		return err
 	}
 	return s.Mutate(true, func(registry *Registry) error {
+		if initializeOnly && len(registry.Users) != 0 {
+			return ErrAccountExists
+		}
+		if registry.SetupRequired && role != RoleAdmin {
+			return errors.New("initialization requires an administrator")
+		}
 		normalized, err := normalizeGrants(grants, s.known())
 		if err != nil {
 			return err
@@ -175,6 +191,7 @@ func (s *AccountStore) Put(id, password, role string, grants []string, replace b
 		} else {
 			registry.Users = append(registry.Users, account)
 		}
+		registry.SetupRequired = false
 		return nil
 	})
 }
@@ -297,4 +314,20 @@ func (s *AccountStore) Snapshot() ([]Account, error) {
 	}
 	sort.Slice(accounts, func(i, j int) bool { return accounts[i].ID < accounts[j].ID })
 	return accounts, nil
+}
+
+// Delete removes an account under the same cross-process lock as other writes.
+func (s *AccountStore) Delete(id string) error {
+	return s.Mutate(false, func(registry *Registry) error {
+		index := findAccount(registry, id)
+		if index < 0 {
+			return ErrAccountNotFound
+		}
+		account := registry.Users[index]
+		if !account.Disabled && account.EffectiveRole() == RoleAdmin && enabledAdmins(*registry) <= 1 {
+			return ErrLastAdmin
+		}
+		registry.Users = append(registry.Users[:index], registry.Users[index+1:]...)
+		return nil
+	})
 }

@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+python3 /usr/local/lib/browser-platform/chromix-launcher.py verify
+exec /init "$@"

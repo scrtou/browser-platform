@@ -17,8 +17,8 @@
 
 ## 影响
 
-完整 R6F 组合发布门槛尚未满足。当前控制器补丁和现有环境受控组合已验证创建/删除、代理探测和自定义 artifact 启动，组合控制根也已完成隔离加密恢复；但真实生产 Home 备份、真实 Mac 自定义 artifact、Profile 生命周期写操作和实际回退仍未完成，不能把手工验证扩大为自动运行器或完整发布通过。
+本偏差发现时，完整 R6F 组合发布门槛尚未满足。后续现有环境受控组合已完成创建/删除、代理探测、自定义 artifact、组合控制根和两个生产 Home 恢复、Work 数据确认、真实 Mac 自定义 artifact、Profile 完整停用/启用矩阵及实际回退。手工证据仍不能扩大为旧自动运行器通过。
 
 ## 处理与后续
 
-按用户授权改为现有环境受控手工组合。当前管理员身份复核通过后，`r6f-existing-overlay-recheck` 已安装并重启 `sealskin`；固化指纹和自定义指纹 Profile 均完成创建、启动、健康/代理探测、删除清理，临时记录保留为 `deleted` 审计状态。未替换管理员密钥，现有 Personal/Work 运行代次未重建；组合控制根已在隔离旧 QA Home 上完成加密归档、verify 和离线 restore，Profile 停启/关闭、真实生产 Home 备份和实际回退仍未执行。原 `run-release-combination.py` 继续绑定旧 R5E QA 根，后续若需要自动化组合应另建工作项，不把本次手工证据写成自动运行器通过。
+按用户授权改为现有环境受控手工组合。当前管理员身份复核通过后，`r6f-existing-overlay-recheck` 已安装并重启 `sealskin`；固化指纹和自定义指纹 Profile 均完成创建、启动、健康/代理探测、删除清理，临时记录保留为 `deleted` 审计状态。组合控制根及两个生产 Home 后续均完成加密归档、verify 和隔离 restore；Personal/Work 均重建健康代次，Work 浏览器内数据、停启矩阵、回退和真实 Mac 自定义 artifact 均完成验证。原 `run-release-combination.py` 继续绑定旧 R5E QA 根；若需要自动化组合应另建工作项，不把本次手工证据写成自动运行器通过。R6F 已按约定的手工组合范围收尾。

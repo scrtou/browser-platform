@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "repository": "https://github.com/xiaozhou26/Chromix",
+  "version": "154.0.8037.57",
+  "sourceCommit": "3b338c8bfda663d597d383d24f8fc20870d219e4",
+  "platform": "linux-x64",
+  "archiveURL": "https://github.com/xiaozhou26/Chromix/releases/download/v154.0.8037.57/chromix-linux-x64.zip",
+  "archiveSHA256": "9b769a5b151b0778a42e6883dd12454817fcd0bef0268b1a93008b25052e0669",
+  "archiveBytes": 270078471,
+  "expandedBytes": 751550675,
+  "executables": {
+    "chromix/chromix": {
+      "kind": "POSIX shell launcher",
+      "size": 506,
+      "sha256": "452802e0ac2f4b668df75a3280ea6992cb509aa865032d54db4b491388496276",
+      "mode": "0755"
+    },
+    "chromix/chrome": {
+      "kind": "ELF64 x86-64",
+      "size": 526918984,
+      "sha256": "c0013fd589437e66be37d92c62367a75285c0a8579f3e37f0f46dc64056fb514",
+      "machine": 62,
+      "mode": "0755"
+    },
+    "chromix/chrome_crashpad_handler": {
+      "kind": "ELF64 x86-64",
+      "size": 2237248,
+      "sha256": "00683c31d30ba801489e56d354c4f1ed7840805355cc8ab39914b3c56391396c",
+      "machine": 62,
+      "mode": "0755"
+    },
+    "chromix/chrome-sandbox": {
+      "kind": "ELF64 x86-64",
+      "size": 19264,
+      "sha256": "bf355c0c40b772befd85771b4dbb0c65905ed18d8f4cd3d4cb21621170c5be2a",
+      "machine": 62,
+      "mode": "0755"
+    }
+  },
+  "upstreamRuntimeAcceptance": "not_completed",
+  "upstreamFingerprintAcceptance": "not_completed"
+}

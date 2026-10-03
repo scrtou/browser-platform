@@ -1,0 +1,5 @@
+FROM browser-platform/chromix:154-auto-r4
+# Verify exact base e7e71db before building. Keep the R6N resize/input patches.
+COPY launcher.py /usr/local/lib/browser-platform/chromix-launcher.py
+RUN python3 -c "import runpy; runpy.run_path('/usr/local/lib/browser-platform/chromix-launcher.py')['verify_fonts']()"
+LABEL io.browser-platform.chromix-scaling-version="1"

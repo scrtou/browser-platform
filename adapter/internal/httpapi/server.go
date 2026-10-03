@@ -75,9 +75,23 @@ func New(profiles profileService, listSessions func(context.Context) ([]sealskin
 	mux.HandleFunc("GET /manage/{$}", server.managePage)
 	mux.HandleFunc("GET /manage/environments", server.manageEnvironments)
 	mux.HandleFunc("GET /manage/environments/catalog", server.manageEnvironmentCatalog)
+	mux.HandleFunc("GET /manage/templates", server.manageTemplateCatalog)
+	mux.HandleFunc("GET /manage/template-sources", server.manageTemplateSources)
+	mux.HandleFunc("POST /manage/browsers/{profile}/template", server.manageTemplateChange)
+	mux.HandleFunc("GET /manage/network-profiles", server.manageNetworkProfileList)
+	mux.HandleFunc("POST /manage/network-profiles", server.manageNetworkProfileWrite)
 	mux.HandleFunc("POST /manage/browsers", server.manageCreateBrowser)
+	mux.HandleFunc("POST /manage/browsers/{profile}/network-profile", server.manageNetworkProfileBind)
+	mux.HandleFunc("POST /manage/fingerprint-templates/{id}/delete", server.manageTemplateDataDelete)
+	mux.HandleFunc("POST /manage/display-templates/{id}/delete", server.manageTemplateDataDelete)
+	mux.HandleFunc("POST /manage/template-combinations/{id}/delete", server.manageTemplateDataDelete)
+	mux.HandleFunc("POST /manage/environment-jobs/{id}/delete", server.manageTemplateDataDelete)
+
 	mux.HandleFunc("GET /manage/environment-jobs", server.manageEnvironmentJobList)
 	mux.HandleFunc("POST /manage/environment-jobs", server.manageEnvironmentJobCreate)
+	for _, route := range []string{"/manage/fingerprint-templates", "/manage/display-templates", "/manage/template-combinations"} {
+		mux.HandleFunc("POST "+route, server.manageTemplateSourceCreate)
+	}
 	mux.HandleFunc("POST /manage/browsers/{profile}", server.manageBrowser)
 	mux.HandleFunc("POST /manage/accounts", server.manageAccounts)
 	mux.HandleFunc("POST /manage/accounts/{account}", server.manageAccount)
@@ -314,7 +328,7 @@ func (s *Server) writeProfileError(writer http.ResponseWriter, profileID string,
 	case errors.Is(err, profile.ErrOperationRunning):
 		status, message = http.StatusConflict, "Browser profile is still starting; retry shortly"
 	case errors.Is(err, profile.ErrOwnershipUnknown):
-		status, message = http.StatusConflict, "Browser profile requires operator recovery"
+		status, message = http.StatusConflict, "浏览器运行状态需要恢复。请返回管理页执行「安全关闭」，确认资源释放后重新打开固定入口；不要从远程桌面菜单启动其他浏览器。"
 	case errors.Is(err, profile.ErrResumeFailed):
 		status, message = http.StatusConflict, "Browser profile could not be resumed after a restart; retry later or ask the operator to resume or stop it"
 	case errors.Is(err, profile.ErrCoherenceBlocked):

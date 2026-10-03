@@ -44,6 +44,10 @@ python3 infra/camoufox/acceptance.py \
 
 R4B 的 Work Wayland 候选已通过 10 项协议/身份单元检查、独立真实 Firefox 探测和完整控制器组合验收。实际 stop 在关闭对话框未处理时返回 503 并保留原 Worker/Home，取消后重试正常退出；`docker stop -t 30` 的 s6 顺序退出码为 0，原容器/Session resume 后即时 Cookie、localStorage、IndexedDB 均恢复。固定候选为 `sha256:ec848635e68db2d1c805fcf9972ef4586bcd86a9ed14b2075b0c5a40fbbc503f`，保留原 Work 镜像所有层，再增加退出和显示认证层；私有 App 候选只替换镜像字段，尚未部署。证据和版本边界见 [R4B 阶段验收](../sealskin/target-client-migration-acceptance-2026-09-15.md)。该范围不覆盖其他 compositor、浏览器或跨版本升级；r9 Camoufox 继续绑定此前已验收的退出层。
 
+## Chromix X11 退出（R6L）
+
+[Chromix shutdown.py](../chromix/shutdown.py) 复用已审核 X11 关闭实现，并独立匹配 `/opt/chromix/chrome` 主进程、排除带 `--type=` 的子进程，等待独占 Home 锁释放。实际关闭拒绝超时保留 Worker/Home，用户取消对话框后重试正常停止；三类数据停止重建及加密恢复通过。仅适用于固定 Chromix 154 X11 镜像，不扩大 Firefox/Wayland 的既有验收范围。见 [R6L 验收](../sealskin/r6l-chromix-acceptance-2026-10-01.md)。
+
 ## X11键盘输入顺序（R6AW已部署）
 
 `install-keyboard-order.py`只接受固定Selkies输入源码摘要，为三个引擎的X11注入路径安装`keyboard_subprocess.py`。单次键盘子进程最多等待2秒；等待期间不处理后续按键，超时或取消先终止并回收进程，避免孤立进程稍后插入标点。失败文本不被标记为已原子输入，后续keyup仍可释放按键。Wayland和剪贴板流程保持原上游路径。
