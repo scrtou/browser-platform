@@ -1,5 +1,7 @@
 # 设计偏差记录
 
+[DEV-148 TW自动Chromix输入错序](DEV-2026-10-03-148-dynamic-input-order.md)：诊断中；精确文本变成resizecheck-，焦点/尺寸正确且无资源耗尽，保留失败并核对事件顺序。
+
 [DEV-147 固定Camoufox桌面证据](DEV-2026-10-02-147-fixed-camoufox-desktop-evidence.md)：处理中；固定组合保留无头完整报告，补齐同产物的正常桌面完整验收。
 
 [DEV-146 内置包关联校验](DEV-2026-10-02-146-builtin-package-binding.md)：处理中；R6AW安装候选需要逐项核对来源、报告、设备缓存和兼容关系。

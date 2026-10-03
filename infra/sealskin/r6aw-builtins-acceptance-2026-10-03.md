@@ -18,7 +18,7 @@ US/TW/JP/CN四个受保护通用指纹，自动/DPR随系统缩放和1920×1080/
 
 ## 当前证据
 
-2026-10-03 00:26 UTC：11/24原完整报告accepted，2个任务运行中，0个新增失败。固定Camoufox的4份正常桌面补验尚未执行；因此没有24组合完成结论。
+2026-10-03 01:10 UTC：16/24原完整报告accepted（固定12项、自动4项），固定Camoufox的4份正常桌面补验全部通过。TW自动Chromix保留1份输入乱序failed，自动驱动已停止；见DEV-148。尚无24组合完成结论。
 
 已通过的前置检查包括候选Go test/vet、内置与删除并发/race、11项Python来源和17项作业检查、4项初始文档就绪检查；实际客户端旧JS的8项回归已复现，新JS的12项尺寸换算场景通过。完整矩阵不重复利用旧镜像的accepted报告。不完整矩阵已实测拒绝导出，未创建输出目录。
 
@@ -32,6 +32,6 @@ US/TW/JP/CN四个受保护通用指纹，自动/DPR随系统缩放和1920×1080/
 - 保留旧删除标记的安装目录复核、受控部署、实际进程/就绪/待初始化页面及旧数据保护、异机完整材料留存。
 - 最终文档、偏差收尾、工作项/计划/验收索引及Git提交。
 
-相关偏差：[DEV-142](../../docs/deviations/DEV-2026-10-02-142-remote-qa-runtime-user.md)、[143](../../docs/deviations/DEV-2026-10-02-143-remote-reconnect-input.md)、[144](../../docs/deviations/DEV-2026-10-02-144-bidi-initial-document-readiness.md)、[145](../../docs/deviations/DEV-2026-10-02-145-client-dpr-resolution-clamp.md)、[146](../../docs/deviations/DEV-2026-10-02-146-builtin-package-binding.md)、[147](../../docs/deviations/DEV-2026-10-02-147-fixed-camoufox-desktop-evidence.md)。
+相关偏差：[DEV-142](../../docs/deviations/DEV-2026-10-02-142-remote-qa-runtime-user.md)、[143](../../docs/deviations/DEV-2026-10-02-143-remote-reconnect-input.md)、[144](../../docs/deviations/DEV-2026-10-02-144-bidi-initial-document-readiness.md)、[145](../../docs/deviations/DEV-2026-10-02-145-client-dpr-resolution-clamp.md)、[146](../../docs/deviations/DEV-2026-10-02-146-builtin-package-binding.md)、[147](../../docs/deviations/DEV-2026-10-02-147-fixed-camoufox-desktop-evidence.md)、[148](../../docs/deviations/DEV-2026-10-03-148-dynamic-input-order.md)。
 
-私有证据：本机 infra/sealskin/runtime/r6aw-protected-builtins-20261002/，独立机 /srv/r6aw-protected-builtins-20261002/；实时检查点为前者的 live-matrix.json。此前薄镜像传输依赖异机已有精确基础层，不算冷导入；完整三镜像归档正在独立机生成，冷导入结果须另行记录。供应商自然动态漂移继续未测，静态代理恢复不替代该项。
+私有证据：本机 infra/sealskin/runtime/r6aw-protected-builtins-20261002/，独立机 /srv/r6aw-protected-builtins-20261002/；实时检查点为前者的 live-matrix.json。此前薄镜像传输依赖异机已有精确基础层，不算冷导入；完整三镜像归档已保存在独立机（2,145,164,634字节）；初版校验器混淆OCI索引与配置摘要，正在修正，未宣称冷导入通过。供应商自然动态漂移继续未测，静态代理恢复不替代该项。
