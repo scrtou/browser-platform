@@ -26,7 +26,7 @@ import (
 
 const maxResponseBytes = 2 << 20
 
-// LongOperationTimeout bounds one ordered resume request end to end.
+// LongOperationTimeout bounds an ordered launch or resume request end to end.
 const LongOperationTimeout = 180 * time.Second
 
 type Config struct {
@@ -99,8 +99,20 @@ func NewClient(cfg Config) (*Client, error) {
 	}
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 45 * time.Second, Transport: cfg.Transport}
-		// Ordered resume waits for Relay, Guard, probe, Worker and display.
-		longClient = &http.Client{Timeout: LongOperationTimeout, Transport: cfg.Transport}
+		// Ordered startup waits for Relay, Guard, probe, Worker and display.
+		// The display/query transport has a shorter header deadline. Give
+		// long API calls their own pool without changing shared TLS policy
+		// or weakening ordinary requests. Client.Timeout still bounds the
+		// entire operation, including headers and body.
+		longTransport := cfg.Transport
+		if transport, ok := cfg.Transport.(*http.Transport); ok {
+			copy := transport.Clone()
+			if copy.ResponseHeaderTimeout > 0 && copy.ResponseHeaderTimeout < LongOperationTimeout {
+				copy.ResponseHeaderTimeout = LongOperationTimeout
+			}
+			longTransport = copy
+		}
+		longClient = &http.Client{Timeout: LongOperationTimeout, Transport: longTransport}
 	}
 	// A signed API call never follows an upstream-controlled redirect. Copy
 	// caller clients so the security policy does not mutate shared clients.
@@ -131,7 +143,7 @@ func (c *Client) LaunchURL(ctx context.Context, req LaunchURLRequest, idempotenc
 	if strings.TrimSpace(idempotencyKey) == "" {
 		return response, errors.New("launch requires a durable idempotency key")
 	}
-	err := c.secure(ctx, http.MethodPost, "/api/launch/url", req, idempotencyKey, &response)
+	err := c.secureWith(ctx, c.longClient, http.MethodPost, "/api/launch/url", req, idempotencyKey, &response)
 	return response, err
 }
 
@@ -180,6 +192,36 @@ func (c *Client) ListInstalledApps(ctx context.Context) ([]InstalledApp, error) 
 	return apps, nil
 }
 
+// InstalledAppDefinition returns the complete resolved definition used by PUT.
+// The three list-only image observations are deliberately excluded: they are
+// volatile metadata, not part of the installed application contract.
+func (c *Client) InstalledAppDefinition(ctx context.Context, appID string) (map[string]any, error) {
+	if strings.TrimSpace(appID) == "" || strings.Contains(appID, "/") {
+		return nil, errors.New("invalid SealSkin application ID")
+	}
+	var apps []map[string]any
+	if err := c.secure(ctx, http.MethodGet, "/api/admin/apps/installed", nil, "", &apps); err != nil {
+		return nil, err
+	}
+	var found map[string]any
+	for _, app := range apps {
+		if app["id"] != appID {
+			continue
+		}
+		if found != nil {
+			return nil, errors.New("ambiguous installed application")
+		}
+		delete(app, "image_sha")
+		delete(app, "last_checked_at")
+		delete(app, "pull_status")
+		found = app
+	}
+	if found == nil {
+		return nil, errors.New("installed application is unavailable")
+	}
+	return found, nil
+}
+
 // InstallApp creates a separate administrator-owned application definition.
 // The full upstream definition is retained; InstalledApp only models the
 // fields needed when inspecting or partially updating existing applications.
@@ -193,6 +235,22 @@ func (c *Client) InstallApp(ctx context.Context, definition map[string]any, idem
 	}
 	var response InstalledApp
 	return c.secure(ctx, http.MethodPost, "/api/admin/apps/installed", definition, idempotencyKey, &response)
+}
+
+// ReplaceInstalledApp replaces an application with one complete immutable
+// definition. R7D uses PUT rather than PATCH for browser-template changes:
+// SealSkin PATCH deep-merges overrides and therefore cannot remove fields that
+// are absent from the target template.
+func (c *Client) ReplaceInstalledApp(ctx context.Context, appID string, definition map[string]any, idempotencyKey string) error {
+	appID = strings.TrimSpace(appID)
+	if appID == "" || strings.Contains(appID, "/") || definition["id"] != appID {
+		return errors.New("invalid SealSkin application replacement")
+	}
+	if strings.TrimSpace(idempotencyKey) == "" {
+		return errors.New("application replacement requires a durable idempotency key")
+	}
+	var response map[string]any
+	return c.secure(ctx, http.MethodPut, "/api/admin/apps/installed/"+url.PathEscape(appID), definition, idempotencyKey, &response)
 }
 
 // PatchInstalledApp applies an administrator-owned partial app update. It is
@@ -712,4 +770,23 @@ func ResolveSessionURL(publicBase, sessionURL string, embedded bool) (string, er
 		resolved.RawQuery = query.Encode()
 	}
 	return resolved.String(), nil
+}
+
+// AuthorizeProxySecret adds one exact, durable creation grant inside the controller.
+func (c *Client) AuthorizeProxySecret(ctx context.Context, request ProxySecretAuthorizationRequest, key string) error {
+	if !ValidSecretReference(request.UsernameSecretRef, "username") || !ValidSecretReference(request.PasswordSecretRef, "password") ||
+		!validHomeName(request.Grant.Owner) || !validHomeName(request.Grant.Profile) || !validHomeName(request.Grant.Home) || request.Grant.App == "" ||
+		len(request.RequestSHA256) != 64 || strings.TrimSpace(key) == "" {
+		return errors.New("invalid proxy secret authorization request")
+	}
+	var response struct {
+		Authorized bool `json:"authorized"`
+	}
+	if err := c.secure(ctx, http.MethodPost, "/api/admin/environment-management/proxy-secret-authorizations", request, key, &response); err != nil {
+		return err
+	}
+	if !response.Authorized {
+		return errors.New("controller did not confirm proxy secret authorization")
+	}
+	return nil
 }

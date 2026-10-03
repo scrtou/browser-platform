@@ -41,3 +41,5 @@
 页面启动QA首次未分配账号使用授权，入口按既有设计404拒绝；该原失败保留，脚本改为实际管理表单显式授予三浏览器使用权再验证。后续客户端资源名称改为每次尝试独立，避免前次清理与重试复用名称的冲突；这两项不改生产权限行为。
 
 Firefox经原日志reconcile已通过显示/真实输入/正常关闭及SQLite历史读回；首次新启动因同主机QA客户端遇到Docker接口变化取消，Camoufox事件明确ERR_NETWORK_CHANGED，见 [DEV-156](../deviations/DEV-2026-10-03-156-fresh-qa-host-network-change.md)。修订QA客户端隔离后重走冷启动，不修改生产协议或放宽门槛。
+
+客户端隔离后的冷启动仍约31秒模糊失败，发现生产式HTTPS Transport共享30秒响应头限制，截断180秒长请求预算，见 [DEV-157](../deviations/DEV-2026-10-03-157-long-start-tls-header-timeout.md)。需修复并重建/完整回归及新部署验证，1.0仍未定版。

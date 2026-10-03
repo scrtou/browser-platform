@@ -1,5 +1,7 @@
 # 设计偏差记录
 
+- [DEV-157 长启动HTTPS响应头预算](DEV-2026-10-03-157-long-start-tls-header-timeout.md)：处理中；共享30秒Transport截断180秒启动，需独立长请求Transport及TLS回归。
+
 - [DEV-156 同主机QA网络变化](DEV-2026-10-03-156-fresh-qa-host-network-change.md)：处理中；host网络客户端因Docker接口变化取消启动，改为隔离namespace与固定Unix转发。
 
 - [DEV-155 显式空状态与安装就绪](DEV-2026-10-03-155-explicit-empty-install-state.md)：处理中，缺失业务目录/账号表不能充当初始化状态；安装回执需等待真实就绪。
