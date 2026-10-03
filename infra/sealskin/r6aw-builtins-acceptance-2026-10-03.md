@@ -2,7 +2,7 @@
 
 状态：进行中，尚未部署。本记录不能作为1.0发行证明。工作项见[R6AW](../../docs/work-items/R6AW-2026-10-02-protected-builtins.md)。
 
-## 范围与固定输入
+## 范围与历史v5输入（已被v6取代）
 
 US/TW/JP/CN四个受保护通用指纹，自动/DPR随系统缩放和1920×1080/DPR1两个受保护显示；Camoufox152.0、Chromix154.0.8037.57、Firefox155.0.1共24个真实组合。仅这24个安装组合标为内置，普通后续自定义任务不自动取得内置属性。
 
@@ -26,7 +26,7 @@ US/TW/JP/CN四个受保护通用指纹，自动/DPR随系统缩放和1920×1080/
 | chromix-linux-154 | sha256:cf0e51426b6f59769af7486f9e09340387ed69b3ccc33d5a47c792280bdcc730 |
 | firefox-linux-155 | sha256:d9c8c8737dc19f110eac9b7b3676faf01eac2a6925ae3c5aa27f696ad83fca2e |
 
-## 当前证据
+## 历史检查点与前置证据
 
 2026-10-03 01:10 UTC：16/24原完整报告accepted（固定12项、自动4项），固定Camoufox的4份正常桌面补验全部通过。TW自动Chromix保留1份输入乱序failed，自动驱动已停止；见DEV-148。尚无24组合完成结论。
 
@@ -49,3 +49,5 @@ US/TW/JP/CN四个受保护通用指纹，自动/DPR随系统缩放和1920×1080/
 2026-10-03 02:00 UTC检查点：v6已9/24组合accepted、1/4固定Camoufox桌面补验通过，零新增失败。此前v5成功/失败记录保持。v6完整三镜像归档及逐blob/OCI引用检查已通过，独立空Docker存储冷导入正在执行；尚未部署。
 
 2026-10-03 02:34 UTC检查点：v6已13/24组合accepted、4/4固定Camoufox桌面补验通过。v6完整三镜像已从完整归档冷导入空Docker存储，三镜像内部键盘补丁及异机原停止容器保持检查通过。DEV-149独立关闭诊断通过但新完整Chromix任务仍排队；US自动Firefox首次存储探针超时另见[DEV-150](../../docs/deviations/DEV-2026-10-03-150-firefox-storage-probe-timeout.md)，零观察failed保留。本机JP/CN自动部分已启动。尚无24组合完成/部署结论。
+
+2026-10-03 02:58 UTC：v6为17/24 accepted，四份桌面补验保持通过。DEV-150在独立机复现Firefox首次IndexedDB建库超时，较长诊断只说明最终可读写，不计accepted；正式条件保持，US/TW Firefox两项由本机隔离QA接续。最终五份分片仍核对24个唯一组合。DEV-151的派生产物ID目录假设已修复，16个实际组合的32份文件绑定及路径混配/父目录拒绝通过；未部署。

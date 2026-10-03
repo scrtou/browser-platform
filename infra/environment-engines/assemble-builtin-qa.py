@@ -26,6 +26,17 @@ def copy_equal(source,destination):
     with source.open('rb') as src,destination.open('xb') as dst:
         os.fchmod(dst.fileno(),0o600);shutil.copyfileobj(src,dst)
 
+def artifact_source(part,origin,request,entry,name):
+    # Camoufox may derive a distinct artifact id from a request. The runner
+    # keeps files in the original request directory and records that mount.
+    directory=request['spec']['id']
+    if not re.fullmatch(r'[a-z0-9][a-z0-9._-]{0,127}',directory):raise ValueError('QA_ID_INVALID')
+    mounts=entry['application']['provider_config']['docker_overrides']['mounts']
+    matches=[m for m in mounts if m['Target']=='/run/browser-platform/'+name]
+    if len(matches)!=1 or Path(matches[0]['Source'])!=origin/'jobs/artifacts'/directory/name:
+        raise ValueError('QA_ARTIFACT_PATH')
+    return part/'jobs/artifacts'/directory/name,matches[0]
+
 def assemble(parts,destination):
     if destination.exists():raise ValueError('QA_DESTINATION_EXISTS')
     expected=set(itertools.product(TARGETS,BUILTIN_FINGERPRINTS,DISPLAY_IDS));seen=set()
@@ -50,15 +61,12 @@ def assemble(parts,destination):
             if key not in expected or key in seen or status['status']!='accepted':raise ValueError('QA_NOT_ACCEPTED_MATRIX')
             seen.add(key)
             for folder in ('queue','status'):copy_equal(part/'jobs'/folder/(job+'.json'),destination/'jobs'/folder/(job+'.json'))
-            mounts=entry['application']['provider_config']['docker_overrides']['mounts']
             for name in ('environment.json','acceptance.json'):
-                matches=[m for m in mounts if m['Target']=='/run/browser-platform/'+name]
-                if len(matches)!=1 or Path(matches[0]['Source'])!=origin/'jobs/artifacts'/ident/name:
-                    raise ValueError('QA_ARTIFACT_PATH')
-                source=part/'jobs/artifacts'/ident/name;target=destination/'jobs/artifacts'/ident/name
-                copy_equal(source,target);matches[0]['Source']=str(target)
+                source,mount=artifact_source(part,origin,request,entry,name)
+                target=destination/'jobs/artifacts'/ident/name
+                copy_equal(source,target);mount['Source']=str(target)
             if entry['browser_engine']=='camoufox' and entry['screen']!='auto@system':
-                copy_equal(part/'jobs/artifacts'/ident/'desktop-acceptance.json',destination/'jobs/artifacts'/ident/'desktop-acceptance.json')
+                copy_equal(part/'jobs/artifacts'/request['spec']['id']/'desktop-acceptance.json',destination/'jobs/artifacts'/ident/'desktop-acceptance.json')
             entries.append(entry)
         for kind,ids in [('fingerprints',BUILTIN_FINGERPRINTS),('displays',DISPLAY_IDS)]:
             for ident in ids:copy_equal(part/'jobs/templates'/kind/(ident+'.json'),destination/'jobs/templates'/kind/(ident+'.json'))

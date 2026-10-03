@@ -1,5 +1,7 @@
 # 设计偏差记录
 
+- [DEV-151 QA产物目录关联](DEV-2026-10-03-151-qa-artifact-directory-binding.md)：修复中，自动Camoufox产物ID可与请求目录名不同，收集/清理按实际绑定核对。
+
 - [DEV-150 Firefox首次存储探针超时](DEV-2026-10-03-150-firefox-storage-probe-timeout.md)：诊断中，保留零观察failed及原Home，独立核对存储阶段。
 
 - [DEV-149 QA与冷导入I/O竞争](DEV-2026-10-03-149-qa-shutdown-io-contention.md)：执行隔离修订待验证，原12秒关闭失败及随后正常收尾保留。

@@ -76,7 +76,8 @@ def verify_bundle(bundle):
         value=raw_json(artifact_path);spec=value.get('spec',value)
         if (entry.get('status')!='accepted' or entry.get('source')!='frozen'
                 or entry['browser_template_id']!=target or entry['browser_engine']!=engine or entry['browser_version']!=version
-                or entry['image']!=image or value['runtimeImageDigest']!=image or spec['id']!=ident
+                or entry['image']!=image or value['runtimeImageDigest']!=image
+                or (value['id'] if engine=='camoufox' and auto else spec['id'])!=ident
                 or entry['sha256']!=sha(artifact_path) or entry['acceptance_sha256']!=sha(report_path)):
             raise ValueError('BUILTIN_ARTIFACT_BINDING')
         if any(spec[k]!=fp[k] or entry[k]!=fp[k] for k in ('locale','languages','timezone')):
