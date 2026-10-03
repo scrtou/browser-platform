@@ -1,5 +1,7 @@
 # 设计偏差记录
 
+- [DEV-154 root内置镜像校验](DEV-2026-10-03-154-root-builtin-verification.md)：处理中，安装器需以目标非root用户执行只读校验，原失败保留。
+
 - [DEV-153 全新控制器UID绑定](DEV-2026-10-03-153-fresh-controller-uid-binding.md)：处理中，非1000系统用户需要同步配置两组UID/GID；保留首次安装失败。
 
 - [DEV-152 1.0遗留维护入口](DEV-2026-10-03-152-v1-source-maintenance-hooks.md)：处理中，工作区已清理但旧部署仍含临时入口，1.0须重新构建和验证。

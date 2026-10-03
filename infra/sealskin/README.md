@@ -1,5 +1,12 @@
 # SealSkin 部署与配置
 
+当前正式运行范围见 [R6AW验收](r6aw-builtins-acceptance-2026-10-03.md)：4/2/24 内置已部署，测试账号/浏览器已清理；R6AX 的 1.0 全新安装仍验收中。新部署使用[安装入口](../deployment/README.md)与[部署说明](../../docs/deployment-v1.md)，不执行下方旧时点的 PoC 初始化命令。独立非1000用户必须同时设置 `PUID`/`PGID` 和 `SEALSKIN_PUID`/`SEALSKIN_PGID`；只读内置镜像校验由该非root用户执行。
+
+## 历史部署与验收记录
+
+以下保留各自日期的版本、部署和恢复事实；“当前”仅指对应记录时点，不覆盖页首状态。
+
+
 当前统一版本：[server-2026.10.02.3](../../docs/releases/server-2026.10.02.3.md)已封存并通过异机归档/镜像核对，包含R6AS Adapter、R7G1控制器/Relay、R6Z1 runner与journald预算。恢复和回退以包内RECOVERY.md为准；`.2`为历史静态基线，现有Home/Session/目录/凭据保持。
 
 2026-10-02 当前交付为R6AS Adapter（`63d88d1e…`）、R7G1控制器和R6Z1 runner。三引擎固定六协议/认证、DIRECT、程序升级/回退和异机恢复范围见[R6AS验收](r6as-fixed-version-matrix-acceptance-2026-10-02.md)；商业供应方自然漂移仍未测。下方早期版本段落保留历史时点，不覆盖当前部署。

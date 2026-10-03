@@ -220,7 +220,8 @@ def install(args):
                     raise ValueError('CONTROLLER_API_TIMEOUT')
                 time.sleep(1)
         run([root/'release/bin/sealskin-provision','--admin-config',root/'access/bootstrap.json','--username','platform','--private-key',root/'access/client-private.pem'])
-        run([sys.executable,root/'release/runner/infra/environment-engines/prepare-builtin-install.py','--bundle',root/'release/builtins','--output',root/'builtins','--username','platform','--session-origin',args.session_origin,'--clipboard-addon',root/'release/runtime-dependencies/native-clipboard'])
+        chown_tree(root, account.pw_uid, account.pw_gid)
+        run(['runuser','-u',args.user,'--',sys.executable,root/'release/runner/infra/environment-engines/prepare-builtin-install.py','--bundle',root/'release/builtins','--output',root/'builtins','--username','platform','--session-origin',args.session_origin,'--clipboard-addon',root/'release/runtime-dependencies/native-clipboard'])
         for name in ['templates','fingerprint-cache']:
             shutil.copytree(root / 'builtins' / name, root / 'jobs' / name)
         cfg = {'listen_address':f'127.0.0.1:{args.adapter_port}','public_base_url':args.entry_origin,
