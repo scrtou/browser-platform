@@ -2,7 +2,8 @@
 """Install a verified 1.0 release into a NEW private root (Linux amd64/systemd).
 
 Never upgrades or erases an existing installation. Failed roots and logs remain
-for diagnosis. Web administrators are initialized separately using profile-accounts.
+for diagnosis. An optional private JSON config initializes the first web admin
+through profile-accounts; passwords never enter command arguments or receipts.
 """
 import argparse
 from datetime import datetime, timedelta, timezone
@@ -100,12 +101,75 @@ def origin(value):
             or not re.fullmatch(r'[a-z0-9]+(?:[.-][a-z0-9]+)*', p.hostname)
             or len(p.hostname) > 253 or any(len(x) > 63 for x in p.hostname.split('.'))):
         raise ValueError('HTTPS_ORIGIN_INVALID')
-    if p.port is not None and not 1024 <= p.port <= 65535:
+    if p.port is not None and p.port != 443 and not 1024 <= p.port <= 65535:
         raise ValueError('ORIGIN_PORT_INVALID')
     return p
 
 
+def validate_admin(admin):
+    if admin is None:
+        return
+    if not isinstance(admin, dict) or set(admin) != {'username', 'password'}:
+        raise ValueError('ADMIN_REQUIRES_USERNAME_AND_PASSWORD')
+    if not isinstance(admin['username'], str) or not re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,31}', admin['username']):
+        raise ValueError('ADMIN_USERNAME_INVALID')
+    password = admin['password']
+    try:
+        valid = isinstance(password, str) and 4 <= len(password.encode('utf-8')) <= 256 and not any(c in password for c in '\r\n')
+    except UnicodeError:
+        valid = False
+    if not valid:
+        raise ValueError('ADMIN_PASSWORD_REQUIRES_4_TO_256_UTF8_BYTES_SINGLE_LINE')
+
+
+def load_install_config(path):
+    """Read one private regular file, rejecting typos without echoing input."""
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError('duplicate field')
+            result[key] = value
+        return result
+
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, 'r', encoding='utf-8') as source:
+            info = os.fstat(source.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_size > 1024 * 1024:
+                raise ValueError('private regular file required')
+            raw = source.read(1024 * 1024 + 1)
+            if len(raw) > 1024 * 1024:
+                raise ValueError('too large')
+            values = json.loads(raw, object_pairs_hook=unique_object)
+    except (OSError, ValueError, UnicodeError):
+        raise ValueError('INSTALL_CONFIG_INVALID_OR_NOT_PRIVATE') from None
+    fields = {'release':str, 'root':str, 'name':str, 'user':str,
+              'entry_origin':str, 'session_origin':str, 'adapter_port':int,
+              'api_port':int, 'backend_port':int, 'private_tls':bool, 'admin':dict}
+    if not isinstance(values, dict) or set(values) - set(fields):
+        raise ValueError('INSTALL_CONFIG_UNKNOWN_FIELD_OR_NOT_OBJECT')
+    for key, value in values.items():
+        if key == 'admin' and value is None:
+            continue
+        if type(value) is not fields[key]:
+            raise ValueError('INSTALL_CONFIG_FIELD_TYPE_INVALID')
+        if key != 'admin' and isinstance(value, str) and not value:
+            raise ValueError('INSTALL_CONFIG_EMPTY_FIELD')
+    validate_admin(values.get('admin'))
+    for key in ['release', 'root']:
+        if key in values:
+            values[key] = Path(values[key])
+            if not values[key].is_absolute():
+                raise ValueError('INSTALL_CONFIG_PATH_REQUIRES_ABSOLUTE')
+    return values
+
+
 def validate(args):
+    validate_admin(getattr(args, 'admin', None))
+    config_path = getattr(args, 'config', None)
+    if config_path is not None and config_path.resolve().is_relative_to(args.release.resolve()):
+        raise ValueError('INSTALL_CONFIG_MUST_BE_OUTSIDE_RELEASE')
     if not re.fullmatch(r'bp-[a-z0-9][a-z0-9-]{0,19}', args.name):
         raise ValueError('NAME_REQUIRES_BP_PREFIX')
     if not re.fullmatch(r'[a-z_][a-z0-9_-]{0,30}', args.user) or args.user == 'root':
@@ -117,14 +181,52 @@ def validate(args):
             or len(str(root / 'control.sock')) >= 104):
         raise ValueError('NEW_ROOT_REQUIRED')
     entry, session = origin(args.entry_origin), origin(args.session_origin)
+    # Browsers omit the default port from Origin; keep CSRF/cookie origins canonical.
+    args.entry_origin = 'https://' + entry.hostname + (f':{entry.port}' if entry.port not in (None, 443) else '')
+    args.session_origin = 'https://' + session.hostname + (f':{session.port}' if session.port not in (None, 443) else '')
     if entry.hostname == session.hostname or (entry.port or 443) != (session.port or 443):
         raise ValueError('SEPARATE_HOSTS_SAME_PORT_REQUIRED')
     if not args.private_tls and (entry.port or 443) != 443:
         raise ValueError('PUBLIC_TLS_REQUIRES_PORT_443')
     ports = [args.adapter_port, args.api_port, args.backend_port, entry.port or 443]
-    if len(set(ports)) != 4 or any(not 1024 <= p <= 65535 for p in ports[:3]):
+    if len(set(ports)) != 4 or any(type(p) is not int or not 1024 <= p <= 65535 for p in ports[:3]):
         raise ValueError('DISTINCT_PORTS_REQUIRED')
     return entry, session, ports
+
+
+def check_listeners(args, ports):
+    """All listener conflicts must fail before creating installation resources."""
+    for port in ports + ([] if args.private_tls else [80]):
+        host = '0.0.0.0' if not args.private_tls and port in (80, 443) else '127.0.0.1'
+        try:
+            with socket.socket() as listener:
+                listener.bind((host, port))
+        except OSError:
+            raise ValueError(f'PORT_UNAVAILABLE: {host}:{port}') from None
+
+
+def install_request(args):
+    values = {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items() if k != 'admin'}
+    values['admin_configured'] = getattr(args, 'admin', None) is not None
+    return values
+
+
+def initialize_admin(args, root):
+    """Keep account validation, locking and password hashing in the existing CLI."""
+    admin = getattr(args, 'admin', None)
+    validate_admin(admin)
+    if admin is None:
+        return False
+    command = ['runuser', '-u', args.user, '--', str(root/'release/bin/profile-accounts'),
+               'init', '--config', str(root/'adapter-config.json'), '--user', admin['username']]
+    try:
+        result = subprocess.run(command, input=admin['password'] + '\n', text=True,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        raise ValueError('WEB_ADMIN_INITIALIZATION_FAILED') from None
+    if result.returncode != 0:
+        raise ValueError('WEB_ADMIN_INITIALIZATION_FAILED')
+    return True
 
 
 def tls(directory, names):
@@ -176,9 +278,7 @@ def install(args):
     runtime_dirs = [Path('/dev/shm') / (args.name + '-' + k) for k in ['credentials', 'sessions']]
     if any(p.exists() or p.is_symlink() for p in [*units.values(), tmpfile, *runtime_dirs]):
         raise ValueError('INSTALLATION_RESOURCE_EXISTS')
-    for port in ports:
-        with socket.socket() as s:
-            s.bind(('127.0.0.1' if args.private_tls or port != 443 else '0.0.0.0', port))
+    check_listeners(args, ports)
     subprocess.run(['docker', 'compose', 'version'], check=True, stdout=subprocess.DEVNULL)
     existing = subprocess.check_output(['docker', 'container', 'ls', '-a', '--format', '{{.Names}}'], text=True).splitlines()
     if args.name + '-controller' in existing:
@@ -193,7 +293,7 @@ def install(args):
     def run(argv, timeout=180):
         subprocess.run([str(x) for x in argv], stdout=log, stderr=subprocess.STDOUT, check=True, timeout=timeout)
     try:
-        write(root / 'install-request.json', {k: str(v) if isinstance(v, Path) else v for k,v in vars(args).items()})
+        write(root / 'install-request.json', install_request(args))
         write(root / 'image-retention.json', retain_images(inputs['images'], args.name, run))
         run(['useradd', '--system', '--user-group', '--home-dir', root, '--no-create-home', '--shell', '/usr/sbin/nologin', '--groups', 'docker', args.user])
         account = pwd.getpwnam(args.user)
@@ -276,12 +376,13 @@ def install(args):
             caps = 'AmbientCapabilities=CAP_NET_BIND_SERVICE\nCapabilityBoundingSet=CAP_NET_BIND_SERVICE\n' if kind == 'front' and not args.private_tls else ''
             write(units[kind], f'[Unit]\nDescription=Browser Platform {kind} ({args.name})\nRequires={controller}\nAfter={controller}\n\n[Service]\nUser={args.user}\nGroup={args.user}\nSupplementaryGroups=docker\nWorkingDirectory={root}\nEnvironment=XDG_DATA_HOME={root}/caddy\nEnvironment=XDG_CONFIG_HOME={root}/caddy\nEnvironment=PYTHONDONTWRITEBYTECODE=1\nExecStart={command}\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=180\nUMask=0077\nNoNewPrivileges=yes\n{caps}\n[Install]\nWantedBy=multi-user.target\n', 0o644)
         chown_tree(root, account.pw_uid, account.pw_gid)
+        admin_initialized = initialize_admin(args, root)
         run(['runuser','-u',args.user,'--','caddy','validate','--config',root/'Caddyfile','--adapter','caddyfile'])
         run(['systemctl','daemon-reload'])
         run(['systemctl','enable','--now',*[p.name for p in units.values()]])
-        wait_ready(args, root)
+        wait_ready(args, root, admin_initialized=admin_initialized)
         result = {'result':'INSTALLED','ready_verified':True,'root':str(root),'services':[p.name for p in units.values()],
-                  'web_admin_initialized':False,'entry_origin':args.entry_origin,'session_origin':args.session_origin,
+                  'web_admin_initialized':admin_initialized,'entry_origin':args.entry_origin,'session_origin':args.session_origin,
                   'release_manifest_sha256':digest(root/'release/release-manifest.json')}
         write(root / 'installation.json', result)
         return result
@@ -292,7 +393,7 @@ def install(args):
         log.close()
 
 
-def wait_ready(args, root, timeout=180):
+def wait_ready(args, root, timeout=180, *, admin_initialized=False):
     """A started process is insufficient: require API readiness and verified TLS."""
     host = urlsplit(args.entry_origin)
     context = ssl.create_default_context(cafile=str(root/'access/front-tls/cert.pem') if args.private_tls else None)
@@ -310,8 +411,10 @@ def wait_ready(args, root, timeout=180):
                 conn.sock = context.wrap_socket(socket.create_connection(('127.0.0.1',host.port or 443),timeout=5),server_hostname=host.hostname)
                 conn.request('GET','/auth/login',headers={'Host':host.netloc})
                 response=conn.getresponse();body=response.read(1024*1024).decode('utf-8')
-                if response.status != 200 or '平台尚未初始化' not in body or '<form method="post" action="/auth/login">' in body:
-                    raise OSError('INITIALIZATION_PAGE_NOT_READY')
+                pending = '平台尚未初始化' in body
+                login_form = '<form method="post" action="/auth/login">' in body
+                if response.status != 200 or (pending, login_form) != (not admin_initialized, admin_initialized):
+                    raise OSError('EXPECTED_LOGIN_STATE_NOT_READY')
             finally:conn.close()
             return
         except (OSError, http.client.HTTPException):
@@ -319,23 +422,40 @@ def wait_ready(args, root, timeout=180):
     raise ValueError('INSTALLATION_READINESS_TIMEOUT')
 
 
-def parser():
-    p = argparse.ArgumentParser(description=__doc__)
+def parser(defaults=None):
+    defaults = defaults or {}
+    p = argparse.ArgumentParser(description=__doc__, epilog='Required paths, names and origins can be supplied in --config instead of CLI arguments.')
+    p.add_argument('--config', type=Path, help='private installation JSON; explicit CLI fields override it')
     for name in ['release','root']:
-        p.add_argument('--'+name,type=Path,required=True)
+        p.add_argument('--'+name,type=Path,required=name not in defaults,default=defaults.get(name),
+                       help='verified release directory' if name == 'release' else 'NEW instance directory (never an existing installation)')
     for name in ['name','user','entry-origin','session-origin']:
-        p.add_argument('--'+name,required=True)
+        key = name.replace('-', '_')
+        descriptions = {'name':'instance/service name with bp- prefix','user':'NEW non-root Linux service user, not the web administrator',
+                        'entry-origin':'HTTPS login/management origin','session-origin':'separate HTTPS browser-display origin'}
+        p.add_argument('--'+name,required=key not in defaults,default=defaults.get(key),help=descriptions[name])
     for name, default in [('adapter-port',19100),('api-port',18000),('backend-port',18443)]:
-        p.add_argument('--'+name,type=int,default=default)
-    p.add_argument('--private-tls',action='store_true',help='QA only: new private certificate and loopback-only ingress')
+        descriptions = {'adapter-port':'loopback HTTP adapter listener','api-port':'loopback controller bootstrap API mapping',
+                        'backend-port':'loopback controller HTTPS mapping'}
+        p.add_argument('--'+name,type=int,default=defaults.get(name.replace('-', '_'), default),help=f'{descriptions[name]} (default {default})')
+    p.add_argument('--private-tls',action=argparse.BooleanOptionalAction,default=defaults.get('private_tls', False),help='QA only: new private certificate and loopback-only ingress')
     p.add_argument('--check-only',action='store_true',help='validate inputs and release files without host changes')
+    p.set_defaults(admin=defaults.get('admin'))
     return p
+
+
+def parse_args(argv=None):
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument('--config', type=Path)
+    preliminary, _ = config_parser.parse_known_args(argv)
+    defaults = load_install_config(preliminary.config) if preliminary.config is not None else {}
+    return parser(defaults).parse_args(argv)
 
 
 if __name__ == '__main__':
     os.umask(0o077)
     try:
-        print(json.dumps(install(parser().parse_args())))
+        print(json.dumps(install(parse_args())))
     except (ValueError,OSError,subprocess.SubprocessError) as e:
         # Never echo a controller/bootstrap error or sensitive response.
         print('INSTALL_FAILED: ' + (str(e) if isinstance(e,ValueError) else type(e).__name__) + '; retain the private install.log',file=sys.stderr)

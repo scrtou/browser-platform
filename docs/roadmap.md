@@ -1,5 +1,7 @@
 # 开发计划
 
+[R6BA 部署配置文件与端口说明](work-items/R6BA-2026-10-03-deployment-config.md)主分支源码/文档及本机隔离验证已收尾。后续验证：独立机连通后执行新入口的整机安装、runuser跨用户和TLS实测；本次SSH超时，不标通过。已有实例自动迁移、公网自定义端口及指纹增强不在本次实现范围。
+
 补漏已收尾：[R6AZ 默认配置旧浏览器清理](work-items/R6AZ-2026-10-03-empty-config-example.md)，示例空浏览器、复制/初始化说明、18项已有回归与两份示例实际加载通过。仅主分支修正，不重写1.0标签/归档；指纹增强仍归原F1～F4计划，未开始。
 
 [R6AY 指纹能力方案](work-items/R6AY-2026-10-03-fingerprint-capability-plan.md)已收尾；[方案](fingerprint-capability-plan.md)覆盖能力观察、每浏览器设备档案、跨层一致性和升级恢复。仅文档，F1～F4未实施；本轮授权交付已完成。

@@ -1,5 +1,7 @@
 # SealSkin Profile Adapter
 
+部署端口和首次管理员可在独立的[安装JSON](../infra/deployment/install.example.json)中设置，操作见[部署指南](../docs/deployment-v1.md)。它由安装器读取，不是本组件的运行config；管理员密码通过stdin交给原CLI，禁止在Adapter运行配置添加未定义的明文账号密码字段。
+
 1.0全新部署使用[安装器](../docs/deployment-v1.md)，默认空账号/浏览器；本组件示例的 `profiles` 也为空。`profile-adapter` 是控制身份名称，不是默认网页管理员。配置漏项修复见[R6AZ](../docs/work-items/R6AZ-2026-10-03-empty-config-example.md)。以下版本段落保留各自交付时点。
 
 当前部署已封存为 [server-2026.10.02.3](../docs/releases/server-2026.10.02.3.md)：R6AS Adapter `63d88d1e…`，精确121文件及原始二进制、恢复说明均在发布树。混合开发工作树不作为部署身份；慢启动增量与历史矩阵按实际版本分别记录。

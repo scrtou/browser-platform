@@ -1,0 +1,15 @@
+{
+  "release": "/opt/browser-platform-1.0",
+  "root": "/srv/browser-platform",
+  "name": "bp-main",
+  "user": "bpservice",
+  "entry_origin": "https://browser.example.com",
+  "session_origin": "https://session.example.com",
+  "adapter_port": 19100,
+  "api_port": 18000,
+  "backend_port": 18443,
+  "admin": {
+    "username": "myadmin",
+    "password": ""
+  }
+}

@@ -1,6 +1,9 @@
 # Local machine access material; never commit credentials.
 /sshkey
 
+# Private installation inputs may contain the initial administrator password.
+*install.local.json
+
 # Reproducible caches and local build output.
 __pycache__/
 *.py[cod]

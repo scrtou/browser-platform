@@ -1,5 +1,7 @@
 # 开发进度
 
+[R6BA 部署配置文件与端口说明](work-items/R6BA-2026-10-03-deployment-config.md)源码/文档及本机隔离验证已收尾：私有安装JSON、首次管理员、端口联动/80冲突检查完成；28项安装器、3项Go回归和真实CLI验证通过。独立机SSH超时，新增入口整机安装/跨用户/TLS复测未完成；生产和原1.0包不变。
+
 [R6AZ 默认配置旧浏览器清理](work-items/R6AZ-2026-10-03-empty-config-example.md)已收尾：修正1.0手动示例的personal/work漏项及空目录/账号初始化说明；18项已有回归、两份示例实际加载通过。仅主分支示例/文档生效，正式安装器、生产与固定v1.0归档保持。
 
 [R6AY 指纹能力方案](work-items/R6AY-2026-10-03-fingerprint-capability-plan.md)已收尾；[方案](fingerprint-capability-plan.md)覆盖能力观察、每浏览器设备档案、跨层一致性和升级恢复。仅文档，F1～F4未实施；本轮授权交付已完成。

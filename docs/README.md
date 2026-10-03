@@ -1,5 +1,7 @@
 # 文档导航
 
+[安装部署指南](deployment-v1.md)已重写：端口用途/修改范围/文件对应、JSON配置与首次管理员账号密码。[R6BA](work-items/R6BA-2026-10-03-deployment-config.md)主分支实现及本机隔离验证已收尾；新增入口整机复测尚未完成。
+
 [R6AZ 默认配置旧浏览器清理](work-items/R6AZ-2026-10-03-empty-config-example.md)已收尾：移除组件示例的personal/work导入种子，补齐空目录/账号初始化说明；18项已有回归与两份示例实际加载通过。主分支修正，无程序部署。
 
 [R6AY 指纹能力方案](work-items/R6AY-2026-10-03-fingerprint-capability-plan.md)已收尾；[方案](fingerprint-capability-plan.md)覆盖能力观察、每浏览器设备档案、跨层一致性和升级恢复。仅文档，F1～F4未实施；本轮授权交付已完成。

@@ -2,7 +2,7 @@
 
 当前生产为[1.0发行版](releases/v1.0.md)：Adapter `b4c6ec2f…`、控制器 `2a966873…`。零网页账号、零未删除浏览器和10条删除历史保持。全新安装按[部署说明](deployment-v1.md)校验并导入基础七镜像包及完整控制器更新包；已有生产实例保留原身份/数据，只切换程序及最后一层Compose镜像引用。私有`infra/sealskin/runtime/r6ax-v1-release-20261003/production-program-backup-attempt3/`保存原Adapter、CLI与Compose引用，回退前核对新业务/版本兼容性，不用旧状态覆盖当前数据。以下版本段落保留各自时点。
 
-首位管理员由服务器运维在运行Adapter的系统用户下创建：`/home/sshUser/.local/lib/browser-platform/profile-accounts init --config /home/sshUser/code/browser-platform/infra/sealskin/adapter-config.json --user <自选管理员名>`。密码只从标准输入读取，可在受信任终端用`read -r -s bp_admin_password`并以`printf '%s' "$bp_admin_password"`管道传入，完成后`unset bp_admin_password`；不把密码放在参数或配置中。命令拒绝重复初始化，不能覆盖已有账号。等待初始化时入口只显示提示，CLI完成后网关重载即可登录。v3初始化表不能直接回退给只认识v1/v2的旧Adapter：先以新CLI完成初始化，或保持支持v3的程序；不得恢复旧owner表撤销本次清理。
+现有部署的首位管理员由服务器运维在运行Adapter的系统用户下创建：`/home/sshUser/.local/lib/browser-platform/profile-accounts init --config /home/sshUser/code/browser-platform/infra/sealskin/adapter-config.json --user <自选管理员名>`。CLI从标准输入读取密码，可在受信任终端用`read -r -s bp_admin_password`并以`printf '%s' "$bp_admin_password"`管道传入，完成后`unset bp_admin_password`；不写入命令参数或运行配置。新安装另支持[R6BA私有安装JSON](deployment-v1.md)填写首次管理员，由安装器通过stdin调用相同CLI，原输入文件须私下保管。命令拒绝重复初始化，不能覆盖已有账号；修改安装JSON或重启服务不会重置密码。等待初始化时入口只显示提示，CLI完成后网关重载即可登录。v3初始化表不能直接回退给只认识v1/v2的旧Adapter：先以新CLI完成初始化，或保持支持v3的程序；不得恢复旧owner表撤销本次清理。
 
 [R6AU真实业务一致性备份](../infra/sealskin/r6au-consistent-business-backup-acceptance-2026-10-02.md)已完成：2026-10-02 19:30:56 UTC停止检查点、完整加密归档与异机恢复/读回/断网副本验证通过，生产原运行范围已恢复。按[整体备份步骤](../infra/sealskin/checks/consistent-business-backup.md)使用单独留存的修正工具、密文、收据和身份；旧历史Home材料的时点限制仍适用于旧材料。
 

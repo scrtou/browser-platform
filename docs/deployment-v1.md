@@ -1,83 +1,203 @@
-# 1.0 部署说明
+# 安装部署：端口、配置文件与管理员
 
-[文档导航](README.md) · [运维](operations.md) · [安装组件](../infra/deployment/README.md) · [1.0交付计划](v1.0-delivery-plan.md)
+[文档导航](README.md) · [安装器说明](../infra/deployment/README.md) · [运维与恢复](operations.md) · [1.0发行材料](releases/v1.0.md)
 
-[1.0发行记录](releases/v1.0.md)与[R6AX验收](../infra/sealskin/r6ax-v1-install-acceptance-2026-10-03.md)记录精确材料和验证范围。本说明覆盖全新 Linux amd64 应用安装；已有实例升级/备份恢复必须保留原身份、Home、日志和会话材料，不能重新初始化覆盖。
+新安装使用主分支的 `infra/deployment/install.py`。将域名、目录、端口和首次管理员写进私有JSON文件，先检查，再安装。安装器创建独立系统用户、四个服务和空浏览器目录，安装内置4指纹/2显示/24组合；管理员登录后自行创建浏览器。
 
-安装器自行生成 `profiles: []`、显式空业务目录和待初始化账号表，不读取仓库中的组件配置示例。主分支的两份Adapter示例也已统一为空；旧v1.0源码中的 `adapter/config.example.json` 曾保留personal/work种子，后续修正见[R6AZ](work-items/R6AZ-2026-10-03-empty-config-example.md)。新部署按本页执行，不复制旧示例导入历史浏览器。
+`--config` 和配置文件管理员功能由[R6BA](work-items/R6BA-2026-10-03-deployment-config.md)新增。固定 `v1.0` 标签/原程序包中的旧安装脚本不支持它；使用**当前主分支安装器 + 原已验证的1.0程序包**，无需改写旧包清单。Git源码不包含完整镜像、冻结产物和程序发布包，仅clone仓库不能完成安装。材料摘要和存放位置见[发行记录](releases/v1.0.md)。
 
-## 主机与发布材料
+## 1. 端口分别做什么
 
-使用 systemd、Python 3.11+、Docker Engine、Compose v2、Caddy 和 python3-cryptography。Debian 12 已在独立机安装过这些依赖；本轮是在该主机新建应用身份与空数据，并非再次声称拿到从未使用的机器。安装器拥有 root 权限，独立服务使用新建非 root 用户和 Docker 组；Docker 组属于主机管理权限，仅授予受信任的服务账号。
+准备两个指向同一服务器的域名：例如 `browser.example.com` 提供登录和管理，`session.example.com` 提供浏览器画面。两者共用公网443，不是每个域名开一个端口；两个域名的请求都经过Adapter授权。
 
-通过 Docker 官方 Debian 仓库安装 Docker Engine/Compose，系统包安装 Caddy、Python 和 cryptography。实际版本应记录在部署验收中。准备两个指向主机的独立 DNS 名称、80/443 入站和足够磁盘空间。部署前验证可信发布记录中的程序归档、镜像归档摘要，安全解压到独立目录。程序包应包含 `adapter/`、`controller/`、`relay/`、`runner/`、`deployment/`、`builtins/`、`bin/`、`runtime-dependencies/` 与完整清单；不从原开发者工作目录引用浏览器缓存。
-
-```bash
-# 校验值从1.0发行记录取得。
-sha256sum browser-platform-1.0-linux-amd64-v4.tar.gz v1-exact-images.tar.gz controller-managed-startup-image.tar.gz
-docker load --input v1-exact-images.tar.gz
-docker load --input controller-managed-startup-image.tar.gz
+```mermaid
+flowchart LR
+    U[你的浏览器 / Trilium] -->|两个域名 HTTPS 443| C[Caddy 公开入口]
+    C -->|本机 HTTP 19100| A[Adapter 登录、管理与授权]
+    A -->|本机 HTTPS 18443| S[SealSkin 控制器与显示后端]
+    S --> W[隔离网络中的浏览器与 Relay]
+    I[安装器] -->|本机 HTTP 18000 引导| S
 ```
 
-基础包包含原七镜像完整层（旧控制器、三浏览器、代理 Relay、DIRECT Relay 和探测器）；更新包提供新控制器完整层，当前安装从这两个包选取七个精确运行镜像。不要以可变 tag 替代固定 ID，也不要仅复制单个镜像 JSON 描述。
+| 默认端口 | 用途与访问范围 | 如何修改 |
+| --- | --- | --- |
+| TCP 443 | 公网HTTPS：登录、管理、远程画面和WebSocket，Caddy监听 | 当前生产入口固定443；域名写 `https://域名`。显式 `:443` 会规范化为省略端口 |
+| TCP 80 | 公网HTTP跳转HTTPS、自动证书的HTTP验证，Caddy使用 | 当前生产入口固定80，安装前检查占用 |
+| TCP 19100 | Caddy转给Adapter的本机HTTP入口，仅 `127.0.0.1` | `adapter_port` / `--adapter-port` |
+| TCP 18443 | Adapter访问控制器API与显示后端的HTTPS入口，仅 `127.0.0.1` | `backend_port` / `--backend-port` |
+| TCP 18000 | 安装时建立控制身份的API引导入口，仅 `127.0.0.1` | `api_port` / `--api-port` |
+| 容器内8000、8443 | 控制器内部监听，由18000/18443映射进入 | 安装参数不修改容器内部端口，只改宿主机映射 |
+| SSH端口，常见22 | 运维登录服务器，由SSH服务配置 | 不归本项目安装器管理 |
 
-## 全新安装与管理员
+**通常只向公网放行80、443和你自己的SSH端口。** 三个后台端口不要开放到公网；安装器已绑定回环地址。UDP443仅用于可选HTTP/3，TCP443仍是必要入口。浏览器不需要各开一个公网端口；代理供应商端口在代理配置中设置，与安装端口不同。
 
-以下为示例域名/目录，需改为实际值。安装根必须尚不存在且父目录已存在。实例名、系统用户、端口不得与已有服务冲突。
+18000的映射在安装完成后仍保留，不会用一次就关闭；正常Adapter使用18443。19100是安装器默认值，组件示例的9100和旧文档的8443属于不同配置，不能混用。
+
+三个后台端口必须是**不同的1024～65535整数**，且未被其他服务占用。生产入口目前不支持改成8443等非标准公网端口。`--private-tls` 仅供隔离QA：两个域名可用同一个自定义高位HTTPS端口，只监听回环并禁用公开80/自动HTTPS；它不是公网部署模式。
+
+## 2. 准备机器和发布材料
+
+需要Linux amd64、systemd、Python 3.11+、`python3-cryptography`、Docker Engine、Compose v2、Caddy（支持 `format filter`）。原独立机验收使用Debian 12。Docker/Compose从Docker官方仓库安装；安装器检查依赖，不自动安装系统软件。
+
+实际安装以root执行，新建非root服务用户并加入Docker组。实例名、系统用户名、安装目录和端口不能与已有实例重复。若已有网站占用80/443，安装器不会停止或覆盖它，需先规划入口共存；当前不自动接入已有Caddy/Nginx。
+
+下面命令为普通运维用户编写；如果已在root终端，省略 `sudo`，用自己的编辑器替代 `sudoedit`。
+
+准备已验证的程序包、基础镜像包及控制器更新镜像包：
 
 ```bash
-python3 /opt/browser-platform-1.0/deployment/install.py \
-  --release /opt/browser-platform-1.0 \
-  --root /srv/browser-platform \
+# 输出须与发行记录中的可信SHA-256逐一比对，再解压程序包并导入镜像。
+sha256sum browser-platform-1.0-linux-amd64-v4.tar.gz v1-exact-images.tar.gz controller-managed-startup-image.tar.gz
+# 确保 /opt/browser-platform-1.0 尚不存在，再解压已核验的程序包。
+sudo tar -xzf browser-platform-1.0-linux-amd64-v4.tar.gz -C /opt
+sudo docker load --input v1-exact-images.tar.gz
+sudo docker load --input controller-managed-startup-image.tar.gz
+```
+
+程序包解压后，例如放在 `/opt/browser-platform-1.0`，必须包含 `release-manifest.json`、`bin/`、`deployment/inputs.json`、控制器、runner、内置产物和运行依赖。安装密码文件放在发布目录之外。安装器选择七个精确镜像ID，不用可变tag代替；基础包中的旧控制器不参与新安装，实际使用更新包里的新控制器。安装器为这些镜像建立保留标签，避免被当成悬空镜像清理。
+
+## 3. 编辑安装配置
+
+从**当前Git仓库根目录**执行：
+
+```bash
+# 已有此文件时直接编辑，不要再次覆盖。
+sudo install -m 600 infra/deployment/install.example.json /root/browser-platform-install.local.json
+sudoedit /root/browser-platform-install.local.json
+```
+
+配置示例（JSON不能写注释）：
+
+```json
+{
+  "release": "/opt/browser-platform-1.0",
+  "root": "/srv/browser-platform",
+  "name": "bp-main",
+  "user": "bpservice",
+  "entry_origin": "https://browser.example.com",
+  "session_origin": "https://session.example.com",
+  "adapter_port": 19100,
+  "api_port": 18000,
+  "backend_port": 18443,
+  "admin": {
+    "username": "myadmin",
+    "password": ""
+  }
+}
+```
+
+换成实际域名，**把空 `password` 填成自己的密码**；空值会被拒绝，没有内置网页密码。若希望安装后再建管理员，删除整个 `admin` 对象或设为 `null`。
+
+| 字段 | 含义与要求 |
+| --- | --- |
+| `release` | 已解压、校验过的程序包绝对路径，不是Git源码目录 |
+| `root` | 新实例绝对路径，必须尚不存在、父目录已存在；不能填写已有数据目录 |
+| `name` | 实例名，以 `bp-` 开头，例如生成 `bp-main-adapter.service` |
+| `user` | 将新建的Linux服务用户；不能为root或已有用户，不是网页登录名 |
+| `entry_origin` | 登录/管理入口的完整HTTPS域名，不带路径、查询参数 |
+| `session_origin` | 浏览器画面的另一个HTTPS域名，不能与入口同域名 |
+| 三个 `*_port` | 对应前表的后台端口；省略时为19100、18000、18443 |
+| `admin.username` | 首次网页管理员；1～32位，小写字母/数字开头，之后允许小写字母、数字、`_`、`-` |
+| `admin.password` | 首次网页密码；4～256个UTF-8字节，不含换行；支持中文/特殊字符，JSON的引号和反斜杠需转义 |
+
+配置必须为私有普通文件（0400或0600，不接受符号链接），未知字段、重复字段及错误类型会被拒绝。密码只通过stdin交给现有账号工具，运行账号表保存带盐哈希；不会复制到运行配置、安装回执、服务环境或日志。
+
+**原安装文件仍含明文密码。** 安装并确认登录后，可删掉其中的 `admin` 对象再留作端口记录，或存入自己的凭据管理位置；不要提交到Git。仓库已忽略以 `install.local.json` 结尾的本地文件，公开示例没有有效密码。
+
+## 4. 检查、安装与覆盖端口
+
+```bash
+# 当前Git仓库根目录；此步不创建用户、服务、目录或管理员。
+sudo python3 infra/deployment/install.py \
+  --config /root/browser-platform-install.local.json --check-only
+
+# 返回 INPUTS_VALID 后去掉 --check-only，执行实际安装。
+sudo python3 infra/deployment/install.py \
+  --config /root/browser-platform-install.local.json
+```
+
+`--check-only` 检查配置与程序清单，不代表镜像、端口、依赖或启动已验证；实际安装继续检查这些条件。成功结果是 `INSTALLED`、`ready_verified: true`。设置了 `admin` 时还应为 `web_admin_initialized: true`，打开入口域名直接登录；未设置时显示待初始化页。
+
+**显式命令行参数覆盖配置文件，配置文件覆盖默认值。** 例如这次将三个后台端口换为另一组：
+
+```bash
+sudo python3 infra/deployment/install.py \
+  --config /root/browser-platform-install.local.json \
+  --adapter-port 21100 --api-port 21000 --backend-port 21443 \
+  --check-only
+```
+
+实际安装必须使用同一组参数并移除 `--check-only`；检查命令不会修改原JSON。也可以直接改JSON里的三个数字，再执行上面的普通安装命令。
+
+原纯CLI方式仍可使用，管理员稍后初始化：
+
+```bash
+sudo python3 infra/deployment/install.py \
+  --release /opt/browser-platform-1.0 --root /srv/browser-platform \
   --name bp-main --user bpservice \
   --entry-origin https://browser.example.com \
   --session-origin https://session.example.com \
+  --adapter-port 19100 --api-port 18000 --backend-port 18443 \
   --check-only
-
-# 移除 --check-only 后以 root 执行同一命令，完成实际安装。
 ```
 
-默认后台端口为回环 19100（Adapter）、18000（一次性控制引导 API）与 18443（验证 TLS 的控制/显示后端）；可分别用 `--adapter-port`、`--api-port`、`--backend-port` 修改。两个公开域名的所有 HTTP/WebSocket 请求均通过 Adapter 认证。安装器生成新控制密钥、凭据加密主密钥和会话 tmpfs 目录；这些不是网页管理员密码。
+失败目录和私有日志会保留；不能对已生成目录重复运行全新安装器。先看错误码及 `<root>/install.log`，前置检查失败时可能尚未创建日志。端口冲突会明确显示 `PORT_UNAVAILABLE: 地址:端口`。按保留材料诊断，不删除真实数据来重试。
 
-首次打开显示待初始化。系统不创建 `owner`，也没有默认网页口令。用服务用户执行 CLI，自选管理员名称；密码由标准输入提供，不能放在参数、环境变量或日志中。例如在 Bash 中：
+## 5. 安装后的文件、服务与账号
+
+以 `/srv/browser-platform`、实例 `bp-main` 为例：
+
+| 文件/服务 | 用途 |
+| --- | --- |
+| `adapter-config.json` | 实际运行配置：Adapter监听、后端HTTPS、账号表/业务目录路径 |
+| `compose.json` | 控制器镜像、宿主端口映射和挂载 |
+| `Caddyfile` | 两个公开域名和转发到Adapter的地址 |
+| `access/entry-users.json` | 网页账号和密码哈希，由账号工具/管理页维护 |
+| `profiles.json` | 实际浏览器目录，初装为空 |
+| `installation.json` | 安装结果、就绪及管理员初始化状态 |
+| `install-request.json` | 不含管理员密码的安装参数回执 |
+| `bp-main-controller` | 控制器容器服务 |
+| `bp-main-adapter` | 登录、管理和浏览器生命周期入口 |
+| `bp-main-jobs` | 环境/指纹任务执行器 |
+| `bp-main-front` | 公网HTTPS入口 |
+
+Linux服务用户、网页管理员、SealSkin内部控制身份不同：`user` 用于系统服务，`admin.username/password` 用于网页登录，内部控制身份与密钥自动生成。无需填写SSH/root密码。
+
+未配置 `admin` 时，用Bash读取密码并执行CLI：
 
 ```bash
 read -r -s -p '管理员密码: ' bp_initial_password
 printf '\n'
-printf '%s\n' "$bp_initial_password" | runuser -u bpservice -- \
+printf '%s\n' "$bp_initial_password" | sudo runuser -u bpservice -- \
   /srv/browser-platform/release/bin/profile-accounts init \
   --config /srv/browser-platform/adapter-config.json --user myadmin
 unset bp_initial_password
 ```
 
-管理员建立后即可登录，密码可以在页面修改。账号名称可在初始化时自选；后续更换名称应建立另一管理员并确认登录后按账号管理规则处理原账号，不直接改写身份绑定。`init` 仅允许空账号表，重复初始化会拒绝；它不覆盖既有账号。只输入一次密码，最低长度等规则以当前账号契约为准。
+`init` 只创建首次管理员，已有账号时拒绝。登录后可在页面改密码；更换登录名时先建新管理员并确认登录，再处理旧账号。**改安装配置中的密码不会重置已有账号，重启也不会重新套用。** 浏览器创建时须分配使用授权；管理员的管理权限不自动授予全部浏览器启动权限。
 
-初始业务数据为零浏览器/零自定义代理，内置通用 US/TW/JP/CN 指纹、自动 DPR/固定 1920×1080 显示，以及三引擎的 24 个已验收组合。内置不可删除；新建浏览器需由管理员主动操作，并在创建表单中分配可使用该浏览器的账号。管理员可以管理全部浏览器，但启动仍需显式使用授权；只授予管理角色不会自动获得全部浏览器会话。
+## 6. 已安装以后怎样改端口
 
-## 服务、验收与恢复
+安装JSON只在初装时读取；事后修改不会影响服务，也不能重跑安装器更新端口。实际对应关系如下：
 
-生成四个 systemd 服务：`bp-main-controller`、`bp-main-adapter`、`bp-main-jobs` 和 `bp-main-front`，并启用开机启动；tmpfiles 在引导时恢复私有凭据/显示目录。查看服务状态及私有安装根的 `installation.json`、`install.log`。日志/配置含敏感路径或控制响应时只保存到私有证据目录，不直接公开。
+| 修改宿主端口 | 必须同步修改的运行文件 |
+| --- | --- |
+| Adapter，例如19100→21100 | `adapter-config.json` 的 `listen_address`；`Caddyfile` 的 `reverse_proxy` 上游 |
+| 后端HTTPS，例如18443→21443 | `compose.json` 的 `127.0.0.1:18443:8443` 中间端口；Adapter配置的 `sealskin.api_base_url` 和 `access.session_upstream_url` |
+| 引导API，例如18000→21000 | `compose.json` 的 `127.0.0.1:18000:8000` 中间端口；如仍使用引导工具，更新 `access/bootstrap.json` 的 `server_endpoint` |
 
-安装器最终成功回执需要实际readyz与受信任HTTPS初始化页通过；随后还必须核对账号初始化、管理数据、新建浏览器、显示输入和正常关闭。`readyz` 或容器 running 不等于完整浏览器验收。首次真实创建还受机器自动容量、空闲内存、磁盘、网络和浏览器启动预算限制。
+在维护窗口正常关闭受影响浏览器、确认操作完成并备份配置后，修改同一行列出的文件；保留回环地址和容器侧8000/8443。校验Compose/Caddy后重新应用服务，检查readyz、HTTPS登录和浏览器恢复；失败时回滚本次配置。后端映射变化涉及控制器容器重建，不能只重启Adapter。已有实例若使用多层Compose覆盖文件，须修改自己的有效配置链，不套用新的通用示例。
 
-独立机曾出现 Firefox 首次 IndexedDB 建库超过原 QA 15 秒门槛；原失败保留为 [DEV-150](deviations/DEV-2026-10-03-150-firefox-storage-probe-timeout.md)。已通过组合的证据包含本机原门槛结果，不能把延长等待的诊断写成远端门槛通过。镜像大规模导入与浏览器验收应串行安排，避免增加存储延迟。
+公网80/443、域名和已有反向代理拓扑的迁移不由当前安装器自动处理。域名变化还影响Cookie、TLS和会话入口，应单独规划。
 
-不要对在线 Home 直接打包当作一致备份。按[运维说明](operations.md)与 [Secret Store/加密备份](../infra/sealskin/lifecycle/secret-store.md)正常关闭目标浏览器、确认操作日志终态，再备份配置、原控制身份、主密钥、Home 和精确程序/镜像依赖。恢复使用独立目录先验收，不能把本安装器指向已有恢复根。升级/回退保存原程序与配置清单，在维护范围内切换；不删除历史记录来掩盖失败。
+## 7. 检查与恢复
 
-私有后端证书有效期一年；到期前在维护窗口准备同 DNS 名的新证书，更新控制器证书与 Adapter 信任文件，保留原材料并核对恢复。前端生产 HTTPS 由 Caddy 自动续期，需要 DNS/入站条件持续有效。
+```bash
+sudo systemctl status bp-main-controller bp-main-adapter bp-main-jobs bp-main-front
+curl --fail http://127.0.0.1:19100/readyz
+# 改过adapter_port时，使用自己的端口。
+```
 
-供应商自然动态代理漂移当前没有实测供应商，保持未测；已部署的协议/故障/恢复验收范围见对应报告。1.0 不宣称抵御所有指纹识别，定版后的增强仅另写方案。
+登录后验证创建、画面、输入和正常关闭；仅running或readyz成功不能代替真实浏览器检查。服务重启后需重新登录。不要对在线Home直接打包，按[一致性备份](../infra/sealskin/checks/consistent-business-backup.md)和[运维](operations.md)处理；恢复到独立目录验证，全新安装器不能指向已有实例/恢复根。
 
-空业务目录必须是有效版本/修订的显式空数组；缺文件或null仍表示异常。管理员初始化只修改独立账号表，不导入历史示例浏览器，也不伪造删除记录。
-
-安装器在控制器启动前为七个精确镜像建立`browser-platform-retained/<实例名>:sha256-<完整摘要>`保留标签，并记录`image-retention.json`；运行配置仍按镜像ID锁定。按ID导入的镜像没有天然标签，缺少该引用会被控制器周期性悬空清理移除。不要删除在用实例的保留标签；退役后先核对全部实例/恢复点依赖，再按单独维护范围处理。
-
-开机对账以当前持久化浏览器目录为准（排除已删除记录），不再只看配置文件的导入种子。每个浏览器独立保留恢复预算，单项失败不阻塞其他项。完整且归属已核对的休眠代次通过原有Relay→Guard→探测→Worker顺序恢复；DIRECT的预期Guard停止不会遮住该恢复入口。健康异常本身不改为healthy，存活Worker的Guard故障继续阻断，入口仍须经过生命周期归属/网络检查。
-
-[DEV-162](deviations/DEV-2026-10-03-162-camoufox-startup-latency.md)保留两次独立机Camoufox环境初始化超过控制器60秒就绪门槛的事实。失败时保留unknown与原资源；通过归属检查正常停止后，更新控制器共享就绪预算后，启动/服务/主机重启实测通过；浏览器镜像与输入/存储要求保持，底层磁盘原因不作推定。遇到同类失败先检查inventory/journal和主机负载，经正常停止或对账处理，不直接删Home或替换未知代次。
-
-基础七镜像归档保留旧控制器，控制器更新包包含新控制器的完整层。两个镜像包均按发行记录校验并导入，当前安装使用七个精确运行镜像；基础包中的旧控制器仅保留供历史恢复。
-
-1.0开机仅对已确认休眠恢复失败的原代次，在同一逐浏览器195秒截止点内最多续试三次，间隔两秒；每次重新检查归属与停止意图。Guard本次启动日志/就绪门槛不变，永久失败保留unknown，不能通过新建容器绕过。实际整机验证见[DEV-163](deviations/DEV-2026-10-03-163-startup-resume-retry.md)。
-
-已有实例的Compose来源由实际运行容器config_files标签和部署回执确定；不能用仓库通用示例替换历史有效配置。R6AX生产的固定基础文件与原覆盖链见[运维说明](operations.md)。新安装器自行生成完整实例Compose，不依赖这一历史基础文件。
+后端私有TLS证书有效期一年，需提前更新；公网Caddy自动续期依赖DNS和入站条件。完整原主机安装/三引擎/重启证据见[R6AX](../infra/sealskin/r6ax-v1-install-acceptance-2026-10-03.md)，新增配置入口验证归R6BA。供应方自然漂移未测，独立机Firefox首次IndexedDB时延边界继续保留。
