@@ -1,5 +1,7 @@
 # SealSkin Profile、Relay 与网络生命周期
 
+R6AX候选：[受管理启动预算补丁](managed-startup-budget.patch)将命名Home就绪截止点设在控制器launch开始后150秒，网络准备与Docker创建消耗同一预算，保留既有180秒请求预算及后续30秒余量。未管理应用仍为60秒。超过预算继续按正常停止/未知归属保护处理；不跳过浏览器完整性校验。可用[精确两文件准备器](prepare-managed-startup.py)在R7G1镜像上生成候选，完整上游准备器也按版本化补丁重放。部署与冷启动验证仍由[DEV-162](../../../docs/deviations/DEV-2026-10-03-162-camoufox-startup-latency.md)跟踪。
+
 2026-10-01 [R6W 已发布](../r6w-existing-proxy-acceptance-2026-10-01.md)：新建浏览器可复用已有认证代理，控制器只追加精确授权，原密文/凭据版本与撤销语义保持。独立最小准备器 `prepare-proxy-reuse.py` 基于 R6J1，只改 `secret_store.py` 和 `environment_management.py`；没有发布 R7G。
 
 2026-10-01 当前日志专用生产镜像为 `ad21dd6d…`：保留原 overlay，仅两处创建代码和新日志模块变化；三 Home 经授权备份/独立恢复/重建，11 个容器限额生效。R7G/R6I 未部署；[最新生产验收](../r6j1-log-deployment-acceptance-2026-10-01.md)及 R6J1 增量材料补充下方历史版本快照。

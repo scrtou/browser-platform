@@ -59,3 +59,5 @@ attempt11三引擎冷启动/显示/真实输入/正常关闭与数据库读回�
 最终程序QA的Camoufox首次初始化超过控制器60秒门槛，见[DEV-162](../deviations/DEV-2026-10-03-162-camoufox-startup-latency.md)。原失败代次已通过归属检查正常停止、资源归零并保留Home；原门槛复验及最终重启仍在进行，尚未定版。
 
 最新最终程序验证：initial3三引擎与services1/2全部通过。第二次独立主机重启后，开机对账在访问入口前自动恢复原Firefox/Relay/Guard，Session、operation和三个容器ID不变；对应回执已留存。重启后三引擎输入/关闭与最终归档新安装仍在执行，生产尚未切换。
+
+最终reboot-attempt2的Camoufox冷启动再次超过控制器60秒就绪预算（环境校验约66秒），DEV-162继续处理中。Firefox原代次恢复/输入/关闭通过，最终归档新安装与生产切换未执行，1.0不提前定版。

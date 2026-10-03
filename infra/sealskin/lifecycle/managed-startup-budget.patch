@@ -1,0 +1,176 @@
+--- a/server/app/launch.py
++++ b/server/app/launch.py
+@@ -656,6 +656,10 @@
+     Raises:
+         HTTPException: On validation failures or provider errors.
+     """
++    # Use the managed request's existing 180-second budget. Network/storage
++    # preparation and Docker create consume readiness time; reserve 30 seconds
++    # for Session persistence and coherence publication after the HTTP endpoint.
++    profile_readiness_deadline = time.monotonic() + 150
+     app = state.installed_apps.get(application_id)
+     if not app:
+         raise HTTPException(status_code=404, detail=f"Application with ID '{application_id}' not found.")
+@@ -717,6 +721,7 @@
+         spec.app_config["profile_runtime"] = runtime_identity(
+             username, home_name, application_id, profile_id, operation_id
+         )
++        spec.app_config["_profile_readiness_deadline"] = profile_readiness_deadline
+ 
+     try:
+         if _network_policy:
+--- a/server/app/providers/docker_provider.py
++++ b/server/app/providers/docker_provider.py
+@@ -235,6 +235,9 @@
+                 logger.info(
+                     "[%s] Configuring container with DRI3 device %s", session_id, device_path
+                 )
++
++        if identity and self.app_config.get("_profile_readiness_deadline", float("inf")) <= time.monotonic():
++            raise HTTPException(504, "Managed startup readiness budget exhausted before Docker create.")
+ 
+         from ..session_runtime import protect_launch
+         protect_launch(run_kwargs, session_id, env_vars, image_labels)
+@@ -273,11 +276,16 @@
+                 status_code=500, detail=f"Docker error: {exc.explanation}"
+             ) from exc
+ 
++        readiness_timeout = 60.0
++        if identity and "_profile_readiness_deadline" in self.app_config:
++            readiness_timeout = max(0.0, self.app_config["_profile_readiness_deadline"] - time.monotonic())
++
+         ip_address = await self._wait_for_container_ready(
+             container,
+             session_id,
+             env_vars.get("SUBFOLDER", "/"),
+             env_vars,
++            timeout=readiness_timeout,
+             is_collaboration=is_collaboration,
+             master_token=master_token,
+             initial_tokens=initial_tokens,
+@@ -360,7 +368,7 @@
+         session_id: str,
+         subfolder: str,
+         env_vars: dict[str, str],
+-        timeout: int = 60,
++        timeout: float = 60,
+         is_collaboration: bool = False,
+         master_token: str | None = None,
+         initial_tokens: dict[str, Any] | None = None,
+@@ -390,8 +398,8 @@
+ 
+         port = self.app_config["provider_config"]["port"]
+         health_check_passed = False
+-        start_time = time.time()
+-        while time.time() - start_time < timeout:
++        start_time = time.monotonic()
++        while time.monotonic() - start_time < timeout:
+             try:
+                 await asyncio.to_thread(container.reload)
+                 allocation = self.app_config.get("network_runtime")
+--- a/server/tests/test_profile_runtime.py
++++ b/server/tests/test_profile_runtime.py
+@@ -444,3 +444,68 @@
+     with pytest.raises(HTTPException):
+         await provider.launch(SID, {}, {identity["home_source"]: {"bind": settings.container_config_path}})
+     assert containers.run_kwargs is None
++
++
++@pytest.mark.parametrize("managed,deadline,expected", [(True, 150, 30), (False, 150, 60), (True, None, 60)])
++async def test_readiness_uses_remaining_managed_budget(containers, monkeypatch, managed, deadline, expected):
++    clock = [100.0]
++    monkeypatch.setattr(docker_provider, "time", SimpleNamespace(monotonic=lambda: clock[0]))
++    identity = runtime.runtime_identity("qa", "test-home", "firefox", "personal", OPERATION)
++    config = {"provider_config": {"image": "qa-image", "port": 3000}}
++    if managed:
++        config["profile_runtime"] = identity
++    if deadline is not None:
++        config["_profile_readiness_deadline"] = deadline
++    provider = docker_provider.DockerProvider(config)
++    original = containers.run
++    def slow_create(**kwargs):
++        clock[0] += 20
++        return original(**kwargs)
++    monkeypatch.setattr(containers, "run", slow_create)
++    wait = AsyncMock(return_value="127.0.0.1")
++    monkeypatch.setattr(provider, "_wait_for_container_ready", wait)
++    volumes = {identity["home_source"]: {"bind": settings.container_config_path, "mode": "rw"}} if managed else {}
++    await provider.launch(SID, DISPLAY_ENV, volumes)
++    assert wait.await_args.kwargs["timeout"] == expected
++    assert len(containers.values) == 1
++
++
++async def test_exhausted_managed_budget_does_not_create_worker(containers, monkeypatch):
++    monkeypatch.setattr(docker_provider, "time", SimpleNamespace(monotonic=lambda: 151))
++    identity = runtime.runtime_identity("qa", "test-home", "firefox", "personal", OPERATION)
++    provider = docker_provider.DockerProvider({"profile_runtime": identity, "_profile_readiness_deadline": 150,
++        "provider_config": {"image": "qa-image", "port": 3000}})
++    monkeypatch.setattr(provider, "_wait_for_container_ready", AsyncMock(return_value="127.0.0.1"))
++    with pytest.raises(HTTPException) as error:
++        await provider.launch(SID, DISPLAY_ENV, {identity["home_source"]: {"bind": settings.container_config_path}})
++    assert error.value.status_code == 504
++    assert containers.run_kwargs is None
++
++
++@pytest.mark.parametrize("timeout,passes", [(150, True), (60, False)])
++async def test_slow_readiness_remains_bounded_and_preserves_failed_stop(containers, monkeypatch, timeout, passes):
++    clock = [0.0]
++    monkeypatch.setattr(docker_provider, "time", SimpleNamespace(monotonic=lambda: clock[0]))
++    async def advance(seconds):
++        clock[0] += seconds
++    monkeypatch.setattr(docker_provider.asyncio, "sleep", advance)
++    class HTTP:
++        def __init__(self, **kwargs): pass
++        async def __aenter__(self): return self
++        async def __aexit__(self, *args): pass
++        async def get(self, url): return SimpleNamespace(status_code=200 if clock[0] >= 80 else 503)
++    monkeypatch.setattr(docker_provider.httpx, "AsyncClient", HTTP)
++    worker = SimpleNamespace(id=INSTANCE, short_id=INSTANCE[:12], reload=lambda: None,
++        attrs={"NetworkSettings": {"Networks": {"bridge": {"IPAddress": "127.0.0.1"}}}})
++    provider = docker_provider.DockerProvider({"provider_config": {"port": 3000}})
++    stop = AsyncMock(side_effect=RuntimeError("normal shutdown unconfirmed; Home retained"))
++    monkeypatch.setattr(provider, "stop", stop)
++    if passes:
++        assert await provider._wait_for_container_ready(worker, SID, "/", {}, timeout=timeout) == "127.0.0.1"
++        stop.assert_not_awaited()
++        assert clock[0] == 80
++    else:
++        with pytest.raises(RuntimeError, match="Home retained"):
++            await provider._wait_for_container_ready(worker, SID, "/", {}, timeout=timeout)
++        stop.assert_awaited_once_with(INSTANCE)
++        assert clock[0] == 60
+--- a/server/tests/test_launch.py
++++ b/server/tests/test_launch.py
+@@ -244,3 +244,32 @@
+     assert "SELKIES_H264_CRF" not in spec.env
+     assert spec.env["SELKIES_ENABLE_CLIPBOARD"] == "out"
+     assert "SELKIES_CLIPBOARD_IN_ENABLED" not in spec.env
++
++
++@pytest.mark.asyncio
++async def test_named_home_readiness_deadline_precedes_storage_and_docker(monkeypatch):
++    from pathlib import Path
++    from types import SimpleNamespace
++    from unittest.mock import AsyncMock
++    clock = [0.0]
++    monkeypatch.setattr(launch, "time", SimpleNamespace(monotonic=lambda: clock[0], time=lambda: clock[0]))
++    home = Path(launch.home_path("qa", "test-home"))
++    home.mkdir(parents=True)
++    state.installed_apps["app-1"] = make_app()
++    async def resolve(*args):
++        clock[0] += 45
++        return str(home), None
++    monkeypatch.setattr(launch, "_resolve_storage", resolve)
++    captured = {}
++    class Provider:
++        def __init__(self, config): captured.update(config)
++        async def launch(self, **kwargs):
++            clock[0] += 25
++            return {"instance_id": "a" * 64, "ip": "127.0.0.1", "port": 3000}
++    monkeypatch.setattr(launch, "DockerProvider", Provider)
++    monkeypatch.setattr(launch.config_store, "save_sessions", AsyncMock())
++    await launch.launch_application.__wrapped__("app-1", "qa", {"persistent_storage": True},
++        "test-home", {}, None, None, wayland_mode=False, profile_id="personal", operation_id="b" * 32)
++    assert clock[0] == 70
++    assert captured["_profile_readiness_deadline"] == 150
++    assert captured["profile_runtime"]["home"] == "test-home"

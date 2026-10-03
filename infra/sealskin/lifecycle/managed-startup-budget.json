@@ -1,0 +1,15 @@
+{
+  "base_image": "sha256:33a6d2fcd00502f6df7b8e75a2b3eaa70c0e933077919cbdda5dbe77d5fb7b57",
+  "base_tag": "browser-platform/sealskin:r7g1-dynamic-20261002",
+  "patch_sha256": "eed4f3863bf644169dabb9c0d74e522703d0f5f5e2de8d4ef17f8d2068634136",
+  "files": {
+    "app/launch.py": {
+      "before": "7718ea56bfb6f2050acba594e28fc70dc38ce16bcd3292af05cb174d88dc0756",
+      "after": "b26acd8cccdd89a0e3803729d61132fba8af8daabb50a98b38e48b9511483d9b"
+    },
+    "app/providers/docker_provider.py": {
+      "before": "2f01084562e2fd03385863312924c5177c2e0e8473f337b75a41353a7d21c60f",
+      "after": "286b5ca3cda11e85255f361903e6fcfb2bd2b1598f645a94678e5318e9f56661"
+    }
+  }
+}

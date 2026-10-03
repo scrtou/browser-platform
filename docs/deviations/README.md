@@ -1,6 +1,6 @@
 # 设计偏差记录
 
-- [DEV-162 Camoufox初始化耗时](DEV-2026-10-03-162-camoufox-startup-latency.md)：待核对，原60秒预算超时、失败代次正常停止并保留Home，继续原门槛验证。
+- [DEV-162 Camoufox初始化耗时](DEV-2026-10-03-162-camoufox-startup-latency.md)：处理中，整机重启后再次复现内部60秒预算截断；按既有180秒请求范围修复就绪截止点，冷启动重新验证。
 
 - [DEV-157 长启动HTTPS响应头预算](DEV-2026-10-03-157-long-start-tls-header-timeout.md)：处理中；共享30秒Transport截断180秒启动，需独立长请求Transport及TLS回归。
 

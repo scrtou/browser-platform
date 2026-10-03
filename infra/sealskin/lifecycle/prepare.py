@@ -50,7 +50,7 @@ def main():
         for name, expected in base_hashes.items():
             if sha((work / "server/app" / name).read_bytes()) != expected:
                 raise SystemExit(f"Upstream source mismatch: {name}")
-        patches = ("profile-lifecycle.patch", "environment-management.patch", "proxy-create-authorization.patch", "dynamic-upstream.patch", "bounded-logs.patch")
+        patches = ("profile-lifecycle.patch", "environment-management.patch", "proxy-create-authorization.patch", "dynamic-upstream.patch", "bounded-logs.patch", "managed-startup-budget.patch")
         for patch_name in patches:
             subprocess.run(["git", "apply", "--check", str(package / patch_name)], cwd=work, check=True)
             subprocess.run(["git", "apply", str(package / patch_name)], cwd=work, check=True)
