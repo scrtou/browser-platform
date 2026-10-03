@@ -1,5 +1,7 @@
 # SealSkin Profile Adapter
 
+1.0全新部署使用[安装器](../docs/deployment-v1.md)，默认空账号/浏览器；本组件示例的 `profiles` 也为空。`profile-adapter` 是控制身份名称，不是默认网页管理员。配置漏项修复见[R6AZ](../docs/work-items/R6AZ-2026-10-03-empty-config-example.md)。以下版本段落保留各自交付时点。
+
 当前部署已封存为 [server-2026.10.02.3](../docs/releases/server-2026.10.02.3.md)：R6AS Adapter `63d88d1e…`，精确121文件及原始二进制、恢复说明均在发布树。混合开发工作树不作为部署身份；慢启动增量与历史矩阵按实际版本分别记录。
 
 R6AS当前已部署：LaunchURL使用现有180秒长操作预算，避免正常原生启动超过45秒后提前转为unknown；幂等键、取消与真正不确定响应的保护保持。三引擎固定网络/升级矩阵、两次额外50秒真实启动及完整Go回归见[R6AS验收](../infra/sealskin/r6as-fixed-version-matrix-acceptance-2026-10-02.md)。当前源码在R6AR精确快照上增加两路径；统一版本封存随后记录。
@@ -131,9 +133,11 @@ go build -buildvcs=false -trimpath -o profile-adapter ./cmd/profile-adapter
 
 ## 配置与运行
 
-从 [config.example.json](config.example.json) 复制配置。相对文件路径以配置文件所在目录为基准。
+1.0全新部署按[部署说明](../docs/deployment-v1.md)执行安装器。下面的 [config.example.json](config.example.json) 是组件配置示例，默认 `profiles: []`，不预置浏览器；相对文件路径以配置文件所在目录为基准。完整管理功能另需环境/模板目录、独立控制管理员等设置，由正式安装器统一生成。
 
-示例已启用 `sealskin.lifecycle_enabled`，要求先安装配套 SealSkin 补丁。连接原版上游时设为 false；省略开关也默认为 false。`control_socket` 可省略，默认追加在 `state_file` 后；应使用较短路径，避免超过 Unix socket 的系统限制。
+手动准备独立组件时，必须先在配置的 `profile_directory` 路径建立权限为0600、内容为 `{"version":1,"revision":1,"browsers":[]}` 的新文件，并在 `access.users_file` 路径建立权限为0600的显式待初始化账号表 `{"version":3,"setup_required":true,"users":[]}`；账号表父目录须为0700且归服务用户所有。然后用 `profile-accounts init` 自定管理员。只能在全新路径准备这些文件，已有目录/账号表必须保留；仅复制配置不能完成初始化。正式安装器已执行这些步骤。
+
+示例已启用 `sealskin.lifecycle_enabled`、`profile_directory` 和 `access`，要求先安装配套 SealSkin 补丁，不能只关闭 lifecycle 连接原版上游。`control_socket` 可省略，默认追加在 `state_file` 后；应使用较短路径，避免超过 Unix socket 的系统限制。
 
 ```bash
 cp config.example.json config.json
@@ -143,11 +147,11 @@ chmod 600 secrets/sealskin-client-private.pem
 
 `server_public_key_file` 必须固定为所连接 SealSkin 服务的公钥。`client_private_key_file` 是 SealSkin 中该用户公钥对应的私钥；程序拒绝读取 group/other 可访问的私钥文件。
 
-Profile 的 `application_id` 应指向经过固定版本管理的 SealSkin 应用定义。若不同 Profile 使用不同代理或环境策略，应使用各自的应用定义，例如 `firefox-personal-proxy` 和 `firefox-work-proxy`，由该定义锁定代理 relay、网络和浏览器环境。`home_name` 提供长期浏览器数据，不能拿来承载代理密码。
+Profile 的 `application_id` 应指向经过固定版本管理的 SealSkin 应用定义。不同 Profile 使用各自的应用定义，由该定义锁定代理 relay、网络和浏览器环境；新部署登录后通过管理页创建。`home_name` 提供长期浏览器数据，不能拿来承载代理密码。
 
 当前 [Go Profile Relay](../relay/README.md) 已实现并完成独立协议、sidecar 和 SealSkin Worker 实测。动态创建和停止由 SealSkin 统一执行：管理员在私有策略 registry 中固定用户、Profile、Home、应用、镜像与凭据修订，并将相同的 `network_policy_id`、`network_policy_sha256` 写入应用 `provider_config` 和 Adapter Profile 定义。启动先创建专属网络、Relay 与 Guard，安装规则并探测通过后才创建 Worker；漏传引用或缺失服务端能力均拒绝。受管理的活跃代次不接受策略漂移；轮换前必须停止并确认资源清空。配置方法见 [策略说明](../infra/sealskin/lifecycle/README.md#按-generation-分配代理与网络)。
 
-`sealskin-configure-proxy-app` 使用一次性管理员配置热更新应用镜像和静态 `docker_overrides.network`，不会把管理员密钥写入适配层状态。以下保留静态 sidecar 的配置示例；当前受管理的 Personal 应用需按上述策略说明配置：
+`sealskin-configure-proxy-app` 使用一次性管理员配置热更新应用镜像和静态 `docker_overrides.network`，不会把管理员密钥写入适配层状态。以下仅保留早期 Personal 静态 sidecar 的历史配置示例，不属于1.0初始化步骤；现行受管理应用按上述策略说明配置：
 
 ```bash
 go run ./cmd/sealskin-configure-proxy-app \
@@ -199,7 +203,7 @@ GET|POST /auth/reauth, /auth/password          确认密码（管理员敏感操
 
 `sample_interval_seconds` 为后台采样间隔（0 关闭，10–3600），整体状态变化时记录日志；`entry_hint` 控制入口页是否在阻断级故障时显示恢复提示；`entry_wait_seconds` 是入口页等待报告的上限（1–30），超时或采集失败时保持原自动提交。
 
-`profile_directory`（可选，需 `sealskin.lifecycle_enabled`）：Profile 目录文件路径，相对配置文件所在目录；设置后配置中的 `profiles` 只用于首次导入，可为空。目录文件只由持有全局服务锁的运行中 Adapter 写入；`profile-accounts` 只读该目录校验授权，读取失败时拒绝账号操作，不回退到配置种子。
+`profile_directory`（可选，需 `sealskin.lifecycle_enabled`）：Profile 目录文件路径，相对配置文件所在目录；设置后配置中的 `profiles` 只用于首次导入，可为空。已有目录为准；空种子必须配合显式空目录，缺文件、null或损坏内容仍拒绝启动。初始化后目录文件只由持有全局服务锁的运行中 Adapter 写入；`profile-accounts` 只读该目录校验授权，读取失败时拒绝账号操作，不回退到配置种子。
 
 `environment_catalog`（可选，启用 R6C 创建/删除时必需）是权限为 0600 的固定 JSON 文件，格式为 `{"version":1,"artifacts":[...]}`；每个可用条目必须同时提供已验收摘要、`status=accepted`、`source=frozen`、`sha256:<digest>` 镜像和完整应用模板。配置该文件时还必须配置 `sealskin_admin`，其私钥与生命周期/启动身份分开，不能写入 Profile 目录或运行状态。R6C 的 `POST /manage/browsers` 只引用目录中的产物和不可变网络策略，不接受运行时镜像、凭据或任意挂载路径。
 

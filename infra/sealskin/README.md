@@ -81,13 +81,15 @@ docker compose exec sealskin sh -c 'getent hosts host.docker.internal || true'
 
 `8443` 是带 Caddy 的 Session/API HTTPS 入口；`8000` 只是自签名证书场景的 HTTP API fallback。适配层生产配置仍应使用可信 HTTPS；只在隔离的本地 PoC 中设置 `allow_unencrypted_http: true`。
 
-## Profile PoC 准备
+## 历史 Profile PoC 准备（2026-09-12）
+
+本节记录早期personal/work实验及后续阶段结果；测试实例已清理，不能作为1.0新安装清单。全新部署使用[1.0安装器](../../docs/deployment-v1.md)，无需预建这些Home。两份公开Adapter配置示例现均为 `profiles: []`；手动配置的显式空目录和账号初始化要求见[Adapter说明](../../adapter/README.md#配置与运行)。
 
 1. 打开本地 SealSkin UI，确认管理员账号可登录。
 2. 建立 `personal` 和 `work` 两个命名 Home，并确认持久化存储已启用。
 3. 安装两个固定版本的应用定义。若要验证不同代理/环境，应用 ID 应分别锁定策略，例如 `firefox-personal-proxy`、`firefox-work-proxy`。
 4. 从 SealSkin 用户配置中取得客户端公钥对应的私钥；从 `config/ssl/server_key.pem` 的公钥部分取得服务端公钥。两者只进入适配层 Secret Store。
-5. 将 [adapter/config.example.json](../../adapter/config.example.json) 复制为本地配置，设置 `api_base_url`、`public_session_base_url`、`public_base_url` 和两个密钥路径。
+5. 当时将包含上述两个Profile种子的组件示例复制为本地配置，设置入口、API及密钥路径；现行 [adapter/config.example.json](../../adapter/config.example.json) 已移除这些种子。
 
 本机已经用上述流程完成一次可重复的启动级 PoC：`profile-adapter` 用户、`firefox-personal`/`firefox-work` 固定应用、两个命名 Home 和两个 Firefox Worker 均已创建；同一 Profile 的并发启动会复用现有 Session。早期镜像与启动结果见 [基线记录](acceptance-2026-09-12.md)，后续网络及客户端结果见 [验收索引](../../docs/acceptance/README.md)。
 

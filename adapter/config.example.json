@@ -28,30 +28,7 @@
     "min_free_disk_mib": 5120,
     "storage_path": "../infra/sealskin/storage"
   },
-  "profiles": [
-    {
-      "id": "personal",
-      "application_id": "firefox-personal-proxy",
-      "home_name": "personal",
-      "start_url": "https://example.com/",
-      "language": "en_US.UTF-8",
-      "timezone": "America/New_York",
-      "wayland_mode": true,
-      "idle_policy": {
-        "mode": "disconnected",
-        "timeout_seconds": 900
-      }
-    },
-    {
-      "id": "work",
-      "application_id": "firefox-work-proxy",
-      "home_name": "work",
-      "start_url": "https://example.com/",
-      "language": "en_US.UTF-8",
-      "timezone": "America/New_York",
-      "wayland_mode": true
-    }
-  ],
+  "profiles": [],
   "access": {
     "users_file": "./secrets/entry-users.json",
     "session_upstream_url": "https://127.0.0.1:8443",

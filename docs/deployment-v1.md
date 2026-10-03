@@ -4,6 +4,8 @@
 
 [1.0发行记录](releases/v1.0.md)与[R6AX验收](../infra/sealskin/r6ax-v1-install-acceptance-2026-10-03.md)记录精确材料和验证范围。本说明覆盖全新 Linux amd64 应用安装；已有实例升级/备份恢复必须保留原身份、Home、日志和会话材料，不能重新初始化覆盖。
 
+安装器自行生成 `profiles: []`、显式空业务目录和待初始化账号表，不读取仓库中的组件配置示例。主分支的两份Adapter示例也已统一为空；旧v1.0源码中的 `adapter/config.example.json` 曾保留personal/work种子，后续修正见[R6AZ](work-items/R6AZ-2026-10-03-empty-config-example.md)。新部署按本页执行，不复制旧示例导入历史浏览器。
+
 ## 主机与发布材料
 
 使用 systemd、Python 3.11+、Docker Engine、Compose v2、Caddy 和 python3-cryptography。Debian 12 已在独立机安装过这些依赖；本轮是在该主机新建应用身份与空数据，并非再次声称拿到从未使用的机器。安装器拥有 root 权限，独立服务使用新建非 root 用户和 Docker 组；Docker 组属于主机管理权限，仅授予受信任的服务账号。

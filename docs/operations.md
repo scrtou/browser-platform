@@ -106,7 +106,7 @@ R5C2 候选的 `network_bootstrap_dns_version: 1` 表示支持 [批准引导 DNS
 | --- | --- |
 | 新环境部署 SealSkin、Caddy 与证书 | [SealSkin 部署](../infra/sealskin/README.md) |
 | 构建或安装生命周期补丁 | [补丁构建与安装](../infra/sealskin/lifecycle/README.md#构建与安装) |
-| 安装 Adapter 用户服务 | [Profile 准备与服务安装](../infra/sealskin/README.md#profile-poc-准备) |
+| 全新1.0安装与服务 | [安装器与管理员初始化](deployment-v1.md) |
 | 配置受管理 Personal 网络 | [generation 策略](../infra/sealskin/lifecycle/README.md#按-generation-分配代理与网络) |
 | 准备受管理 DIRECT 候选 | [固定解析器、主机地址证据与可选挂载](../infra/sealskin/lifecycle/direct-network.md)；至少一个主机原生公网 IPv4，NAT-only 拒绝启用 |
 | 保留的静态 Relay / 独立 Camoufox | [Relay](../relay/README.md)、[Camoufox 应用](../infra/camoufox/README.md#独立-sealskin-应用) |
