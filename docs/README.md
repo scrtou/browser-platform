@@ -1,8 +1,10 @@
 # 文档导航
 
+[1.1 版本交付计划](v1.1-delivery-plan.md)已建立：抽出不含浏览器的公共桌面底镜像，分别构建 Camoufox、Chromix、Firefox；当前仅计划，1.0部署不变。
+
 [R6BC GitHub发布安装包](work-items/R6BC-2026-10-03-github-release-assets.md)已收尾：[Release v1.0](https://github.com/scrtou/browser-platform/releases/tag/v1.0)五个附件公开下载及完整还原摘要通过，安装取包不再依赖独立机器；[下载/合并命令](deployment-v1.md#三个包在哪里怎样取得)。
 
-[安装部署指南](deployment-v1.md)已重写：端口用途/修改范围/文件对应、JSON配置与首次管理员账号密码。[R6BA](work-items/R6BA-2026-10-03-deployment-config.md)主分支实现及本机隔离验证已收尾；新增入口整机复测尚未完成。
+[安装部署指南](deployment-v1.md)已重写：端口用途/修改范围/文件对应、JSON配置与首次管理员账号密码。[R6BA](work-items/R6BA-2026-10-03-deployment-config.md)主分支实现及本机隔离验证已收尾；其后新增入口整机、跨用户和TLS复测已由[1.0安装验收](acceptance/deploy-v1-doc-install-2026-10-04.md)完成。
 
 [R6AZ 默认配置旧浏览器清理](work-items/R6AZ-2026-10-03-empty-config-example.md)已收尾：移除组件示例的personal/work导入种子，补齐空目录/账号初始化说明；18项已有回归与两份示例实际加载通过。主分支修正，无程序部署。
 
@@ -86,6 +88,7 @@ R6AH磁盘治理已完成：缓存清理后可用约4.2GiB，真实数据和恢�
 | [开发背景与目标](background.md) | 为什么做、服务谁、范围是什么 | 产品目标或范围变化 |
 | [当前架构与决策](design.md) | 组件职责、数据归属、技术选择 | 架构或关键决策变化 |
 | [开发进度](progress.md) | 已完成、已部署、何时生效、尚未验证 | 开发交付、部署或验收后 |
+| [1.1 版本交付计划](v1.1-delivery-plan.md) | 三引擎镜像解耦、独立构建、迁移和容量验收 | 1.1 计划或范围变化 |
 | [非客户端计划执行核对](plan-completion-2026-09-30.md) | “先完成所有计划”的完整范围、顺序、缺口和证据 | 每项启动与收尾时 |
 | [开发计划](roadmap.md) | 下一步顺序、依赖、交付与验收条件 | 优先级或工作范围变化 |
 | [运维、开机与恢复](operations.md) | 如何检查、启动、停止、恢复、回滚 | 运维流程变化 |

@@ -14,9 +14,9 @@
 
 入口参数只接受新目录、新用户、`bp-` 前缀实例名、两个独立 HTTPS 域名及无冲突端口。`--check-only` 只验证输入/文件，不修改主机，也不声称镜像、端口和系统依赖已通过。实际安装另行检查主机依赖、既有服务/用户/目录/容器和监听端口。
 
-依赖：Linux amd64、systemd、Docker Engine/Compose v2、支持 `format filter` 的 Caddy、Python 3.11+、python3-cryptography；需 root 安装。`--private-tls` 仅用于隔离 QA，生成私有证书并只监听回环。生产使用两个真实 DNS 名称和 Caddy 自动 HTTPS。控制后端使用独立私有 CA，Adapter 固定验证该 CA 与 Session DNS 名。后端证书有效期一年，运维必须在到期前安排证书更新。
+依赖：Linux amd64、systemd、Docker Engine/Compose v2、支持 `format filter` 的 Caddy、Python 3.11+、python3-cryptography；需 root 安装。`--private-tls` 仅用于隔离 QA，生成私有证书并只监听回环。生产使用两个真实 DNS 名称和 Caddy 自动 HTTPS。安装器在实例根目录运行自己的 front Caddy，不修改 `/etc/caddy`；已有 Caddy/Nginx 必须停止或改为不占用宿主80/443，不能让两个入口服务竞争监听。控制后端使用独立私有 CA，Adapter 固定验证该 CA 与 Session DNS 名。后端证书有效期一年，运维必须在到期前安排证书更新。
 
-验证：`PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s infra/deployment -p 'test_*.py' -v`。真实安装、登录、三引擎及重启结果归 R6AX 验收；源文件校验不替代运行验收。
+验证：`PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s infra/deployment -p 'test_*.py' -v`。真实安装、登录、三引擎及重启结果见[2026-10-04安装验收](../../docs/acceptance/deploy-v1-doc-install-2026-10-04.md)；源文件校验不替代运行验收。直接请求回环 `readyz` 时必须带配置的入口 `Host`，否则会得到 `421 Unknown entry`，这不表示服务未就绪。
 
 空业务目录必须是有效版本/修订的显式空数组；缺文件或null仍表示异常。管理员初始化只修改独立账号表，不导入历史示例浏览器，也不伪造删除记录。
 

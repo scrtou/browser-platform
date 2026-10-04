@@ -2,6 +2,8 @@
 
 [文档导航](README.md) · [安装器说明](../infra/deployment/README.md) · [运维与恢复](operations.md) · [1.0发行材料](releases/v1.0.md)
 
+实际验证：[2026-10-04按本说明全新安装](acceptance/deploy-v1-doc-install-2026-10-04.md)通过，覆盖配置管理员、真实跨用户服务、公网TLS管理及三引擎Google起始页/画面/输入/正常关闭删除。
+
 新安装使用主分支的 `infra/deployment/install.py`。将域名、目录、端口和首次管理员写进私有JSON文件，先检查，再安装。安装器创建独立系统用户、四个服务和空浏览器目录，安装内置4指纹/2显示/24组合；管理员登录后自行创建浏览器。
 
 `--config` 和配置文件管理员功能由[R6BA](work-items/R6BA-2026-10-03-deployment-config.md)新增。固定 `v1.0` 标签/原程序包中的旧安装脚本不支持它；使用**当前主分支安装器 + 原已验证的1.0程序包**，无需改写旧包清单。Git源码不包含完整镜像、冻结产物和程序发布包，仅clone仓库不能完成安装。材料摘要和存放位置见[发行记录](releases/v1.0.md)。
@@ -31,6 +33,8 @@ flowchart LR
 
 **通常只向公网放行80、443和你自己的SSH端口。** 三个后台端口不要开放到公网；安装器已绑定回环地址。UDP443仅用于可选HTTP/3，TCP443仍是必要入口。浏览器不需要各开一个公网端口；代理供应商端口在代理配置中设置，与安装端口不同。
 
+安装器会在实例根目录生成自己的 `Caddyfile`，并由 `bp-<实例名>-front.service` 运行 Caddy，直接占用宿主机的80/443。它不会读取、合并或修改 `/etc/caddy/Caddyfile`、Caddy autosave 或已有服务覆盖文件。已有 Caddy 服务必须停止或改为不占用80/443；同一台主机只能有一个入口进程监听这两个公网端口。需要保留旧站点配置时可以原样留在 `/etc/caddy`，但上线前要明确由哪个入口服务负责每个域名，并实际检查80/443监听者。
+
 18000的映射在安装完成后仍保留，不会用一次就关闭；正常Adapter使用18443。19100是安装器默认值，组件示例的9100和旧文档的8443属于不同配置，不能混用。
 
 三个后台端口必须是**不同的1024～65535整数**，且未被其他服务占用。生产入口目前不支持改成8443等非标准公网端口。`--private-tls` 仅供隔离QA：两个域名可用同一个自定义高位HTTPS端口，只监听回环并禁用公开80/自动HTTPS；它不是公网部署模式。
@@ -57,7 +61,7 @@ flowchart LR
 
 基础镜像原包为2,287,621,024字节，超过GitHub单附件小于2 GiB的限制，因此拆成两卷，合并后与原包完全一致。**必须下载四个数据附件及校验清单**；GitHub自动提供的Source code压缩包不能代替它们。
 
-在准备部署的新机器执行。保留分卷并合并时，下载目录至少预留5 GiB；解压、Docker镜像和浏览器数据另需空间。下载或校验失败时先解决错误，不继续安装：
+在准备部署的新机器执行。保留分卷并合并时，下载目录至少预留5 GiB；解压、Docker镜像和浏览器数据另需空间。按本次1.0实机安装，三引擎镜像去重后的实际层约7.63 GiB，程序、实例根和内置数据约1.2 GiB；完整保留分卷、合并归档和其他附件时下载目录约4.6 GiB，清理重复分卷后约2.4 GiB。建议安装前至少有16 GiB可用空间，计划保留完整安装归档和后续浏览器数据时至少准备25 GiB。下载或校验失败时先解决错误，不继续安装：
 
 ```bash
 mkdir -p ~/browser-platform-packages
@@ -196,6 +200,8 @@ sudo python3 infra/deployment/install.py \
 
 Linux服务用户、网页管理员、SealSkin内部控制身份不同：`user` 用于系统服务，`admin.username/password` 用于网页登录，内部控制身份与密钥自动生成。无需填写SSH/root密码。
 
+安装成功后四个服务都应设为开机启用。controller 是 `Type=oneshot`，正常状态显示为 `active (exited)`；adapter、jobs、front 应显示 `active (running)`。公网入口由 `bp-main-front.service`（将实例名替换为实际值）提供，旧的系统 Caddy 不应同时占用80/443。
+
 未配置 `admin` 时，用Bash读取密码并执行CLI：
 
 ```bash
@@ -226,11 +232,19 @@ unset bp_initial_password
 ## 7. 检查与恢复
 
 ```bash
-sudo systemctl status bp-main-controller bp-main-adapter bp-main-jobs bp-main-front
-curl --fail http://127.0.0.1:19100/readyz
+sudo systemctl is-enabled bp-main-controller.service bp-main-adapter.service \
+  bp-main-jobs.service bp-main-front.service
+sudo systemctl status bp-main-controller.service bp-main-adapter.service \
+  bp-main-jobs.service bp-main-front.service
+# readyz 按入口域名做 Host 路由；缺少正确 Host 会返回 421 Unknown entry。
+curl --fail --header 'Host: browser.example.com' \
+  http://127.0.0.1:19100/readyz
 # 改过adapter_port时，使用自己的端口。
+sudo ss -lntp
 ```
 
-登录后验证创建、画面、输入和正常关闭；仅running或readyz成功不能代替真实浏览器检查。服务重启后需重新登录。不要对在线Home直接打包，按[一致性备份](../infra/sealskin/checks/consistent-business-backup.md)和[运维](operations.md)处理；恢复到独立目录验证，全新安装器不能指向已有实例/恢复根。
+部署后至少用公网HTTPS客户端完成一次真实检查：访问 `/auth/login` 并登录，打开管理页，创建一个独立QA浏览器，确认起始页、远程画面和键盘输入，再执行正常关闭；确认无误后按管理页面流程归档删除QA浏览器。仅容器 running、systemd active 或 readyz 成功不能代替真实浏览器检查。服务重启后需重新登录。不要对在线Home直接打包，按[一致性备份](../infra/sealskin/checks/consistent-business-backup.md)和[运维](operations.md)处理；恢复到独立目录验证，全新安装器不能指向已有实例/恢复根。
 
-后端私有TLS证书有效期一年，需提前更新；公网Caddy自动续期依赖DNS和入站条件。完整原主机安装/三引擎/重启证据见[R6AX](../infra/sealskin/r6ax-v1-install-acceptance-2026-10-03.md)，新增配置入口验证归R6BA。供应方自然漂移未测，独立机Firefox首次IndexedDB时延边界继续保留。
+公网入口检查应使用真实域名，例如 `curl --fail https://browser.example.com/auth/login`；不要把回环地址的自签名后端端口当作公网TLS检查。三种引擎的完整创建/显示/输入/关闭结果应分别记录，失败的浏览器和临时凭据必须清理后再收尾。
+
+后端私有TLS证书有效期一年，需提前更新；公网Caddy自动续期依赖DNS和入站条件。完整本机安装、跨用户、真实公网TLS和三引擎浏览器证据见[2026-10-04安装验收](acceptance/deploy-v1-doc-install-2026-10-04.md)；历史固定版本安装证据见[R6AX](../infra/sealskin/r6ax-v1-install-acceptance-2026-10-03.md)，配置入口实现归R6BA。供应方自然漂移未测，独立机Firefox首次IndexedDB时延边界继续保留。

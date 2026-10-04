@@ -1,10 +1,16 @@
 # 开发进度
 
+下一版本计划（2026-10-04）：[1.1 三引擎镜像解耦](v1.1-delivery-plan.md)已登记，当前处于待启动；现状核对发现 Chromix/Firefox 构建层继承含 Camoufox 的桌面镜像，运行时三引擎仍是独立容器/进程。当前1.0实例、Caddy配置、账号和Home不变。
+
+本机部署（2026-10-04）：[按部署说明全新安装](work-items/DEPLOY-2026-10-04-v1-doc-install.md)已完成，[验收PASS](acceptance/deploy-v1-doc-install-2026-10-04.md)。新实例 `/srv/browser-platform`、bp-main四服务active/enabled，指定管理员可公网HTTPS登录管理；三引擎Google起始页、真实画面、输入、正常关闭及删除通过。原Caddy域名配置与旧数据保留，测试实例已清理，约23.13GiB磁盘可用。
+
+本机维护（2026-10-04）：[退役与重装准备](work-items/MAINT-2026-10-04-reinstall-cleanup.md)已完成。旧服务停用，项目容器、镜像和网络已清除，磁盘使用率66%，可用约34.13GiB。源码、真实Home、配置与加密备份保留；维护完成时本机未运行本项目；随后新部署由上述工作项完成。以下上线状态属于退役前历史。
+
 [R6BC GitHub发布安装包](work-items/R6BC-2026-10-03-github-release-assets.md)已收尾：五个Release附件已公开，上传摘要、无认证公开回读和两卷合并完整摘要均通过；安装材料获取不再依赖独立机器。未执行业务备份迁移或新入口整机复测。
 
 [R6BB 发布包获取](work-items/R6BB-2026-10-03-release-downloads.md)已收尾：独立机恢复连通，三个包均存在且大小/完整SHA-256匹配原发行记录；部署指南已提供获取命令。仅文件/文档核对，R6BA整机安装尚未复测。
 
-[R6BA 部署配置文件与端口说明](work-items/R6BA-2026-10-03-deployment-config.md)源码/文档及本机隔离验证已收尾：私有安装JSON、首次管理员、端口联动/80冲突检查完成；28项安装器、3项Go回归和真实CLI验证通过。独立机SSH超时，新增入口整机安装/跨用户/TLS复测未完成；生产和原1.0包不变。
+[R6BA 部署配置文件与端口说明](work-items/R6BA-2026-10-03-deployment-config.md)源码/文档及本机隔离验证已收尾：私有安装JSON、首次管理员、端口联动/80冲突检查完成；28项安装器、3项Go回归和真实CLI验证通过。独立机SSH仍超时；其后的新增入口整机安装/跨用户/TLS复测已在[1.0安装验收](acceptance/deploy-v1-doc-install-2026-10-04.md)完成，生产和原1.0包保持不变。
 
 [R6AZ 默认配置旧浏览器清理](work-items/R6AZ-2026-10-03-empty-config-example.md)已收尾：修正1.0手动示例的personal/work漏项及空目录/账号初始化说明；18项已有回归、两份示例实际加载通过。仅主分支示例/文档生效，正式安装器、生产与固定v1.0归档保持。
 

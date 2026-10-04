@@ -1,8 +1,14 @@
 # 开发计划
 
+下一版本：[1.1 三引擎镜像解耦计划](v1.1-delivery-plan.md)已建立，[R7H 工作项](work-items/R7H-2026-10-04-engine-image-decoupling.md)待启动。目标是抽出不含浏览器的公共桌面/显示底镜像，分别构建 Camoufox、Chromix、Firefox，证明镜像无跨引擎文件和启动依赖，并完成独立运行、升级回退及去重容量验收；在全部门槛达到前不替换当前1.0部署。
+
+本机部署（2026-10-04）：[当前安装与验证](work-items/DEPLOY-2026-10-04-v1-doc-install.md)已收尾。公开下载/摘要、整机私有配置、跨用户服务/TLS管理员登录及三引擎Google起始页/输入/停止删除均通过；本次授权范围完成，不启动其他功能工作。
+
+本机维护（2026-10-04）：[退役与磁盘清理](work-items/MAINT-2026-10-04-reinstall-cleanup.md)已完成。随后已按[部署指南](deployment-v1.md)完成全新安装，验证见上述独立工作项；维护本身未启动功能实施。
+
 [R6BC GitHub发布安装包](work-items/R6BC-2026-10-03-github-release-assets.md)已收尾：API认证、五附件发布、公开回读/完整还原和文档切换完成。安装取包不再依赖独立机器；业务备份保管与R6BA剩余验证保持各自计划，本项不启动新工作。
 
-[R6BA 部署配置文件与端口说明](work-items/R6BA-2026-10-03-deployment-config.md)主分支源码/文档及本机隔离验证已收尾。后续验证：新入口整机安装、runuser跨用户和TLS实测；[R6BB](work-items/R6BB-2026-10-03-release-downloads.md)已核实独立机恢复连通及三包摘要，但未执行这些安装验证。已有实例自动迁移、公网自定义端口及指纹增强不在本次实现范围。
+[R6BA 部署配置文件与端口说明](work-items/R6BA-2026-10-03-deployment-config.md)主分支源码/文档及本机隔离验证已收尾。原后续验证的新入口整机安装、runuser跨用户和TLS实测已由[2026-10-04安装验收](acceptance/deploy-v1-doc-install-2026-10-04.md)完成；[R6BB](work-items/R6BB-2026-10-03-release-downloads.md)已核实独立机恢复连通及三包摘要，但未执行这些安装验证。已有实例自动迁移、公网自定义端口及指纹增强不在本次实现范围。
 
 补漏已收尾：[R6AZ 默认配置旧浏览器清理](work-items/R6AZ-2026-10-03-empty-config-example.md)，示例空浏览器、复制/初始化说明、18项已有回归与两份示例实际加载通过。仅主分支修正，不重写1.0标签/归档；指纹增强仍归原F1～F4计划，未开始。
 
