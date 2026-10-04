@@ -22,18 +22,29 @@ Trilium 通过固定 URL 进入 Profile Adapter，Adapter 调用 SealSkin 创建
 
 ```mermaid
 flowchart LR
-    T[Trilium WebView] -->|固定 Profile URL| C[前置 Caddy]
-    C --> A[Go Profile Adapter]
-    A -->|加密 API，创建或复用| S[SealSkin]
-    T -->|HTTPS Session / WebSocket| C
-    A -->|授权后的显示请求，私有 HTTPS| D[SealSkin Caddy]
-    D -->|显示与输入| W[Browser Worker / Selkies]
-    S -->|生命周期| W
+    T[Trilium WebView] -->|固定 Profile URL / HTTPS Session| C
+    subgraph HOST[系统级：Linux 主机 / systemd]
+        C[系统 Caddy\n:80/:443]
+        A[Go Profile Adapter\n:19100]
+        J[环境任务执行器\nbp-main-jobs.service]
+        C --> A
+    end
+    A -->|私有 HTTPS :18443| D
+    subgraph DOCKER[Docker 级：控制器与浏览器网络]
+        S[SealSkin 控制器 API\n容器 :8000 / 宿主 :18000]
+        D[SealSkin 内部 Caddy\n容器 :8443 / 宿主 :18443]
+        W[Browser Worker / Selkies]
+        S -->|生命周期| W
+        D -->|显示与输入| W
+    end
+    A -->|加密 API，创建或复用| S
     W --> H[持久化 Home]
     W -->|受管理代理会话| R[专属 Relay]
     R --> P[指定上游代理]
     P --> I[网站]
 ```
+
+系统 Caddy 是主机唯一的公网入口；控制器容器内的 Caddy 只负责内部 HTTPS、Session 授权和显示转发。Docker Worker、Relay、网络和镜像均属于 Docker 级资源；systemd 的 Adapter、jobs、Caddy 和三个回环映射属于系统级资源。
 
 图中的显示访问边界由 R5D 验证，并随 R4B/R6F 组合部署。受管理网络按 Profile 代次绑定；当前“测试”运行，Personal/Work 停止，具体生效范围见 [部署范围](progress.md#deployment)。
 

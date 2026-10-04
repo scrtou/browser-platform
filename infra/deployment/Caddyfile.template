@@ -1,6 +1,8 @@
-{
-    admin off
-    GLOBAL_OPTIONS
+# Replace both hosts and the loopback port with the reviewed deployment values.
+# This file is imported by the host-wide system Caddy instance. Every public
+# route, including Session HTTP/WebSocket, passes through Adapter access.
+ENTRY_ORIGIN, SESSION_ORIGIN {
+    TLS_CONFIG
     log {
         level ERROR
         format filter {
@@ -19,12 +21,6 @@
             }
         }
     }
-}
-
-# Replace both hosts and the loopback port with the reviewed deployment values.
-# Every public route, including Session HTTP/WebSocket, passes through access.
-ENTRY_ORIGIN, SESSION_ORIGIN {
-    TLS_CONFIG
     reverse_proxy ADAPTER_UPSTREAM {
         header_up -Forwarded
         header_up X-Forwarded-For {http.request.remote.host}

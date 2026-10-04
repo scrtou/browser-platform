@@ -109,6 +109,15 @@ class ConfigTests(ConfigFixture):
         self.save()
         self.assertEqual(installer.load_install_config(self.path)['admin']['password'],'  meaningful whitespace  ')
 
+    def test_legacy_caddy_template_global_block_is_stripped(self):
+        template = '{\n  admin off\n}\nENTRY_ORIGIN, SESSION_ORIGIN {\n reverse_proxy ADAPTER_UPSTREAM\n}\n'
+        args = argparse.Namespace(entry_origin='https://entry.test', session_origin='https://session.test',
+                                  adapter_port=19100, private_tls=False)
+        fragment = installer.render_caddy_fragment(template, args, Path('/srv/browser-platform'))
+        self.assertNotIn('admin off', fragment)
+        self.assertIn('entry.test, https://session.test', fragment)
+        self.assertIn('reverse_proxy 127.0.0.1:19100', fragment)
+
     def test_config_cannot_be_part_of_the_release(self):
         self.values['release'] = str(self.base)
         self.save()
@@ -138,13 +147,13 @@ class ConfigTests(ConfigFixture):
             setattr(altered,field,value)
             with self.assertRaises(ValueError):installer.validate(altered)
 
-    def test_public_listener_preflight_includes_80_and_qa_is_loopback(self):
+    def test_system_caddy_owns_public_ports_and_qa_is_loopback(self):
         args = installer.parse_args(['--config',str(self.path)])
         with patch.object(installer.socket,'socket') as socket:
             installer.check_listeners(args,[19100,18000,18443,443])
             binds = socket.return_value.__enter__.return_value.bind.call_args_list
             self.assertEqual([call.args[0] for call in binds],[
-                ('127.0.0.1',19100),('127.0.0.1',18000),('127.0.0.1',18443),('0.0.0.0',443),('0.0.0.0',80)])
+                ('127.0.0.1',19100),('127.0.0.1',18000),('127.0.0.1',18443)])
         args.private_tls = True
         with patch.object(installer.socket,'socket') as socket:
             installer.check_listeners(args,[19100,18000,18443,19443])
@@ -199,6 +208,11 @@ class InstallFlowTests(ConfigFixture):
         return args
 
     def stubs(self, args, stack):
+        system_caddy = self.base/'system-caddy'
+        system_caddy.mkdir()
+        (system_caddy/'Caddyfile').write_text('# test host Caddy configuration\n')
+        stack.enter_context(patch.object(installer, 'SYSTEM_CADDYFILE', system_caddy/'Caddyfile'))
+        stack.enter_context(patch.object(installer, 'SYSTEM_CADDY_SITES', system_caddy/'sites-enabled'))
         def run(command, **kwargs):
             text = [str(x) for x in command]
             if text[:2] == ['systemctl','start']:
@@ -241,6 +255,13 @@ class InstallFlowTests(ConfigFixture):
         self.assertEqual(cfg['access']['session_upstream_url'],'https://127.0.0.1:21443')
         self.assertEqual(compose['services']['controller']['ports'],['127.0.0.1:21443:8443','127.0.0.1:21000:8000'])
         self.assertIn('reverse_proxy 127.0.0.1:21100',(args.root/'Caddyfile').read_text())
+        self.assertTrue((self.base/'system-caddy/sites-enabled/bp-config-test.caddy').is_file())
+        self.assertIn('sites-enabled/*.caddy',(self.base/'system-caddy/Caddyfile').read_text())
+        self.assertEqual(result['services'], ['bp-config-test-controller.service',
+                                              'bp-config-test-adapter.service',
+                                              'bp-config-test-jobs.service'])
+        self.assertEqual(result['system_caddy_site'], str(self.base/'system-caddy/sites-enabled/bp-config-test.caddy'))
+        self.assertNotIn('front', json.dumps(result['services']))
         self.assertEqual(json.loads((args.root/'access/bootstrap.json').read_text())['server_endpoint'],'http://127.0.0.1:21000')
         self.assertTrue(result['web_admin_initialized'])
         ready.assert_called_once_with(args,args.root,admin_initialized=True)
@@ -259,15 +280,13 @@ class InstallFlowTests(ConfigFixture):
         registry=json.loads((args.root/'access/entry-users.json').read_text())
         self.assertEqual(registry,{'version':3,'users':[],'setup_required':True})
 
-    def test_public_80_conflict_precedes_all_writes(self):
+    def test_private_port_conflict_precedes_all_writes(self):
         args=self.prepare()
         with ExitStack() as stack:
             self.stubs(args,stack)
-            sock=stack.enter_context(patch.object(installer.socket,'socket'))
-            def bind(address):
-                if address==('0.0.0.0',80):raise OSError('address in use')
-            sock.return_value.__enter__.return_value.bind.side_effect=bind
-            with self.assertRaisesRegex(ValueError,'PORT_UNAVAILABLE: 0.0.0.0:80'):installer.install(args)
+            stack.enter_context(patch.object(installer,'check_listeners',
+                                              side_effect=ValueError('PORT_UNAVAILABLE: 127.0.0.1:19100')))
+            with self.assertRaisesRegex(ValueError,'PORT_UNAVAILABLE: 127.0.0.1:19100'):installer.install(args)
         self.assertFalse(args.root.exists())
 
     def test_initialization_failure_never_reports_installed(self):

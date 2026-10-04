@@ -25,6 +25,13 @@ import time
 from urllib.parse import urlsplit
 
 
+# The public Caddy instance is host-wide.  Each Browser Platform instance
+# contributes one site fragment; the system Caddyfile imports this directory.
+SYSTEM_CADDYFILE = Path('/etc/caddy/Caddyfile')
+SYSTEM_CADDY_SITES = Path('/etc/caddy/sites-enabled')
+SYSTEM_CADDY_IMPORT = 'import /etc/caddy/sites-enabled/*.caddy'
+
+
 def digest(path):
     h = hashlib.sha256()
     with path.open('rb') as f:
@@ -197,12 +204,77 @@ def validate(args):
 def check_listeners(args, ports):
     """All listener conflicts must fail before creating installation resources."""
     for port in ports + ([] if args.private_tls else [80]):
+        # The system Caddy service owns the public ports in production.  Its
+        # activation is checked separately; binding them here would report
+        # the expected Caddy listener as a conflict.
+        if not args.private_tls and port in (80, 443):
+            continue
         host = '0.0.0.0' if not args.private_tls and port in (80, 443) else '127.0.0.1'
         try:
             with socket.socket() as listener:
                 listener.bind((host, port))
         except OSError:
             raise ValueError(f'PORT_UNAVAILABLE: {host}:{port}') from None
+
+
+def configure_system_caddy(args, root, run):
+    """Install this instance as a site fragment in the host Caddy config."""
+    if not SYSTEM_CADDYFILE.is_file() or SYSTEM_CADDYFILE.is_symlink():
+        raise ValueError('SYSTEM_CADDYFILE_MISSING')
+    try:
+        current = SYSTEM_CADDYFILE.read_text()
+    except (OSError, UnicodeError):
+        raise ValueError('SYSTEM_CADDYFILE_UNREADABLE') from None
+    SYSTEM_CADDY_SITES.mkdir(mode=0o755, exist_ok=True)
+    if not SYSTEM_CADDY_SITES.is_dir() or SYSTEM_CADDY_SITES.is_symlink():
+        raise ValueError('SYSTEM_CADDY_SITES_INVALID')
+    site = SYSTEM_CADDY_SITES / (args.name + '.caddy')
+    if site.exists() or site.is_symlink():
+        raise ValueError('SYSTEM_CADDY_SITE_EXISTS')
+    import_present = re.search(r'(?m)^\s*' + re.escape(SYSTEM_CADDY_IMPORT) + r'\s*$', current) is not None
+    backup = None
+    if not import_present:
+        backup = SYSTEM_CADDYFILE.with_name(
+            f'Caddyfile.browser-platform-pre-{args.name}-{datetime.now(timezone.utc):%Y%m%d%H%M%S}')
+        if backup.exists():
+            raise ValueError('SYSTEM_CADDY_BACKUP_EXISTS')
+        shutil.copy2(SYSTEM_CADDYFILE, backup)
+        with SYSTEM_CADDYFILE.open('a') as target:
+            target.write(('\n' if current.endswith('\n') else '\n\n') + SYSTEM_CADDY_IMPORT + '\n')
+            target.flush()
+            os.fsync(target.fileno())
+    fragment = (root / 'Caddyfile').read_text()
+    private_tls_files = []
+    if args.private_tls:
+        try:
+            caddy_user = pwd.getpwnam('caddy')
+        except KeyError:
+            raise ValueError('SYSTEM_CADDY_USER_MISSING') from None
+        for source, suffix in [(root / 'access/front-tls/cert.pem', '.crt'),
+                               (root / 'access/front-tls/key.pem', '.key')]:
+            target = site.with_suffix(suffix)
+            shutil.copyfile(source, target)
+            os.chown(target, caddy_user.pw_uid, caddy_user.pw_gid)
+            os.chmod(target, 0o640)
+            fragment = fragment.replace(str(source), str(target))
+            private_tls_files.append(target)
+    site.write_text(fragment)
+    os.chmod(site, 0o644)
+    try:
+        run(['caddy', 'validate', '--config', SYSTEM_CADDYFILE, '--adapter', 'caddyfile'])
+        # Restart through systemd.  The service may intentionally disable
+        # Caddy's admin API, so an API-based `caddy reload` is not reliable.
+        # The systemd unit must start from /etc/caddy/Caddyfile.
+        run(['systemctl', 'restart', 'caddy.service'])
+    except Exception:
+        site.unlink(missing_ok=True)
+        for path in private_tls_files:
+            path.unlink(missing_ok=True)
+        if backup is not None:
+            shutil.copy2(backup, SYSTEM_CADDYFILE)
+            backup.unlink(missing_ok=True)
+        raise
+    return site
 
 
 def install_request(args):
@@ -255,6 +327,35 @@ def chown_tree(root, uid, gid):
         os.chown(path, uid, gid, follow_symlinks=False)
 
 
+def render_caddy_fragment(template, args, root):
+    """Render a site-only fragment, including compatibility with old packages."""
+    rendered = (template.replace('ENTRY_ORIGIN', args.entry_origin)
+                .replace('SESSION_ORIGIN', args.session_origin)
+                .replace('ADAPTER_UPSTREAM', f'127.0.0.1:{args.adapter_port}'))
+    tls_config = (f'bind 127.0.0.1\n    tls {root}/access/front-tls/cert.pem '
+                  f'{root}/access/front-tls/key.pem' if args.private_tls else '')
+    rendered = rendered.replace('TLS_CONFIG', tls_config)
+    # v1.0 release templates wrapped the site in a global-options block.  A
+    # fragment imported by the host Caddy must contain only site blocks; strip
+    # that legacy wrapper so old verified packages remain installable.
+    leading = rendered.lstrip()
+    if leading.startswith('{'):
+        depth = 0
+        end = None
+        for index, char in enumerate(leading):
+            if char == '{':
+                depth += 1
+            elif char == '}':
+                depth -= 1
+                if depth == 0:
+                    end = index + 1
+                    break
+        if end is None:
+            raise ValueError('CADDY_TEMPLATE_GLOBAL_BLOCK_INVALID')
+        rendered = leading[end:].lstrip()
+    return rendered
+
+
 def install(args):
     entry, session, ports = validate(args)
     verify_tree(args.release)
@@ -273,11 +374,20 @@ def install(args):
         pass
     else:
         raise ValueError('SYSTEM_USER_ALREADY_EXISTS')
-    units = {kind: Path('/etc/systemd/system') / (args.name + '-' + kind + '.service') for kind in ['controller', 'adapter', 'jobs', 'front']}
+    units = {kind: Path('/etc/systemd/system') / (args.name + '-' + kind + '.service') for kind in ['controller', 'adapter', 'jobs']}
+    caddy_site = SYSTEM_CADDY_SITES / (args.name + '.caddy')
     tmpfile = Path('/etc/tmpfiles.d') / (args.name + '.conf')
     runtime_dirs = [Path('/dev/shm') / (args.name + '-' + k) for k in ['credentials', 'sessions']]
-    if any(p.exists() or p.is_symlink() for p in [*units.values(), tmpfile, *runtime_dirs]):
+    if any(p.exists() or p.is_symlink() for p in [*units.values(), tmpfile, *runtime_dirs, caddy_site]):
         raise ValueError('INSTALLATION_RESOURCE_EXISTS')
+    # The host-wide Caddy service must be the public entry point.  Starting it
+    # here makes the expected 80/443 ownership explicit before resources for
+    # the new instance are created.
+    try:
+        subprocess.run(['systemctl', 'enable', '--now', 'caddy.service'], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.CalledProcessError):
+        raise ValueError('SYSTEM_CADDY_SERVICE_UNAVAILABLE') from None
     check_listeners(args, ports)
     subprocess.run(['docker', 'compose', 'version'], check=True, stdout=subprocess.DEVNULL)
     existing = subprocess.check_output(['docker', 'container', 'ls', '-a', '--format', '{{.Names}}'], text=True).splitlines()
@@ -365,23 +475,22 @@ def install(args):
         write(root / 'profiles.json', {'version':1,'revision':1,'browsers':[]})
         write(root / 'access/entry-users.json', {'version':3,'users':[],'setup_required':True})
         write(root / 'adapter-config.json', cfg)
-        caddy = (root/'release/deployment/Caddyfile.template').read_text().replace('ENTRY_ORIGIN',args.entry_origin).replace('SESSION_ORIGIN',args.session_origin).replace('ADAPTER_UPSTREAM',f'127.0.0.1:{args.adapter_port}')
-        tls_config = f'bind 127.0.0.1\n    tls {root}/access/front-tls/cert.pem {root}/access/front-tls/key.pem' if args.private_tls else ''
-        caddy = caddy.replace('TLS_CONFIG',tls_config).replace('GLOBAL_OPTIONS','auto_https off' if args.private_tls else '')
+        caddy = render_caddy_fragment((root/'release/deployment/Caddyfile.template').read_text(), args, root)
         write(root / 'Caddyfile', caddy)
         camoufox = inputs['native_targets']['targets']['camoufox-linux-v152']['image']
         runner = f'/usr/bin/python3 {root}/release/runner/infra/camoufox/environment-job.py run --watch 10 --spool {root}/jobs --catalog {root}/builtins/environment-catalog.json --template-catalog {root}/builtins/template-catalog.json --browser-template-id camoufox-linux-v152 --image {camoufox} --native-targets {root}/release/runner/native-targets.json --username platform --session-origin {args.session_origin} --clipboard-addon {root}/release/runtime-dependencies/native-clipboard --client-browsers {root}/release/runtime-dependencies/job-client-browsers'
-        commands = {'adapter':f'{root}/release/bin/profile-adapter --config {root}/adapter-config.json','jobs':runner,'front':f'/usr/bin/caddy run --config {root}/Caddyfile --adapter caddyfile'}
+        commands = {'adapter':f'{root}/release/bin/profile-adapter --config {root}/adapter-config.json','jobs':runner}
         for kind, command in commands.items():
-            caps = 'AmbientCapabilities=CAP_NET_BIND_SERVICE\nCapabilityBoundingSet=CAP_NET_BIND_SERVICE\n' if kind == 'front' and not args.private_tls else ''
-            write(units[kind], f'[Unit]\nDescription=Browser Platform {kind} ({args.name})\nRequires={controller}\nAfter={controller}\n\n[Service]\nUser={args.user}\nGroup={args.user}\nSupplementaryGroups=docker\nWorkingDirectory={root}\nEnvironment=XDG_DATA_HOME={root}/caddy\nEnvironment=XDG_CONFIG_HOME={root}/caddy\nEnvironment=PYTHONDONTWRITEBYTECODE=1\nExecStart={command}\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=180\nUMask=0077\nNoNewPrivileges=yes\n{caps}\n[Install]\nWantedBy=multi-user.target\n', 0o644)
+            write(units[kind], f'[Unit]\nDescription=Browser Platform {kind} ({args.name})\nRequires={controller}\nAfter={controller}\n\n[Service]\nUser={args.user}\nGroup={args.user}\nSupplementaryGroups=docker\nWorkingDirectory={root}\nEnvironment=XDG_DATA_HOME={root}/caddy\nEnvironment=XDG_CONFIG_HOME={root}/caddy\nEnvironment=PYTHONDONTWRITEBYTECODE=1\nExecStart={command}\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=180\nUMask=0077\nNoNewPrivileges=yes\n\n[Install]\nWantedBy=multi-user.target\n', 0o644)
         chown_tree(root, account.pw_uid, account.pw_gid)
         admin_initialized = initialize_admin(args, root)
         run(['runuser','-u',args.user,'--','caddy','validate','--config',root/'Caddyfile','--adapter','caddyfile'])
+        configure_system_caddy(args, root, run)
         run(['systemctl','daemon-reload'])
         run(['systemctl','enable','--now',*[p.name for p in units.values()]])
         wait_ready(args, root, admin_initialized=admin_initialized)
         result = {'result':'INSTALLED','ready_verified':True,'root':str(root),'services':[p.name for p in units.values()],
+                  'system_caddy_site':str(SYSTEM_CADDY_SITES / (args.name + '.caddy')),
                   'web_admin_initialized':admin_initialized,'entry_origin':args.entry_origin,'session_origin':args.session_origin,
                   'release_manifest_sha256':digest(root/'release/release-manifest.json')}
         write(root / 'installation.json', result)

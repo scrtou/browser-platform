@@ -1,6 +1,6 @@
 # 按部署说明全新安装验收（2026-10-04）
 
-结果：PASS。对应[工作项](../work-items/DEPLOY-2026-10-04-v1-doc-install.md)，按[部署说明](../deployment-v1.md)实际执行当前主分支安装器和公开1.0材料，无应用源码修改。
+结果：PASS。对应[工作项](../work-items/DEPLOY-2026-10-04-v1-doc-install.md)，按[部署说明](../deployment-v1.md)实际执行当前主分支安装器和公开1.0材料。原始验收先验证了项目专属入口；随后已完成系统级 Caddy 迁移，见文末补充记录。
 
 ## 实际安装
 
@@ -8,7 +8,7 @@ Debian 12 amd64、Python 3.11.2、cryptography 38.0.4、Docker 29.8.0、Compose 
 
 配置预检返回 `INPUTS_VALID`；实际安装返回 `INSTALLED`、`ready_verified=true`、`web_admin_initialized=true`，发布清单SHA-256为 `ebd8e201b41600edd529c9918b6cf154e036784da38533b1f651c25d7c0ee1d1`。实际使用配置文件初始化首位管理员，账户密码经stdin进入CLI，注册表只保存密码哈希；账户表只有指定管理员。
 
-四个systemd服务均active、enabled；controller为预期的oneshot状态，adapter/jobs/front在bpservice身份下运行。Adapter `/readyz` 为200；直接连接本机入口验证TLS证书和登录页为200。19100、18000、18443仅监听127.0.0.1，公开入口80/443由新实例front负责。
+原始验收中的四个项目systemd服务均active、enabled；controller为预期的oneshot状态，adapter/jobs/front在bpservice身份下运行。Adapter `/readyz` 为200；直接连接本机入口验证TLS证书和登录页为200。19100、18000、18443仅监听127.0.0.1，公开入口80/443由当时的项目front负责。
 
 ## 公开入口与三引擎
 
@@ -33,3 +33,9 @@ Debian 12 amd64、Python 3.11.2、cryptography 38.0.4、Docker 29.8.0、Compose 
 初次验收使用不支持项目H.264配置的Playwright Chromium 140，收到WebSocket二进制但无法解码画面；不能据此认定显示通过。更换官方Chrome后真实Google截图与输入均通过。初次Firefox客户端在窗口初始化前发送导航，未打开fixture；后续等待Google窗口就绪再验证通过。这些为验收环境/脚本修正，未修改发行程序。详细失败和成功证据保留在私有目录 `/home/sshUser/browser-platform-deployment-20261004/`，不公开凭据、Cookie或授权URL。
 
 本项覆盖实际安装、跨用户服务、公网TLS登录管理及三引擎上述生命周期。未执行主机重启、完整24组合矩阵、音频、剪贴板双向权限或Trilium/macOS客户端验收。客户端日志中的音频初始化、无剪贴板权限和首次启动WebSocket重试只留私有诊断，不能据本项声称这些功能通过。
+
+## 后续系统级 Caddy 迁移（2026-10-04）
+
+为使部署说明与实际主机拓扑一致，公网入口已从 `bp-main-front.service` 迁移到系统 `caddy.service`。迁移保留了 `/etc/caddy/Caddyfile` 的回滚副本和现有证书；系统 Caddy 现在加载 Browser Platform 站点配置并统一监听80/443。`bp-main-front.service` 已停止并禁用，控制器容器内的 Caddy 仍按设计保留，用于内部 HTTPS/显示代理。
+
+迁移后检查：`caddy validate` 通过，系统 `caddy.service` 为 active/enabled，80/443 由系统 Caddy 监听，`mybrowser.azhen.de` 返回登录重定向，`mysession.azhen.de` 返回预期的未匹配路径响应；19100、18000、18443仍仅监听回环地址。后续全新安装由安装器把实例片段写入 `/etc/caddy/sites-enabled/<实例名>.caddy`，不再创建项目专属 front 服务。

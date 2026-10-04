@@ -1,8 +1,8 @@
 # 开发进度
 
-下一版本计划（2026-10-04）：[1.1 三引擎镜像解耦](v1.1-delivery-plan.md)已登记，当前处于待启动；现状核对发现 Chromix/Firefox 构建层继承含 Camoufox 的桌面镜像，运行时三引擎仍是独立容器/进程。当前1.0实例、Caddy配置、账号和Home不变。
+下一版本计划（2026-10-04）：[1.1 三引擎镜像解耦](v1.1-delivery-plan.md)已登记，当前处于待启动；现状核对发现 Chromix/Firefox 构建层继承含 Camoufox 的桌面镜像，运行时三引擎仍是独立容器/进程。当前1.0实例、系统 Caddy 配置、账号和Home不变。
 
-本机部署（2026-10-04）：[按部署说明全新安装](work-items/DEPLOY-2026-10-04-v1-doc-install.md)已完成，[验收PASS](acceptance/deploy-v1-doc-install-2026-10-04.md)。新实例 `/srv/browser-platform`、bp-main四服务active/enabled，指定管理员可公网HTTPS登录管理；三引擎Google起始页、真实画面、输入、正常关闭及删除通过。原Caddy域名配置与旧数据保留，测试实例已清理，约23.13GiB磁盘可用。
+本机部署（2026-10-04）：[按部署说明全新安装](work-items/DEPLOY-2026-10-04-v1-doc-install.md)已完成，[验收PASS](acceptance/deploy-v1-doc-install-2026-10-04.md)。新实例 `/srv/browser-platform`、bp-main服务与系统 `caddy.service` active/enabled，指定管理员可公网HTTPS登录管理；三引擎Google起始页、真实画面、输入、正常关闭及删除通过。公网入口已统一由系统 Caddy 管理，测试实例已清理，约23.13GiB磁盘可用。
 
 本机维护（2026-10-04）：[退役与重装准备](work-items/MAINT-2026-10-04-reinstall-cleanup.md)已完成。旧服务停用，项目容器、镜像和网络已清除，磁盘使用率66%，可用约34.13GiB。源码、真实Home、配置与加密备份保留；维护完成时本机未运行本项目；随后新部署由上述工作项完成。以下上线状态属于退役前历史。
 
